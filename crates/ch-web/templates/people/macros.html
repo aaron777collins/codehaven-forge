@@ -1,0 +1,19 @@
+{% macro person_row(p) %}
+<li class="person-row">
+  <img class="avatar av-20" src="/avatar/{{ p.username }}.svg" alt="" width="20" height="20" loading="lazy">
+  <div>
+    <a href="{{ p.href }}">{{ p.display }}</a>
+    {% if !p.chip.is_empty() %}<span class="chip {{ p.chip_class }}">{{ p.chip }}</span>{% endif %}
+    <p class="muted small">@{{ p.username }}</p>
+  </div>
+</li>
+{% endmacro %}
+
+{% macro org_tabs(login, base, current, is_owner) %}
+<nav class="tabs" role="tablist">
+  <a class="tab{% if current == "repos" %} current{% endif %}" href="{{ base }}">Repositories</a>
+  <a class="tab{% if current == "people" %} current{% endif %}" href="/orgs/{{ login }}/people">People</a>
+  <a class="tab{% if current == "teams" %} current{% endif %}" href="/orgs/{{ login }}/teams">Teams</a>
+  {% if is_owner %}<a class="tab{% if current == "settings" %} current{% endif %}" href="/orgs/{{ login }}/settings">Settings</a>{% endif %}
+</nav>
+{% endmacro %}

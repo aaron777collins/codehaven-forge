@@ -1,0 +1,31 @@
+{% extends "settings/layout.html" %}
+{% import "components.html" as ui %}
+{% block settings_body %}
+<h1>Sessions</h1>
+<p class="muted">Every browser this account is signed in to. Signing one out ends it at once, on that device.</p>
+{% if rows.is_empty() %}
+{% call ui::empty("No sessions", "This account is not signed in anywhere, not even here.") %}
+{% else %}
+<table class="data-table">
+  <thead><tr><th>Browser</th><th>IP</th><th>Signed in</th><th>Last active</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td data-label="Browser"><span class="cell-value">{{ r.browser }}{% if r.current %} <span class="chip chip-ok">This device</span>{% endif %}</span></td>
+      <td data-label="IP">{{ r.ip }}</td>
+      <td data-label="Signed in">{% call ui::time(r.signed_in) %}</td>
+      <td data-label="Last active">{% call ui::time(r.last_active) %}</td>
+      <td data-label="">
+        {% if !r.current %}
+        <form method="post" action="/settings/sessions/{{ r.id }}/revoke" class="inline" data-confirm="Sign out this session?">
+          {% call ui::csrf_field(c.csrf) %}
+          <button class="btn small btn-danger" type="submit">Sign out</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

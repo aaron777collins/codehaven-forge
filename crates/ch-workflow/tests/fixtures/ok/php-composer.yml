@@ -1,0 +1,41 @@
+# Validate composer metadata and run the PHPUnit suite.
+name: php-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  phpunit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install PHP and Composer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php-cli php-mbstring php-xml php-curl php-zip unzip
+          curl -sS https://getcomposer.org/installer -o composer-setup.php
+          php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+          composer --version
+
+      - name: Composer validate
+        run: composer validate --strict --no-check-lock
+
+      - name: Restore vendor cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor
+            ~/.cache/composer
+          key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Composer install
+        run: composer install --prefer-dist --no-progress --no-interaction --no-suggest
+
+      - name: PHPUnit
+        run: vendor/bin/phpunit --colors=never

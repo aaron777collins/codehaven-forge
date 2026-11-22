@@ -1,0 +1,19 @@
+{% extends "repo/layout.html" %}
+{% import "issues/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<h2 class="page-h">New issue</h2>
+<form method="post" action="{{ base }}/issues/new" class="stack issue-form">
+  {% call ui::csrf_field(c.csrf) %}
+  <div class="field"><label for="title">Title</label><input id="title" name="title" type="text" value="{{ title }}" maxlength="256" required autofocus>{% call ui::field_error(errors.get("title")) %}</div>
+  {% call m::editor("body", "body", body, 10, owner, repo) %}
+  {% if can_triage %}
+  <div class="grid-2">
+    {% if !labels.is_empty() %}<fieldset class="choices"><legend>Labels</legend>{% for l in labels %}<label class="choice"><input type="checkbox" name="labels" value="{{ l.value }}"{% if l.on %} checked{% endif %}><span class="label {{ l.class }}">{{ l.text }}</span></label>{% endfor %}</fieldset>{% endif %}
+    {% if !milestones.is_empty() %}<div class="field"><label for="milestone">Milestone</label><select id="milestone" name="milestone"><option value="">None</option>{% for ms in milestones %}<option value="{{ ms.value }}"{% if ms.on %} selected{% endif %}>{{ ms.text }}</option>{% endfor %}</select></div>{% endif %}
+  </div>
+  {% endif %}
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="row"><button class="btn btn-primary" type="submit">Create issue</button><a class="btn" href="{{ base }}/issues">Cancel</a></div>
+</form>
+{% endblock %}

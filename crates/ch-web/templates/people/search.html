@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block content %}
+<main id="main" class="page">
+  <h1>Search</h1>
+  <form class="filter-bar" method="get" action="/search">
+    <input type="hidden" name="type" value="{{ kind }}">
+    <label class="sr-only" for="search-q">Search</label>
+    <input id="search-q" class="filter-search" type="search" name="q" value="{{ q }}" placeholder="Search repositories, issues and people">
+    <button class="btn" type="submit">Search</button>
+  </form>
+  <nav class="tabs" role="tablist">
+    {% for t in tabs %}<a class="tab{% if t.current %} current{% endif %}" href="{{ t.href }}">{{ t.label }}</a>{% endfor %}
+  </nav>
+  {% if q.is_empty() %}
+  {% call ui::empty("Search this server", "Type something to look for repositories, issues and people you can see.") %}
+  {% else if hits.is_empty() %}
+  {% call ui::empty("Nothing matches", "Try different words, or fewer of them.") %}
+  {% else %}
+  <ul class="card">
+    {% for h in hits %}
+    <li class="hit-item">
+      {% if let Some(u) = h.href %}<a class="hit-title" href="{{ u }}">{{ h.title }}</a>{% else %}<span class="hit-title">{{ h.title }}</span>{% endif %}
+      {% if show_kind %}<span class="chip">{{ h.kind }}</span>{% endif %}
+      {% if !h.snippet.is_empty() %}<p class="muted small">{{ h.snippet }}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</main>
+{% endblock %}

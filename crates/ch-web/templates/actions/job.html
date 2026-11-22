@@ -1,0 +1,49 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="list-head">
+  <h2 class="page-h">{{ job_name }}</h2>
+  <div class="spacer"></div>
+  <a class="btn" href="{{ run_href }}">Back to run #{{ run_number }}</a>
+</div>
+<div class="actions-cols">
+  <aside class="actions-side">
+    <nav class="card pad" aria-label="Jobs in this run">
+      <h3>Jobs</h3>
+      <ul class="job-list">
+        {% for j in jobs %}
+        <li><a class="job-link{% if j.current %} current{% endif %}" href="{{ j.href }}" {% if j.current %}aria-current="page"{% endif %}>{% call ui::status(j.status) %}<span>{{ j.name }}</span></a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+  </aside>
+  <section class="actions-main">
+    <div class="job-head card pad">
+      {% call ui::status(status) %}
+      <span class="job-title">{{ job_name }}</span>
+      {% if let Some(d) = duration %}<span class="muted job-dur"{% if let Some(ms) = job_started_ms %} data-job-started="{{ ms }}"{% endif %}>{{ d }}</span>{% endif %}
+      {% if let Some(r) = runner %}<span class="chip">Runner: {{ r }}</span>{% endif %}
+      {% if active %}<span class="chip chip-run">Live</span>{% endif %}
+      <span class="spacer"></span>
+      <a class="btn small" href="{{ log_txt_href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download raw log</a>
+    </div>
+    {% if active %}<p class="hint log-status" data-live-status></p>{% endif %}
+    {% if steps.is_empty() %}
+    {% call ui::empty("No steps yet", "The steps of this job appear as the runner reports them.") %}
+    {% else %}
+    <div class="steps"{% if active %} data-job-stream="{{ stream_url }}" data-offset="{{ offset }}" data-line="{{ line }}" data-active="1"{% endif %}>
+      {% for s in steps %}
+      <details class="step" data-step="{{ s.number }}" data-state="{{ s.state }}"{% if let Some(ms) = s.started_ms %} data-started="{{ ms }}"{% endif %}{% if s.open %} open{% endif %}>
+        <summary>
+          <span class="step-status">{% call ui::status(s.status) %}</span>
+          <span class="step-name">{{ s.name }}</span>
+          <span class="step-dur muted">{% if let Some(d) = s.duration %}{{ d }}{% endif %}</span>
+        </summary>
+        <div class="log" data-step-log="{{ s.number }}">{% if s.empty %}<p class="muted log-none">No output.</p>{% else %}{{ s.html|safe }}{% endif %}</div>
+      </details>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

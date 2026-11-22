@@ -1,0 +1,16 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "+1": 1,
+  "-1": 0,
+  "confused": 0,
+  "eyes": 0,
+  "heart": 0,
+  "hooray": 0,
+  "laugh": 1,
+  "rocket": 0,
+  "total_count": 2,
+  "url": "https://code.example.com/api/v3/repos/octo/haven/issues/42/reactions"
+}

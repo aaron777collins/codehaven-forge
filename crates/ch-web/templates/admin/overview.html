@@ -1,0 +1,22 @@
+{% extends "admin/layout.html" %}
+{% block admin_body %}
+<h1>Overview</h1>
+<div class="stat-grid">
+  <div class="stat-card"><span class="stat-value">{{ stats.users }}</span><span class="stat-label">People</span></div>
+  <div class="stat-card"><span class="stat-value">{{ stats.orgs }}</span><span class="stat-label">Organizations</span></div>
+  <div class="stat-card"><span class="stat-value">{{ stats.repos }}</span><span class="stat-label">Repositories</span></div>
+  <div class="stat-card"><span class="stat-value">{{ stats.runners_online }}</span><span class="stat-label">Runners online</span></div>
+  <div class="stat-card"><span class="stat-value">{{ stats.queued_jobs }}</span><span class="stat-label">Queued jobs</span></div>
+  <div class="stat-card"><span class="stat-value">{% if stats.database_ok %}<span class="chip chip-ok">ok</span>{% else %}<span class="chip chip-danger">not ok</span>{% endif %}</span><span class="stat-label">Database</span></div>
+  <div class="stat-card"><span class="stat-value">{{ stats.version }}</span><span class="stat-label">Server version</span></div>
+  <div class="stat-card">
+    <progress value="{{ stats.disk.percent }}" max="100"></progress>
+    <span class="stat-value">{{ stats.disk.used }} of {{ stats.disk.total }} used</span>
+    <span class="stat-label">Disk</span>
+  </div>
+  <a class="stat-card" href="/admin/invites">
+    <span class="stat-value">Invites</span>
+    <span class="stat-label">Getting people in. Create a link and send it to the next person.</span>
+  </a>
+</div>
+{% endblock %}

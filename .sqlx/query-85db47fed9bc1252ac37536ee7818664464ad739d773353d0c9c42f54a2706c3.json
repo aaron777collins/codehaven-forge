@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM blobs WHERE refcount = 0 AND unreferenced_since < now() - make_interval(secs => $1) RETURNING sha256",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sha256",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "85db47fed9bc1252ac37536ee7818664464ad739d773353d0c9c42f54a2706c3"
+}

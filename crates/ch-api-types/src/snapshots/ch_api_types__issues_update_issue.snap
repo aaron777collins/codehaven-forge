@@ -1,0 +1,13 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "assignees": [],
+  "labels": [
+    "bug"
+  ],
+  "state": "closed",
+  "state_reason": "completed",
+  "title": "Found a bug, fixed"
+}

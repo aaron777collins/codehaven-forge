@@ -1,0 +1,12 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "color": "ff0000",
+  "default": false,
+  "description": "Something is broken",
+  "id": 1,
+  "name": "bug",
+  "url": "https://code.example.com/api/v3/repos/octo/haven/labels/bug"
+}

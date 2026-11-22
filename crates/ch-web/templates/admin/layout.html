@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="admin-shell">
+  <nav class="admin-side" aria-label="Site admin">
+    <a class="side-link{% if section == "overview" %} current{% endif %}" href="/admin"><svg class="icon" aria-hidden="true"><use href="#i-layout-dashboard"/></svg><span>Overview</span></a>
+    <a class="side-link{% if section == "invites" %} current{% endif %}" href="/admin/invites"><svg class="icon" aria-hidden="true"><use href="#i-mail"/></svg><span>Invites</span></a>
+    <a class="side-link{% if section == "users" %} current{% endif %}" href="/admin/users"><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg><span>Users</span></a>
+    <a class="side-link{% if section == "runners" %} current{% endif %}" href="/admin/runners"><svg class="icon" aria-hidden="true"><use href="#i-cpu"/></svg><span>Runners</span></a>
+    <a class="side-link{% if section == "audit" %} current{% endif %}" href="/admin/audit"><svg class="icon" aria-hidden="true"><use href="#i-scroll-text"/></svg><span>Audit log</span></a>
+  </nav>
+  <div class="admin-main" id="main">
+    {% block admin_body %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

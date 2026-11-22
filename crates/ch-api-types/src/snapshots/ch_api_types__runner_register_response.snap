@@ -1,0 +1,9 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "credential": "cred",
+  "name": "runner-1",
+  "runner_id": 1
+}

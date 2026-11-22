@@ -1,0 +1,37 @@
+{% extends "admin/layout.html" %}
+{% import "components.html" as ui %}
+{% block admin_body %}
+<h1>Runners</h1>
+{% if rows.is_empty() %}
+{% call ui::empty("No runners registered", "Create a registration token below, then run the commands on the runner machine.") %}
+{% else %}
+<table class="data-table card">
+  <thead><tr><th>Name</th><th>Labels</th><th>Status</th><th>Version</th><th>Last seen</th><th>Scope</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td data-label="Name">{{ r.name }}</td>
+      <td data-label="Labels">{% for l in r.labels %}<span class="chip">{{ l }}</span>{% endfor %}</td>
+      <td data-label="Status"><span class="chip {{ r.chip_class }}">{{ r.chip_label }}</span></td>
+      <td data-label="Version">{% if r.version.is_empty() %}-{% else %}{{ r.version }}{% endif %}</td>
+      <td data-label="Last seen">{% if let Some(t) = r.last_seen %}{% call ui::time(t) %}{% else %}-{% endif %}</td>
+      <td data-label="Scope">{{ r.scope }}</td>
+      <td data-label="">
+        <form method="post" action="/admin/runners/{{ r.id }}/revoke" class="inline" data-confirm="Remove this runner? It must register again to come back.">
+          {% call ui::csrf_field(c.csrf) %}
+          <button class="btn small danger" type="submit">Remove</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<section class="card stack">
+  <h2>New registration token</h2>
+  <form method="post" action="/admin/runners/token" class="inline">
+    {% call ui::csrf_field(c.csrf) %}
+    <button class="btn btn-primary" type="submit">New registration token</button>
+  </form>
+</section>
+{% endblock %}

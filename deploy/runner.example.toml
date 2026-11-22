@@ -1,0 +1,55 @@
+# haven-runner settings. Pass the file with `haven-runner run --config <path>` (or
+# HAVEN_RUNNER_CONFIG). Without one the runner uses the defaults shown here. Unknown keys are an
+# error, so a typo never silently does nothing. `haven-runner check` reads the file and says
+# what is wrong with it.
+
+[runner]
+# Where job directories live. Job containers bind-mount their job directory at this same path,
+# so it must be the same path inside the Docker daemon the jobs run in (in the compose stack,
+# both mount the `runner-work` volume at /work).
+work_dir = "/work"
+# Jobs at once.
+concurrency = 2
+# How long one job request waits at the server, in seconds. The server caps it at 30.
+poll_wait_seconds = 30
+# On stop, running jobs get this long to finish. Then they are cancelled (cleanup steps still
+# run), and a second stop signal cancels everything at once.
+shutdown_grace_seconds = 60
+# Show `::debug::` lines in logs. Also turned on by a ACTIONS_STEP_DEBUG=true variable or secret.
+debug = false
+
+[limits]
+# Per job container. A workflow's `container.options` may ask for less, never more.
+cpus = 4
+memory = "8g"
+pids = 4096
+shm_size = "1g"
+# No job runs longer than this, whatever its own timeout-minutes says.
+max_job_minutes = 360
+# Log kept per job. After this the log says so and stops growing; the job carries on.
+max_log_megabytes = 100
+
+[docker]
+# Empty means DOCKER_HOST (and DOCKER_TLS_VERIFY, DOCKER_CERT_PATH).
+host = ""
+# "if-not-present" or "always".
+pull_policy = "if-not-present"
+# Unused images created more than this many days ago are removed, every prune_interval_minutes.
+# Images named under [labels] are never removed: they may exist only on this daemon.
+prune_after_days = 7
+prune_interval_minutes = 60
+
+[disk]
+# File systems checked before each job. Over max_percent the runner prunes images, and if that
+# is not enough it stops taking jobs until space is back.
+guard_paths = ["/work"]
+max_percent = 85
+
+# Which image a job runs in: the first label of its `runs-on` that is listed here. A job's own
+# `container.image` wins over this, and a label with no entry runs in codehaven-job:trixie.
+# Listing a [labels] table replaces the built-in table below rather than adding to it.
+[labels]
+ubuntu-latest = "codehaven-job:trixie"
+"ubuntu-24.04" = "codehaven-job:trixie"
+"ubuntu-22.04" = "codehaven-job:trixie"
+linux = "codehaven-job:trixie"

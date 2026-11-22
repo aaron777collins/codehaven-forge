@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% import "people/macros.html" as m %}
+{% block content %}
+<main id="main" class="page">
+  <h1>Explore</h1>
+  <p class="muted">What you can see on this server: repositories and accounts.</p>
+  <form class="filter-bar" method="get" action="/explore">
+    <label class="sr-only" for="explore-q">Search</label>
+    <input id="explore-q" class="filter-search" type="search" name="q" value="{{ q }}" placeholder="Search repositories and people">
+    <button class="btn" type="submit">Search</button>
+  </form>
+  <div class="dash">
+    <section class="dash-main">
+      {% if show_repos %}
+      <div class="card-head"><h2>Repositories</h2></div>
+      {% if repos.is_empty() %}
+      {% if q.is_empty() %}{% call ui::empty("No repositories yet", "Nothing has been pushed to this server yet.") %}{% else %}{% call ui::empty("No repositories match", "Try different words.") %}{% endif %}
+      {% else %}
+      <ul class="card">
+        {% for h in repos %}
+        <li class="hit-item">
+          {% if let Some(u) = h.href %}<a class="hit-title" href="{{ u }}">{{ h.title }}</a>{% else %}<span class="hit-title">{{ h.title }}</span>{% endif %}
+          {% if !h.snippet.is_empty() %}<p class="muted small">{{ h.snippet }}</p>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% endif %}
+    </section>
+    <aside class="dash-side">
+      {% if show_people %}
+      <section class="card">
+        <div class="card-head"><h2>People</h2></div>
+        {% if people.is_empty() %}
+        <p class="muted pad">{% if q.is_empty() %}There are no accounts yet.{% else %}Nobody matches.{% endif %}</p>
+        {% else %}
+        <ul>
+          {% for p in people %}{% call m::person_row(p) %}{% endfor %}
+        </ul>
+        {% endif %}
+      </section>
+      {% endif %}
+    </aside>
+  </div>
+</main>
+{% endblock %}

@@ -1,0 +1,28 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "incomplete_results": false,
+  "items": [
+    {
+      "avatar_url": "https://code.example.com/avatars/1.svg",
+      "html_url": "https://code.example.com/alice",
+      "id": 1,
+      "login": "alice",
+      "site_admin": false,
+      "type": "User",
+      "url": "https://code.example.com/api/v3/users/alice"
+    },
+    {
+      "avatar_url": "https://code.example.com/avatars/2.svg",
+      "html_url": "https://code.example.com/kim",
+      "id": 2,
+      "login": "kim",
+      "site_admin": false,
+      "type": "User",
+      "url": "https://code.example.com/api/v3/users/kim"
+    }
+  ],
+  "total_count": 2
+}

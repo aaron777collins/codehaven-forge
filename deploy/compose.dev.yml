@@ -1,0 +1,83 @@
+# Project: codehaven-dev. Build and test services for every stream.
+# No ports are published. Started by deploy/dev/slot.sh and deploy/dev/docker-tests.sh.
+name: codehaven-dev
+
+services:
+  # Throwaway Postgres on tmpfs. #[sqlx::test] makes one database per test in it.
+  pg-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off", "-c", "max_connections=400"]
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    mem_limit: 2g
+    networks: [dev]
+
+  # A throwaway Docker daemon for the runner's executor tests (crates/haven-runner/tests/docker.rs).
+  # It is its own daemon, never the host's, and has no published ports. Started and stopped by
+  # deploy/dev/docker-tests.sh, not by ordinary builds.
+  dind-test:
+    profiles: [docker-tests]
+    image: docker:27.5.1-dind
+    privileged: true
+    environment:
+      # Plain TCP on the private `dev` network only.
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      - dind-test-data:/var/lib/docker
+      - ci-work:/ci-work
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    cpus: 2
+    mem_limit: 4g
+    networks: [dev]
+
+  # Run on demand: docker compose -p codehaven-dev -f deploy/compose.dev.yml run --rm builder <cmd>
+  # CH_STREAM and CH_STREAM_DIR are set by deploy/dev/slot.sh.
+  builder:
+    image: ${CODEHAVEN_BUILDER_IMAGE:?set by deploy/dev/slot.sh}
+    working_dir: /work
+    depends_on:
+      pg-test:
+        condition: service_healthy
+    cpus: ${CODEHAVEN_BUILD_CPUS:-3}
+    mem_limit: ${CODEHAVEN_BUILD_MEMORY:-8g}
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@pg-test:5432/postgres
+      SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
+      CH_STREAM: ${CH_STREAM:-foundation}
+      CARGO_BUILD_JOBS: "${CODEHAVEN_BUILD_CPUS:-3}"
+      # Where the runner's Docker tests find their daemon and the directory both sides share.
+      HAVEN_TEST_DOCKER_HOST: tcp://dind-test:2375
+      HAVEN_TEST_WORK_DIR: /ci-work
+    volumes:
+      - ci-work:/ci-work
+      - ${CH_STREAM_DIR:?set by deploy/dev/slot.sh}:/work
+      - cargo-home:/cargo
+      - sccache:/sccache
+      - target:/target
+    networks: [dev]
+
+networks:
+  dev: {}
+
+volumes:
+  cargo-home:
+    name: codehaven-cargo-home
+  sccache:
+    name: codehaven-sccache
+  target:
+    name: codehaven-target-${CH_STREAM:-foundation}
+  dind-test-data:
+    name: codehaven-dind-test-data
+  ci-work:
+    name: codehaven-ci-work

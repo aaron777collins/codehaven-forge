@@ -1,0 +1,18 @@
+{% extends "settings/layout.html" %}
+{% import "components.html" as ui %}
+{% block settings_body %}
+<h1>Appearance</h1>
+<form method="post" action="/settings/appearance" class="settings-card stack">
+  {% call ui::csrf_field(c.csrf) %}
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="field">
+    <label>Theme</label>
+    <label class="choice"><input type="radio" name="theme" value="system"{% if theme == "system" %} checked{% endif %}> <strong>Same as this device.</strong> <span class="muted">Follows your system setting.</span></label>
+    <label class="choice"><input type="radio" name="theme" value="light"{% if theme == "light" %} checked{% endif %}> <strong>Light.</strong></label>
+    <label class="choice"><input type="radio" name="theme" value="dark"{% if theme == "dark" %} checked{% endif %}> <strong>Dark.</strong></label>
+    {% call ui::field_error(errors.get("theme")) %}
+  </div>
+  <div class="row"><button class="btn btn-primary" type="submit">Save theme</button></div>
+  <p class="hint">Your choice is kept in this browser. You can also switch at any time from the account menu.</p>
+</form>
+{% endblock %}

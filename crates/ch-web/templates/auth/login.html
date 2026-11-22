@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block content %}
+<main id="main" class="auth-wrap">
+  <section class="auth-card">
+    <h1>Sign in to {{ c.instance }}</h1>
+    {% if !notice.is_empty() %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+    {% if no_accounts %}
+    <p>No accounts yet. The server administrator creates the first one.</p>
+    {% else %}
+    <form method="post" action="/login" class="stack">
+      {% call ui::csrf_field(csrf) %}
+      <input type="hidden" name="next" value="{{ next }}">
+      {% if !error.is_empty() %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" value="{{ username }}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+    </form>
+    <p class="muted small">This server is invite only. If you were sent an invite link, open it to make your account.</p>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

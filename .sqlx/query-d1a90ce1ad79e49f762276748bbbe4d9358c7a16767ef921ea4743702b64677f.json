@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE background_jobs SET\n                 state = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'queued' END,\n                 run_at = now() + make_interval(secs => $3),\n                 last_error = left($2, 2000),\n                 finished_at = CASE WHEN attempts >= max_attempts THEN now() ELSE NULL END,\n                 locked_by = NULL, locked_until = NULL\n               WHERE id = $1 AND state = 'running'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d1a90ce1ad79e49f762276748bbbe4d9358c7a16767ef921ea4743702b64677f"
+}

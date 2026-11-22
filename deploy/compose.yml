@@ -1,0 +1,157 @@
+# The Codehaven instance people use. One compose project, named by CODEHAVEN_PROJECT.
+#
+# Never run `docker compose` on this file yourself: deploy/compose.sh loads the env file, works
+# out the host's public addresses, adds the proxy file for CODEHAVEN_PROXY and passes -p. Every
+# setting below comes from that env file (copy .env.example to .env); a missing one stops with its
+# name instead of falling back to a guess. Nothing here is specific to one host.
+#
+# Ports are published on the addresses in CODEHAVEN_HTTP_BIND and CODEHAVEN_SSH_BIND, loopback by
+# default. How people reach the server is CODEHAVEN_PROXY (none, network or caddy): see
+# compose.proxy-network.yml and compose.caddy.yml and docs/operations.md.
+#
+#   deploy/prod/up.sh
+#   deploy/compose.sh ps
+name: ${CODEHAVEN_PROJECT:?set CODEHAVEN_PROJECT in .env}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: codehaven
+      POSTGRES_DB: codehaven
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    secrets: [pg_password]
+    volumes:
+      - ${CODEHAVEN_DATA_DIR:?set CODEHAVEN_DATA_DIR in .env}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codehaven -d codehaven"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 2g
+    networks: [backend]
+
+  server:
+    image: codehaven-server:${CODEHAVEN_TAG:?set CODEHAVEN_TAG in .env}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["codehaven", "serve", "--migrate"]
+    environment:
+      CODEHAVEN__SERVER__EXTERNAL_URL: ${CODEHAVEN_EXTERNAL_URL:?set CODEHAVEN_EXTERNAL_URL in .env to the URL people open, for example https://code.example.com}
+      CODEHAVEN__SERVER__NAME: ${CODEHAVEN_NAME:-Codehaven}
+      # The network your proxy reaches the server from. Only a peer inside it may set
+      # X-Forwarded-For and X-Forwarded-Proto. A JSON list, for example '["10.20.16.0/24"]'; [] when
+      # nothing sits in front.
+      CODEHAVEN__HTTP__TRUSTED_PROXIES: ${CODEHAVEN_TRUSTED_PROXIES:?set CODEHAVEN_TRUSTED_PROXIES in .env (a JSON list, [] is allowed)}
+      CODEHAVEN__DATABASE__URL_FILE: /run/secrets/database_url
+      CODEHAVEN__STORAGE__DATA_DIR: /data
+      CODEHAVEN__SSH__EXTERNAL: ${CODEHAVEN_SSH_EXTERNAL:?set CODEHAVEN_SSH_EXTERNAL in .env to the host:port people clone over ssh from}
+      CODEHAVEN__LOG__FORMAT: ${CODEHAVEN_LOG_FORMAT:-json}
+      # The Claude connector. Off unless you turn it on (docs/connector.md).
+      CODEHAVEN__MCP__ENABLED: ${CODEHAVEN_MCP_ENABLED:-false}
+      # The host's own public addresses (deploy/prod/host-ips.sh --json): webhooks may not reach them.
+      CODEHAVEN__WEBHOOKS__BLOCKED_IPS: ${WEBHOOK_BLOCKED_IPS?set by deploy/compose.sh; [] is allowed}
+    secrets: [database_url]
+    volumes:
+      - ${CODEHAVEN_DATA_DIR:?set CODEHAVEN_DATA_DIR in .env}/git:/data/git
+      - ${CODEHAVEN_DATA_DIR}/blobs:/data/blobs
+      - ${CODEHAVEN_DATA_DIR}/logs:/data/logs
+      - ${CODEHAVEN_DATA_DIR}/secrets:/data/secrets
+    ports:
+      - "${CODEHAVEN_HTTP_BIND:?set CODEHAVEN_HTTP_BIND in .env, for example 127.0.0.1:3200}:3200"
+      - "${CODEHAVEN_SSH_BIND:?set CODEHAVEN_SSH_BIND in .env, for example 127.0.0.1:2222}:2222"
+    healthcheck:
+      test: ["CMD", "codehaven", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    mem_limit: 2g
+    networks:
+      backend: {}
+      runners: {}
+
+  # CI. Off by default: `docker compose -p codehaven --profile ci up -d` once the runner exists.
+  # The runner never gets the host's Docker socket. Jobs run in this separate daemon.
+  dind:
+    profiles: [ci]
+    image: docker:27.5.1-dind
+    restart: unless-stopped
+    privileged: true
+    # The guard entry point passes its arguments on to dockerd. `--icc=false` keeps the default
+    # bridge from carrying container-to-container traffic as a second layer; the runner puts
+    # every job on a network of its own anyway (haven-runner's docker backend).
+    command: ["--icc=false"]
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+      # The runner connects to `dind` by name, so the daemon's certificate must be valid for it.
+      DOCKER_TLS_SAN: DNS:dind
+      # The host's public addresses (deploy/prod/host-ips.sh): the guard blocks job traffic to
+      # them all, except tcp/443, the public https site.
+      HOST_PUBLIC_IPS: ${HOST_PUBLIC_IPS?set by deploy/compose.sh; empty is allowed}
+    # Wraps the image's entry point to keep jobs off the host's private and public addresses.
+    entrypoint: ["sh", "/guard/guard.sh"]
+    volumes:
+      - ${CODEHAVEN_DATA_DIR:?set CODEHAVEN_DATA_DIR in .env}/dind:/var/lib/docker
+      - docker-certs:/certs
+      - runner-work:/work
+      - ./dind/guard.sh:/guard/guard.sh:ro
+    networks: [runners]
+
+  # One-shot: makes the shared work volume writable by the runner (uid 10001). Whichever of
+  # `dind` and `runner` starts first creates the volume as root, so this runs before the runner.
+  work-init:
+    profiles: [ci]
+    image: docker:27.5.1-dind
+    entrypoint: ["sh", "-c", "chown 10001:10001 /work && chmod 0755 /work"]
+    restart: "no"
+    volumes:
+      - runner-work:/work
+    networks: [runners]
+
+  # Register once, then start (see deploy/prod/ci-up.sh):
+  #   deploy/compose.sh --profile ci run --rm -e HAVEN_RUNNER_URL=http://server:3200 \
+  #     -e HAVEN_RUNNER_TOKEN=<token from Site admin > Runners> runner haven-runner register --name runner-1
+  runner:
+    profiles: [ci]
+    image: codehaven-runner:${CODEHAVEN_TAG:?set CODEHAVEN_TAG in .env}
+    restart: unless-stopped
+    depends_on:
+      dind: {condition: service_started}
+      server: {condition: service_healthy}
+      work-init: {condition: service_completed_successfully}
+    # Jobs get this long to finish on `docker stop` before they are cancelled.
+    stop_grace_period: 100s
+    environment:
+      DOCKER_HOST: tcp://dind:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+      HAVEN_RUNNER_CONFIG: /etc/haven-runner/config.toml
+    volumes:
+      - docker-certs:/certs:ro
+      - runner-work:/work
+      - runner-state:/home/codehaven
+      - ./runner.toml:/etc/haven-runner/config.toml:ro
+      # Only for the disk guard: statvfs on this path reports the disk the dind images live on.
+      - ${CODEHAVEN_DATA_DIR:?set CODEHAVEN_DATA_DIR in .env}/dind:/dind-data:ro
+    networks: [runners]
+
+networks:
+  # No route out: only postgres and the server are here.
+  backend:
+    internal: true
+  runners: {}
+
+volumes:
+  docker-certs: {}
+  runner-work: {}
+  runner-state: {}
+
+secrets:
+  pg_password:
+    file: ${CODEHAVEN_SECRETS_DIR:?set CODEHAVEN_SECRETS_DIR in .env}/pg_password
+  database_url:
+    file: ${CODEHAVEN_SECRETS_DIR}/database_url

@@ -1,0 +1,21 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "avatar_url": "https://code.example.com/avatars/2.svg",
+  "html_url": "https://code.example.com/kim",
+  "id": 2,
+  "login": "kim",
+  "permissions": {
+    "admin": false,
+    "maintain": false,
+    "pull": true,
+    "push": true,
+    "triage": false
+  },
+  "role_name": "write",
+  "site_admin": false,
+  "type": "User",
+  "url": "https://code.example.com/api/v3/users/kim"
+}

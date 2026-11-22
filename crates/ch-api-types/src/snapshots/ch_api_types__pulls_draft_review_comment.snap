@@ -1,0 +1,10 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "body": "Use the helper here",
+  "line": 5,
+  "path": "src/main.rs",
+  "side": "RIGHT"
+}

@@ -1,0 +1,101 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% import "settings_repo/tabs.html" as st %}
+{% block repo_body %}
+{% call st::tabs(base, "general") %}
+<h2 class="page-h">General</h2>
+<form method="post" action="{{ base }}/settings" class="card pad stack">
+  {% call ui::csrf_field(c.csrf) %}
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="field">
+    <label for="description">Description</label>
+    <input id="description" name="description" type="text" value="{{ description }}" maxlength="500">
+    {% call ui::field_error(errors.get("description")) %}
+  </div>
+  <div class="field">
+    <label for="topics">Topics</label>
+    <input id="topics" name="topics" type="text" value="{{ topics }}" maxlength="400" placeholder="rust, cli, testing">
+    <p class="hint">Separate topics with commas. Letters, numbers and dashes. At most 20.</p>
+    {% call ui::field_error(errors.get("topics")) %}
+  </div>
+  <div class="field">
+    <label for="default_branch">Default branch</label>
+    <select id="default_branch" name="default_branch">
+      {% for b in branches %}<option value="{{ b.name }}"{% if b.selected %} selected{% endif %}>{{ b.name }}</option>{% endfor %}
+    </select>
+    {% call ui::field_error(errors.get("default_branch")) %}
+  </div>
+  <div class="row"><button class="btn btn-primary" type="submit">Save changes</button></div>
+</form>
+{% if can_admin %}
+<div class="danger-zone card pad stack">
+  <h3>Danger zone</h3>
+  <div class="danger-row">
+    <div>
+      <h4>Change visibility</h4>
+      <p class="muted">{% if is_private %}Private. Only people you give access to can see this repository.{% else %}Public. Every account on this server can read it.{% endif %}</p>
+    </div>
+    <form method="post" action="{{ base }}/settings/visibility" class="inline"{% if is_private %} data-confirm="Make this repository public? Every account on this server will be able to read it."{% endif %}>
+      {% call ui::csrf_field(c.csrf) %}
+      <input type="hidden" name="value" value="{% if is_private %}public{% else %}private{% endif %}">
+      <button class="btn danger" type="submit">{% if is_private %}Make public{% else %}Make private{% endif %}</button>
+    </form>
+  </div>
+  <div class="danger-row">
+    <div>
+      <h4>{% if archived %}Unarchive this repository{% else %}Archive this repository{% endif %}</h4>
+      <p class="muted">{% if archived %}Archived repositories are read only. Unarchiving lets pushes and merges work again.{% else %}Archiving makes the repository read only for everyone, including you.{% endif %}</p>
+    </div>
+    <form method="post" action="{{ base }}/settings/archive" class="inline">
+      {% call ui::csrf_field(c.csrf) %}
+      <input type="hidden" name="value" value="{% if archived %}0{% else %}1{% endif %}">
+      <button class="btn danger" type="submit">{% if archived %}Unarchive{% else %}Archive{% endif %}</button>
+    </form>
+  </div>
+  <div class="danger-row">
+    <form method="post" action="{{ base }}/settings/rename" class="stack danger-form">
+      {% call ui::csrf_field(c.csrf) %}
+      <h4>Rename this repository</h4>
+      <p class="muted">The web address changes with it. Update your git remotes and any links.</p>
+      <div class="field">
+        <label for="new_name">New name</label>
+        <input id="new_name" name="new_name" type="text" value="{{ rename_name }}" maxlength="100" autocapitalize="none" spellcheck="false">
+        {% call ui::field_error(errors.get("new_name")) %}
+      </div>
+      <div class="row"><button class="btn danger" type="submit">Rename</button></div>
+    </form>
+  </div>
+  <div class="danger-row">
+    <form method="post" action="{{ base }}/settings/transfer" class="stack danger-form">
+      {% call ui::csrf_field(c.csrf) %}
+      <h4>Transfer ownership</h4>
+      <p class="muted">The new owner gets full control of this repository.</p>
+      <div class="field">
+        <label for="new_owner">New owner</label>
+        <input id="new_owner" name="new_owner" type="text" value="{{ transfer_owner }}" maxlength="39" autocapitalize="none" spellcheck="false">
+        {% call ui::field_error(errors.get("new_owner")) %}
+      </div>
+      <div class="field">
+        <label for="transfer_confirm">Type <code>{{ repo_name }}</code> to confirm</label>
+        <input id="transfer_confirm" name="confirm" type="text" value="{{ transfer_confirm }}" autocapitalize="none" spellcheck="false">
+        {% call ui::field_error(errors.get("transfer_confirm")) %}
+      </div>
+      <div class="row"><button class="btn danger" type="submit">Transfer</button></div>
+    </form>
+  </div>
+  <div class="danger-row">
+    <form method="post" action="{{ base }}/settings/delete" class="stack danger-form">
+      {% call ui::csrf_field(c.csrf) %}
+      <h4>Delete this repository</h4>
+      <p class="muted">This removes the code, the issues and the pull requests for good. There is no undo.</p>
+      <div class="field">
+        <label for="delete_confirm">Type <code>{{ full_name }}</code> to confirm</label>
+        <input id="delete_confirm" name="confirm" type="text" value="{{ delete_confirm }}" autocapitalize="none" spellcheck="false">
+        {% call ui::field_error(errors.get("delete_confirm")) %}
+      </div>
+      <div class="row"><button class="btn danger" type="submit">Delete this repository</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

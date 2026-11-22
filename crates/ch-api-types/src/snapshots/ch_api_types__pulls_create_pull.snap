@@ -1,0 +1,12 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "base": "main",
+  "body": "Please review",
+  "draft": false,
+  "head": "octocat:topic",
+  "maintainer_can_modify": true,
+  "title": "Fix the thing"
+}

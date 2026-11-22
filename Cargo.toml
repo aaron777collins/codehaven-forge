@@ -1,0 +1,182 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/ch-core",
+  "crates/ch-db",
+  "crates/ch-api-types",
+  "crates/ch-testkit",
+  "crates/codehaven",
+  "crates/ch-git",
+  "crates/ch-ssh",
+  "crates/ch-registry",
+  "crates/ch-auth",
+  "crates/ch-notify",
+  "crates/ch-collab",
+  "crates/ch-workflow",
+  "crates/ch-ci",
+  "crates/ch-mcp",
+  "crates/ch-render",
+  "crates/ch-web",
+  "crates/haven-runner",
+  "crates/haven-cli",
+  "tests/e2e",
+  "xtask",
+]
+default-members = [
+  "crates/ch-core",
+  "crates/ch-db",
+  "crates/ch-api-types",
+  "crates/ch-testkit",
+  "crates/codehaven",
+  "crates/ch-git",
+  "crates/ch-ssh",
+  "crates/ch-registry",
+  "crates/ch-auth",
+  "crates/ch-notify",
+  "crates/ch-collab",
+  "crates/ch-workflow",
+  "crates/ch-ci",
+  "crates/ch-mcp",
+  "crates/ch-render",
+  "crates/ch-web",
+  "crates/haven-runner",
+  "crates/haven-cli",
+  "tests/e2e",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+license = "MIT"
+publish = false
+
+# Every external crate is declared here once. Member crates use `foo.workspace = true`.
+# Versions are caret ranges at the minor level; Cargo.lock (committed) pins the exact release.
+[workspace.dependencies]
+# Internal crates
+ch-core = { path = "crates/ch-core" }
+ch-db = { path = "crates/ch-db" }
+ch-api-types = { path = "crates/ch-api-types" }
+ch-testkit = { path = "crates/ch-testkit" }
+ch-git = { path = "crates/ch-git" }
+ch-ssh = { path = "crates/ch-ssh" }
+ch-registry = { path = "crates/ch-registry" }
+ch-auth = { path = "crates/ch-auth" }
+ch-notify = { path = "crates/ch-notify" }
+ch-collab = { path = "crates/ch-collab" }
+ch-workflow = { path = "crates/ch-workflow" }
+ch-ci = { path = "crates/ch-ci" }
+ch-mcp = { path = "crates/ch-mcp" }
+ch-render = { path = "crates/ch-render" }
+ch-web = { path = "crates/ch-web" }
+
+# Async and web
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "io-std", "signal", "sync", "time", "process"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+futures = "0.3"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["macros"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "request-id", "set-header", "timeout", "util"] }
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+
+# Data
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "chrono", "uuid", "json", "macros", "migrate", "ipnetwork"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock", "std"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+ipnet = { version = "2", features = ["serde"] }
+ipnetwork = "0.20"
+
+# Config, errors, logging
+figment = { version = "0.10", features = ["toml", "env"] }
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Crypto and encoding
+sha2 = "0.10"
+aes-gcm = "0.10"
+rand = "0.9"
+base64 = "0.22"
+hex = "0.4"
+argon2 = "0.5"
+zxcvbn = "3"
+hmac = "0.12"
+sha1 = "0.10"
+subtle = "2"
+url = "2"
+ssh-key = { version = "0.6", default-features = false, features = ["std", "alloc", "ecdsa"] }
+
+# Git, SSH and compression (git stream)
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+async-compression = { version = "0.4", features = ["tokio", "gzip"] }
+moka = { version = "0.12", features = ["future"] }
+regex = "1"
+# russh 0.65 is built on rand 0.10, so host key generation needs that generation of the crate.
+rand10 = { package = "rand", version = "0.10", features = ["thread_rng"] }
+
+# Web UI and rendering
+askama = "0.14"
+rust-embed = "8"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+ammonia = "4"
+syntect = { version = "5", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
+mime_guess = "2"
+form_urlencoded = "1"
+
+# Workflows
+marked-yaml = "0.8"
+croner = "2"
+
+# Tests and tooling
+proptest = "1"
+insta = { version = "1", features = ["json", "redactions"] }
+tempfile = "3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "rustls-tls", "stream"] }
+
+# Runner and CLI (haven-runner, haven-cli)
+bollard = { version = "0.21", features = ["ssl"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"
+globset = "0.4"
+walkdir = "2"
+toml = "0.8"
+shell-words = "1"
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+rpassword = "7"
+rustix = { version = "1", features = ["fs", "process"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+# Skeleton crates declare the dependencies their stream will need, so streams edit fewer
+# manifests and merge cleanly. Do not flip this on until the streams have landed.
+[workspace.lints.cargo]
+unused_dependencies = "allow"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "warn"
+unwrap_used = "warn"
+expect_used = "allow"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 8
+strip = true

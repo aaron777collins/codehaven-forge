@@ -1,0 +1,67 @@
+# Build the MkDocs site and check its internal links.
+name: docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+
+jobs:
+  build:
+    name: Build docs site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install MkDocs
+        run: |
+          pip install --user mkdocs mkdocs-material
+          mkdocs --version
+
+      - name: Build site
+        run: mkdocs build --strict --site-dir site
+
+      - name: Upload site
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-site
+          path: site/
+          retention-days: 7
+
+  link-check:
+    name: Check links
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 10
+    steps:
+      - name: Download built site
+        uses: actions/download-artifact@v4
+        with:
+          name: docs-site
+          path: site
+
+      - name: Check internal links
+        run: |
+          set -euo pipefail
+          broken=0
+          while IFS= read -r page; do
+            while IFS= read -r href; do
+              case "$href" in
+                https://*|http://*|mailto:*|#*) continue ;;
+              esac
+              target="$(dirname "$page")/${href%%#*}"
+              if [ ! -e "$target" ]; then
+                echo "broken link in $page -> $href"
+                broken=1
+              fi
+            done < <(grep -ohE 'href="[^"]+"' "$page" | sed -E 's/href="([^"]*)"/\1/')
+          done < <(find site -name '*.html' -type f)
+          if [ "$broken" -ne 0 ]; then
+            echo "link check failed"
+            exit 1
+          fi

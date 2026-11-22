@@ -1,0 +1,17 @@
+{% extends "repo/layout.html" %}
+{% import "repo/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="toolbar">
+  {% call m::picker(picker) %}
+  <h2 class="toolbar-title">Commits{% if !path.is_empty() %} for <code>{{ path }}</code>{% endif %}</h2>
+</div>
+{% if rows.is_empty() %}
+{% call ui::empty("No commits here", "Nothing has been committed on this branch yet.") %}
+{% else %}
+<ul class="commit-list card">
+{% for r in rows %}{% call m::commit_row(r) %}{% endfor %}
+</ul>
+{% call ui::pager(pager) %}
+{% endif %}
+{% endblock %}

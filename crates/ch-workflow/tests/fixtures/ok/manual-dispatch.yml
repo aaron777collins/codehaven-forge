@@ -1,0 +1,71 @@
+# Hand-triggered deploy with guard rails around environment and version.
+name: manual-deploy
+
+run-name: Deploy ${{ inputs.version }} to ${{ inputs.environment }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        required: true
+        default: staging
+        options:
+          - staging
+          - production
+      dry_run:
+        description: Validate only, skip the deploy
+        type: boolean
+        required: false
+        default: false
+      version:
+        description: Version tag to deploy, e.g. v1.2.3
+        type: string
+        required: true
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Echo dispatch inputs
+        run: |
+          echo "environment: ${{ inputs.environment }}"
+          echo "dry_run: ${{ inputs.dry_run }}"
+          echo "version: ${{ inputs.version }}"
+
+      - name: Check version format
+        run: |
+          case "${{ inputs.version }}" in
+            v[0-9]*.[0-9]*.[0-9]*) echo "version ok" ;;
+            *) echo "version must look like v1.2.3" >&2; exit 1 ;;
+          esac
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ !inputs.dry_run && (inputs.environment == 'staging' || (inputs.environment == 'production' && vars.PROD_DEPLOY_ENABLED == 'true')) }}
+    env:
+      DEPLOY_ENV: ${{ inputs.environment }}
+      APP_VERSION: ${{ inputs.version }}
+      API_TOKEN: ${{ secrets.DEPLOY_API_TOKEN }}
+      ROLLOUT_PERCENTAGE: ${{ vars.PROD_ROLLOUT_PERCENTAGE }}
+    steps:
+      - name: Run deploy script
+        run: |
+          echo "deploying $APP_VERSION to $DEPLOY_ENV"
+          ./scripts/deploy.sh --environment "$DEPLOY_ENV" --version "$APP_VERSION" --token "$API_TOKEN"
+
+      - name: Smoke check
+        run: |
+          echo "rollout percentage: $ROLLOUT_PERCENTAGE"
+          curl -fsS "https://$DEPLOY_ENV.example.com/healthz"

@@ -1,0 +1,69 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% import "settings_repo/tabs.html" as st %}
+{% block repo_body %}
+{% call st::tabs(base, "branches") %}
+<h2 class="page-h">Branch protection</h2>
+<form method="post" action="{{ base }}/settings/branches" class="card pad stack">
+  {% call ui::csrf_field(c.csrf) %}
+  <h3>{% if editing %}Edit the rule for <code>{{ f.pattern }}</code>{% else %}Add a protection rule{% endif %}</h3>
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="field">
+    <label for="pattern">Branch pattern</label>
+    <input id="pattern" name="pattern" type="text" value="{{ f.pattern }}" placeholder="main or release/*" maxlength="200" autocapitalize="none" spellcheck="false"{% if editing %} readonly{% endif %}>
+    <p class="hint">A branch name, or a pattern with a * such as release/*.</p>
+    {% call ui::field_error(errors.get("pattern")) %}
+  </div>
+  <div class="field">
+    <label for="required_approvals">Required approvals</label>
+    <input id="required_approvals" name="required_approvals" type="number" min="0" max="6" value="{{ f.required_approvals }}">
+    <p class="hint">How many approving reviews a pull request needs before merging, from 0 to 6.</p>
+    {% call ui::field_error(errors.get("required_approvals")) %}
+  </div>
+  <fieldset class="check-grid">
+    <legend>Rules</legend>
+    <label class="check"><input type="checkbox" name="dismiss_stale_reviews" value="1"{% if f.dismiss_stale_reviews %} checked{% endif %}> Dismiss stale reviews</label>
+    <label class="check"><input type="checkbox" name="require_code_owner_review" value="1"{% if f.require_code_owner_review %} checked{% endif %}> Require code owner review</label>
+    <label class="check"><input type="checkbox" name="require_resolved_threads" value="1"{% if f.require_resolved_threads %} checked{% endif %}> Require resolved review threads</label>
+    <label class="check"><input type="checkbox" name="strict" value="1"{% if f.strict %} checked{% endif %}> Require the branch to be up to date</label>
+    <label class="check"><input type="checkbox" name="block_force_push" value="1"{% if f.block_force_push %} checked{% endif %}> Block force push</label>
+    <label class="check"><input type="checkbox" name="block_deletion" value="1"{% if f.block_deletion %} checked{% endif %}> Block deletion</label>
+    <label class="check"><input type="checkbox" name="allow_direct_push" value="1"{% if f.allow_direct_push %} checked{% endif %}> Allow direct push without a pull request</label>
+  </fieldset>
+  <div class="field">
+    <label for="required_checks">Required checks</label>
+    <input id="required_checks" name="required_checks" type="text" value="{{ f.required_checks }}" maxlength="500" placeholder="build, test">
+    <p class="hint">Check names, separated by commas. Every one must pass before merging.</p>
+    {% call ui::field_error(errors.get("required_checks")) %}
+  </div>
+  <div class="row">
+    <button class="btn btn-primary" type="submit">{% if editing %}Save rule{% else %}Add rule{% endif %}</button>
+    {% if editing %}<a class="btn" href="{{ base }}/settings/branches">Cancel</a>{% endif %}
+  </div>
+</form>
+{% if rules.is_empty() %}
+{% call ui::empty("No protection rules", "Add a rule to control what a branch allows and what a merge needs.") %}
+{% else %}
+<ul class="rule-list">
+  {% for r in rules %}
+  <li class="rule-card card pad">
+    <div class="list-head">
+      <h3 class="rule-name"><code>{{ r.pattern }}</code></h3>
+      <span class="spacer"></span>
+      <a class="btn small" href="{{ base }}/settings/branches?edit={{ r.edit_href }}">Edit</a>
+      <form method="post" action="{{ base }}/settings/branches/remove" class="inline" data-confirm="Remove the protection rule for {{ r.pattern }}?">
+        {% call ui::csrf_field(c.csrf) %}
+        <input type="hidden" name="pattern" value="{{ r.pattern }}">
+        <button class="btn small danger" type="submit">Remove</button>
+      </form>
+    </div>
+    <p class="muted">{{ r.approvals_text }}</p>
+    {% if !r.flags.is_empty() %}<ul class="rule-flags">{% for fl in r.flags %}<li class="chip">{{ fl }}</li>{% endfor %}</ul>{% endif %}
+    {% if !r.checks.is_empty() %}
+    <p class="muted">Required checks: {% for c in r.checks %}<code>{{ c }}</code>{% if !loop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

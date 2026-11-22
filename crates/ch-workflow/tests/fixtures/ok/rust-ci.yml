@@ -1,0 +1,44 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Format, lint, test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.83.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.83.0
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          key: rust-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run clippy with warnings as errors
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run the test suite
+        run: cargo test --all-features

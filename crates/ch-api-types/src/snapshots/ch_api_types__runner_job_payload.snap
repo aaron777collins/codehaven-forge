@@ -1,0 +1,89 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "container": {
+    "env": {},
+    "image": "rust:1-trixie",
+    "options": "--cpus 2"
+  },
+  "context": {
+    "actor": "alice",
+    "api_url": "https://code.example.com/api/v3",
+    "event": {},
+    "event_name": "push",
+    "ref": "refs/heads/main",
+    "repository": "alice/demo",
+    "run_attempt": 1,
+    "run_id": 5,
+    "run_number": 1,
+    "server_url": "https://code.example.com",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "workflow": "ci"
+  },
+  "default_shell": null,
+  "default_working_directory": null,
+  "env": {
+    "RUST_LOG": "info"
+  },
+  "job_id": 11,
+  "job_key": "test",
+  "lease_seconds": 120,
+  "matrix": {
+    "os": "a"
+  },
+  "name": "ci / test (a)",
+  "needs": {
+    "lint": {
+      "outputs": {},
+      "result": "success"
+    }
+  },
+  "outputs": {
+    "ver": "${{ steps.v.outputs.ver }}"
+  },
+  "repo": {
+    "clone_url": "https://code.example.com/alice/demo.git",
+    "default_branch": "main",
+    "full_name": "alice/demo",
+    "id": 3
+  },
+  "run_id": 5,
+  "runs_on": [
+    "ubuntu-latest"
+  ],
+  "secrets": {},
+  "steps": [
+    {
+      "continue_on_error": false,
+      "env": {},
+      "id": null,
+      "if": null,
+      "kind": "uses",
+      "name": "Check out",
+      "number": 1,
+      "timeout_minutes": null,
+      "uses": "actions/checkout@v4",
+      "with": {
+        "fetch-depth": "1"
+      }
+    },
+    {
+      "continue_on_error": false,
+      "env": {},
+      "id": "v",
+      "if": "success()",
+      "kind": "run",
+      "name": null,
+      "number": 2,
+      "run": "echo hello from codehaven",
+      "shell": null,
+      "timeout_minutes": 5,
+      "working_directory": null
+    }
+  ],
+  "timeout_minutes": 60,
+  "token": "job_secret",
+  "vars": {}
+}

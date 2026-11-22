@@ -1,0 +1,25 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<section class="card commit-head">
+  <h2 class="commit-h1">{{ title }}</h2>
+  {% if !body.is_empty() %}<pre class="commit-body">{{ body }}</pre>{% endif %}
+  <p class="commit-meta"><strong>{{ author }}</strong> committed {% call ui::time(when) %}{% if let Some(cm) = committer %}, committed by {{ cm }}{% endif %}</p>
+  <p class="commit-ids">
+    {% for p in parents %}<span class="muted">parent</span> <a class="sha-chip" href="{{ p.1 }}"><code>{{ p.0 }}</code></a> {% endfor %}
+    <span class="muted">commit</span> <code class="sha-chip">{{ short }}</code>
+    <button type="button" class="icon-btn small" data-copy="{{ sha }}" aria-label="Copy full commit id"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg></button>
+    <a class="btn small" href="{{ tree_href }}">Browse files</a>
+  </p>
+  {% if !checks.is_empty() %}
+  <ul class="check-list">
+    {% for ch in checks %}<li>{% call ui::status(ch.status) %} {% if ch.href.is_empty() %}{{ ch.name }}{% else %}<a href="{{ ch.href }}">{{ ch.name }}</a>{% endif %} <span class="muted">{{ ch.status.label }}</span></li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+<div class="diff-bar">
+  <p><strong>{{ files }}</strong> file{% if files != 1 %}s{% endif %} changed, <span class="add">+{{ additions }}</span> <span class="del">-{{ deletions }}</span></p>
+  <div class="seg" role="group" aria-label="Diff view"><a class="seg-btn{% if !split %} current{% endif %}" href="{{ mode_unified }}">Unified</a><a class="seg-btn{% if split %} current{% endif %}" href="{{ mode_split }}">Split</a></div>
+</div>
+<div class="diffs">{{ diff_html|safe }}</div>
+{% endblock %}

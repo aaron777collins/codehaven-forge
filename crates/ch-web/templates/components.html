@@ -1,0 +1,17 @@
+{% macro icon(name) %}<svg class="icon" aria-hidden="true"><use href="#i-{{ name }}"/></svg>{% endmacro %}
+
+{% macro avatar(name, size) %}<img class="avatar av-{{ size }}" src="/avatar/{{ name }}.svg" alt="" width="{{ size }}" height="{{ size }}" loading="lazy">{% endmacro %}
+
+{% macro time(t) %}<time datetime="{{ t.iso }}" title="{{ t.title }}">{{ t.ago }}</time>{% endmacro %}
+
+{% macro label(l) %}<a class="label {{ l.class }}" href="{{ l.href }}"{% if !l.description.is_empty() %} title="{{ l.description }}"{% endif %}>{{ l.name }}</a>{% endmacro %}
+
+{% macro status(s) %}<span class="status status-{{ s.class }}" title="{{ s.label }}"><svg class="icon" aria-hidden="true"><use href="#i-{{ s.icon }}"/></svg><span class="sr-only">{{ s.label }}</span></span>{% endmacro %}
+
+{% macro empty(title, text) %}<div class="empty"><h3>{{ title }}</h3><p class="muted">{{ text }}</p></div>{% endmacro %}
+
+{% macro pager(p) %}{% if p.prev.is_some() || p.next.is_some() %}<nav class="pager" aria-label="Pagination">{% if let Some(u) = p.prev %}<a class="btn" href="{{ u }}" rel="prev">Newer</a>{% else %}<span class="btn disabled" aria-disabled="true">Newer</span>{% endif %}{% if let Some(u) = p.next %}<a class="btn" href="{{ u }}" rel="next">Older</a>{% else %}<span class="btn disabled" aria-disabled="true">Older</span>{% endif %}</nav>{% endif %}{% endmacro %}
+
+{% macro csrf_field(token) %}<input type="hidden" name="_csrf" value="{{ token }}">{% endmacro %}
+
+{% macro field_error(msg) %}{% if !msg.is_empty() %}<p class="field-error" role="alert">{{ msg }}</p>{% endif %}{% endmacro %}

@@ -1,0 +1,14 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "avatar_url": "https://code.example.com/avatars/20.svg",
+  "created_at": "2026-01-02T03:04:05Z",
+  "description": "the forge collective",
+  "html_url": "https://code.example.com/orgs/haven",
+  "id": 20,
+  "login": "haven",
+  "name": "Haven",
+  "url": "https://code.example.com/api/v3/orgs/haven"
+}

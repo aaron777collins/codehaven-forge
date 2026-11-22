@@ -1,0 +1,75 @@
+# A fresh copy of the instance plus the harness, torn down after each run, in a throwaway project
+# of its own (deploy/dev/e2e.sh picks the name). No published ports: the harness runs inside this
+# network. Every service carries the throwaway label, which the scripts check before they touch a
+# project.
+#
+#   deploy/dev/e2e.sh --tag test-mine [--steps 0-1]
+name: e2e-default
+
+services:
+  postgres:
+    labels: {org.codehaven.throwaway: "true"}
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: codehaven
+      POSTGRES_PASSWORD: e2e-only-not-a-secret
+      POSTGRES_DB: codehaven
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codehaven -d codehaven"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    mem_limit: 1g
+    networks: [e2e]
+
+  server:
+    labels: {org.codehaven.throwaway: "true"}
+    image: codehaven-server:${CODEHAVEN_TAG:?a throwaway tag, set by deploy/dev/e2e.sh}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["codehaven", "serve", "--migrate"]
+    environment: &env
+      CODEHAVEN__SERVER__EXTERNAL_URL: http://server:3200
+      # The harness acts as a proxy, so it can send X-Forwarded-For and act as many clients.
+      CODEHAVEN__HTTP__TRUSTED_PROXIES: '["${CODEHAVEN_E2E_SUBNET:?set CODEHAVEN_E2E_SUBNET to a free /20}"]'
+      CODEHAVEN__DATABASE__URL: postgres://codehaven:e2e-only-not-a-secret@postgres:5432/codehaven
+      CODEHAVEN__STORAGE__DATA_DIR: /data
+      CODEHAVEN__LOG__FORMAT: pretty
+    tmpfs:
+      # exec: docker mounts tmpfs noexec by default, and the server now refuses to start when it
+      # cannot run its git hooks (they enforce branch protection).
+      - /data:exec,uid=10001,gid=10001,mode=0755
+    healthcheck:
+      test: ["CMD", "codehaven", "healthcheck"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    mem_limit: 1g
+    networks: [e2e]
+
+  e2e:
+    labels: {org.codehaven.throwaway: "true"}
+    image: codehaven-e2e:${CODEHAVEN_TAG:?a throwaway tag, set by deploy/dev/e2e.sh}
+    depends_on:
+      server:
+        condition: service_healthy
+    command: ["ch-e2e", "--steps", "${E2E_STEPS:-0-1}"]
+    environment:
+      <<: *env
+      CH_E2E_URL: http://server:3200
+    tmpfs:
+      # exec: the harness runs `codehaven doctor` here, whose git hooks check needs it.
+      - /data:exec,uid=10001,gid=10001,mode=0755
+    mem_limit: 1g
+    networks: [e2e]
+
+networks:
+  e2e:
+    labels: {org.codehaven.throwaway: "true"}
+    ipam:
+      config:
+        - subnet: ${CODEHAVEN_E2E_SUBNET:?set CODEHAVEN_E2E_SUBNET to a free /20}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block content %}
+<main id="main" class="page">
+  <h1>New repository</h1>
+  <p class="muted">A repository holds your code, its history and everything built around it.</p>
+  <section class="card stack">
+    <form method="post" action="/new" class="stack">
+      {% call ui::csrf_field(c.csrf) %}
+      {% if !errors.general.is_empty() %}<p class="form-error">{{ errors.general }}</p>{% endif %}
+      <div class="field">
+        <label for="owner_id">Owner</label>
+        <select id="owner_id" name="owner_id">
+          {% for o in owners %}
+          <option value="{{ o.id }}"{% if o.selected %} selected{% endif %}>{{ o.login }}</option>
+          {% endfor %}
+        </select>
+        {% call ui::field_error(errors.get("owner_id")) %}
+        <p class="hint">Organizations you own also appear here.</p>
+      </div>
+      <div class="field">
+        <label for="name">Repository name</label>
+        <input id="name" name="name" type="text" value="{{ name }}" maxlength="100" required>
+        {% call ui::field_error(errors.get("name")) %}
+        <p class="hint">Letters, numbers, dots, dashes and underscores. It becomes part of your repository address.</p>
+      </div>
+      <div class="field">
+        <label for="description">Description <span class="muted">(optional)</span></label>
+        <input id="description" name="description" type="text" value="{{ description }}" maxlength="200">
+        {% call ui::field_error(errors.get("description")) %}
+      </div>
+      <fieldset class="field">
+        <legend>Visibility</legend>
+        <label class="choice"><input type="radio" name="visibility" value="private"{% if !public %} checked{% endif %}> <strong>Private.</strong> Only people you give access to can see it.</label>
+        <label class="choice"><input type="radio" name="visibility" value="public"{% if public %} checked{% endif %}> <strong>Public.</strong> Every account on this server can read it. Nobody else can.</label>
+      </fieldset>
+      <label class="choice"><input type="checkbox" name="auto_init" value="1"{% if auto_init %} checked{% endif %}> Add a README file</label>
+      <div class="inline">
+        <button class="btn btn-primary" type="submit">Create repository</button>
+      </div>
+    </form>
+  </section>
+</main>
+{% endblock %}

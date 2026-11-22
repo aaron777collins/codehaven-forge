@@ -1,0 +1,14 @@
+{% extends "repo/layout.html" %}
+{% import "pulls/head.html" as ph %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+{% call ph::head(h) %}
+{% if rows.is_empty() %}{% call ui::empty("No checks have run", "When a workflow runs on this branch, its result shows up here.") %}{% else %}
+<section class="card">
+  <header class="card-head card-head-start">{% if let Some(s) = summary %}{% call ui::status(s) %}{% endif %}<h2>Checks for {{ sha }}</h2></header>
+  <ul class="check-list pad">
+  {% for ch in rows %}<li>{% call ui::status(ch.status) %} {% if ch.href.is_empty() %}{{ ch.name }}{% else %}<a href="{{ ch.href }}">{{ ch.name }}</a>{% endif %} <span class="muted">{{ ch.status.label }}</span></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

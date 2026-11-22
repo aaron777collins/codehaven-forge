@@ -1,0 +1,25 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<h2 class="page-h">New release</h2>
+<form method="post" action="{{ action }}" class="stack">
+  {% call ui::csrf_field(c.csrf) %}
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="field"><label for="tag">Tag name</label><input id="tag" name="tag" type="text" value="{{ input.tag }}" placeholder="v1.2.3" autocapitalize="none" spellcheck="false" required><p class="hint">If the tag does not exist yet, it is created on the target branch.</p>{% call ui::field_error(errors.get("tag")) %}</div>
+  <div class="field"><label for="target">Target branch</label><select id="target" name="target">{% for b in branches %}<option value="{{ b.name }}"{% if b.on %} selected{% endif %}>{{ b.name }}</option>{% endfor %}</select></div>
+  <div class="field"><label for="title">Title</label><input id="title" name="title" type="text" value="{{ input.title }}" maxlength="200" placeholder="Version 1.2.3"><p class="hint">Leave this empty to use the tag as the title.</p>{% call ui::field_error(errors.get("title")) %}</div>
+  <div class="field editor-tabs" data-tabs>
+    <div class="tabs small" role="tablist"><button type="button" class="tab current" role="tab" data-tab="write">Write</button><button type="button" class="tab" role="tab" data-tab="preview" data-preview-url="/preview" data-preview-owner="{{ owner }}" data-preview-repo="{{ repo }}">Preview</button></div>
+    <label class="sr-only" for="notes">Release notes</label>
+    <textarea id="notes" name="notes" rows="14" data-tab-pane="write" data-md-input>{{ input.notes }}</textarea>
+    <div class="markdown preview-pane" data-tab-pane="preview" hidden></div>
+    <p class="hint">Markdown works. Type # to mention an issue and @ to mention a person.</p>
+  </div>
+  <fieldset class="choices">
+    <legend>Kind of release</legend>
+    <label class="choice"><input type="checkbox" name="prerelease"{% if input.prerelease %} checked{% endif %}> Pre-release, for a version that is not finished</label>
+    <label class="choice"><input type="checkbox" name="draft"{% if input.draft %} checked{% endif %}> Draft, only people with write access can see it</label>
+  </fieldset>
+  <div class="row"><button class="btn btn-primary" type="submit">Create release</button><a class="btn" href="{{ cancel_href }}">Cancel</a></div>
+</form>
+{% endblock %}

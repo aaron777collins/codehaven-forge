@@ -1,0 +1,30 @@
+{% extends "repo/layout.html" %}
+{% import "repo/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<h2 class="page-h">Compare changes</h2>
+<form class="compare-form" method="get" action="{{ action }}">
+  <label class="field-inline"><span>Base</span>
+    <select name="base">{% for b in branches %}<option value="{{ b }}"{% if *b == base_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</select></label>
+  <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"/></svg>
+  <label class="field-inline"><span>Compare</span>
+    <select name="head">{% for b in branches %}<option value="{{ b }}"{% if *b == head_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</select></label>
+  <button class="btn" type="submit">Compare</button>
+</form>
+{% if has_result %}
+  {% if same %}
+  {% call ui::empty("Nothing to compare", "These two are the same. There are no changes between them.") %}
+  {% else %}
+  <div class="card compare-summary">
+    <p><strong>{{ ahead }}</strong> commit{% if ahead != 1 %}s{% endif %} ahead{% if behind > 0 %}, <strong>{{ behind }}</strong> behind{% endif %}.</p>
+    <a class="btn btn-primary" href="{{ new_pull }}"><svg class="icon" aria-hidden="true"><use href="#i-git-pull-request"/></svg>Create pull request</a>
+  </div>
+  {% if !rows.is_empty() %}<ul class="commit-list card">{% for r in rows %}{% call m::commit_row(r) %}{% endfor %}</ul>{% endif %}
+  <div class="diff-bar">
+    <p><strong>{{ files }}</strong> file{% if files != 1 %}s{% endif %} changed, <span class="add">+{{ additions }}</span> <span class="del">-{{ deletions }}</span></p>
+    <div class="seg" role="group" aria-label="Diff view"><a class="seg-btn{% if !split %} current{% endif %}" href="{{ mode_unified }}">Unified</a><a class="seg-btn{% if split %} current{% endif %}" href="{{ mode_split }}">Split</a></div>
+  </div>
+  <div class="diffs">{{ diff_html|safe }}</div>
+  {% endif %}
+{% endif %}
+{% endblock %}

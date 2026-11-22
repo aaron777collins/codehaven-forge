@@ -1,0 +1,30 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "actor": {
+    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "html_url": "https://code.example.com/octocat",
+    "id": 1,
+    "login": "octocat",
+    "site_admin": false,
+    "type": "User",
+    "url": "https://code.example.com/api/v3/users/octocat"
+  },
+  "created_at": "2026-01-02T03:04:05Z",
+  "event": "labeled",
+  "id": 21,
+  "label": {
+    "color": "ff0000",
+    "default": false,
+    "id": 2,
+    "name": "bug",
+    "url": "https://code.example.com/api/v3/repos/octo/haven/labels/bug"
+  },
+  "source": {
+    "issue": {
+      "number": 7
+    }
+  }
+}

@@ -1,0 +1,11 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "conclusion": "success",
+  "outputs": {
+    "ver": "1.2"
+  },
+  "status": "completed"
+}

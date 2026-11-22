@@ -1,0 +1,71 @@
+name: Node E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PORT: "3000"
+
+jobs:
+  e2e:
+    name: End-to-end suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the app
+        run: npm run build
+
+      - name: Start the app in the background
+        run: |
+          npm run start &
+          npx --yes wait-on "http://localhost:${PORT}/health"
+
+      - name: Run the e2e suite
+        run: npm run test:e2e
+
+  browser-experiment:
+    name: Experimental browser (non-blocking)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install an experimental browser build
+        run: npx --yes playwright install --with-deps chromium-tip-of-tree
+
+      - name: Run e2e against the experimental browser
+        run: npx playwright test --project=experimental
+
+  report:
+    name: E2E report
+    needs: [e2e, browser-experiment]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Print job outcomes
+        run: |
+          echo "e2e: ${{ needs.e2e.result }}"
+          echo "browser-experiment: ${{ needs.browser-experiment.result }}"
+
+      - name: Fail loudly when the main suite failed
+        if: ${{ job.status == 'failure' || needs.e2e.result == 'failure' }}
+        run: |
+          echo "E2E regressions detected; see the e2e job logs."
+          exit 1

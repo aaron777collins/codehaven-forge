@@ -1,0 +1,12 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "expires_in_days": 30,
+  "name": "ci token",
+  "scopes": [
+    "repo",
+    "read:org"
+  ]
+}

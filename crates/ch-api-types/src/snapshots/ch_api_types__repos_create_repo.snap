@@ -1,0 +1,11 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "auto_init": true,
+  "default_branch": "main",
+  "description": "a self-hosted forge",
+  "name": "codehaven",
+  "private": false
+}

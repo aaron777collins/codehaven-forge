@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% import "people/macros.html" as m %}
+{% block content %}
+<main id="main" class="page">
+  <div class="dash">
+    <section class="dash-main">
+      <div class="card-head">
+        <h1>Your repositories</h1>
+        <a class="btn btn-primary" href="/new"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>New repository</a>
+      </div>
+      {% if !repos_ok %}
+      <p class="muted pad">Repositories are not available right now.</p>
+      {% else if repos.is_empty() %}
+      {% call ui::empty("You have no repositories yet", "Make one, or ask someone to add you to theirs.") %}
+      {% else %}
+      <ul class="card">
+        {% for r in repos %}
+        <li class="repo-item">
+          <p class="repo-item-title"><a href="{{ r.href }}">{{ r.name }}</a>{% if r.private %}<span class="chip" title="Only people you give access to can see this repository.">Private</span>{% else %}<span class="chip" title="Every account on this server can read it. Nobody else can.">Public</span>{% endif %}</p>
+          {% if !r.description.is_empty() %}<p>{{ r.description }}</p>{% endif %}
+          <p class="muted small">{% if let Some(t) = r.updated %}Updated {% call ui::time(t) %}{% else %}No pushes yet{% endif %}</p>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    <aside class="dash-side">
+      {% if show_notifications %}
+      <section class="card">
+        <div class="card-head"><h2>Notifications</h2><a class="btn btn-quiet" href="/notifications">See all</a></div>
+        {% if notifications.is_empty() %}
+        <p class="muted pad">You are all caught up. Nothing is waiting for you.</p>
+        {% else %}
+        <ul>
+          {% for n in notifications %}
+          <li class="notif-item">
+            {% if let Some(h) = n.href %}<a href="{{ h }}">{{ n.title }}</a>{% else %}<span>{{ n.title }}</span>{% endif %}
+            <p class="muted small">{{ n.reason }} <span class="dot" aria-hidden="true">&middot;</span> {% call ui::time(n.when) %}</p>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </section>
+      {% endif %}
+      {% if show_orgs %}
+      <section class="card">
+        <div class="card-head"><h2>Your organizations</h2><a class="btn btn-quiet" href="/new/org">New organization</a></div>
+        {% if orgs.is_empty() %}
+        <p class="muted pad">You are not in any organizations yet.</p>
+        {% else %}
+        <ul>
+          {% for o in orgs %}{% call m::person_row(o) %}{% endfor %}
+        </ul>
+        {% endif %}
+      </section>
+      {% endif %}
+      {% if show_recent %}
+      <section class="card">
+        <div class="card-head"><h2>Recently updated across the server</h2></div>
+        {% if recent.is_empty() %}
+        <p class="muted pad">Nothing has been pushed anywhere yet.</p>
+        {% else %}
+        <ul>
+          {% for h in recent %}
+          <li class="hit-item">
+            {% if let Some(u) = h.href %}<a class="hit-title" href="{{ u }}">{{ h.title }}</a>{% else %}<span class="hit-title">{{ h.title }}</span>{% endif %}
+            {% if !h.snippet.is_empty() %}<p class="muted small">{{ h.snippet }}</p>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </section>
+      {% endif %}
+    </aside>
+  </div>
+</main>
+{% endblock %}

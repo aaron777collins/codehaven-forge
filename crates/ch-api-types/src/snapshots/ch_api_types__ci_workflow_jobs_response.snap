@@ -1,0 +1,38 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "jobs": [
+    {
+      "check_run_url": "https://code.example.com/api/v3/repos/alice/codehaven/check-runs/5001",
+      "completed_at": "2026-01-02T03:04:05Z",
+      "conclusion": "success",
+      "html_url": "https://code.example.com/alice/codehaven/actions/runs/900001/job/60001",
+      "id": 60001,
+      "labels": [
+        "self-hosted",
+        "linux"
+      ],
+      "name": "build",
+      "run_attempt": 1,
+      "run_id": 900001,
+      "runner_id": 3,
+      "runner_name": "runner-1",
+      "started_at": "2026-01-02T03:04:05Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-01-02T03:04:05Z",
+          "conclusion": "success",
+          "name": "checkout",
+          "number": 1,
+          "started_at": "2026-01-02T03:04:05Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://code.example.com/api/v3/repos/alice/codehaven/actions/jobs/60001"
+    }
+  ],
+  "total_count": 1
+}

@@ -1,0 +1,19 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "actor": {
+    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "html_url": "https://code.example.com/octocat",
+    "id": 1,
+    "login": "octocat",
+    "site_admin": false,
+    "type": "User",
+    "url": "https://code.example.com/api/v3/users/octocat"
+  },
+  "commit_id": "abcdef1234567890",
+  "created_at": "2026-01-02T03:04:05Z",
+  "event": "closed",
+  "id": 30
+}

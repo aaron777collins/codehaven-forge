@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block content %}
+<main id="main" class="auth-wrap">
+  <section class="auth-card">
+    <h1>Enter your code</h1>
+    <p class="muted">Open your authenticator app and type the six digit code for {{ c.instance }}. You can also use one of your recovery codes.</p>
+    <form method="post" action="/login/two-factor" class="stack">
+      {% call ui::csrf_field(csrf) %}
+      <input type="hidden" name="next" value="{{ next }}">
+      {% if !error.is_empty() %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+      <div class="field">
+        <label for="code">Code</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" autocapitalize="none" spellcheck="false" required autofocus>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Continue</button>
+    </form>
+    <p class="small"><a href="/login">Start again</a></p>
+  </section>
+</main>
+{% endblock %}

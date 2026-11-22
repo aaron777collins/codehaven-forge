@@ -1,0 +1,51 @@
+name: Node Matrix CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22", "24"]
+        os: [ubuntu-24.04, macos-15]
+        exclude:
+          - os: macos-15
+            node: "20"
+        include:
+          - os: windows-2025
+            node: "22"
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Show the runner and Node version
+        run: echo "Runner OS ${{ runner.os }}, matrix node ${{ matrix.node }}"
+
+      - name: Install Node.js ${{ matrix.node }}
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            curl -fsSL "https://nodejs.org/dist/v${{ matrix.node }}.0.0/node-v${{ matrix.node }}.0.0-linux-x64.tar.xz" | sudo tar -xJ -C /usr/local --strip-components=1
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            curl -fsSL "https://nodejs.org/dist/v${{ matrix.node }}.0.0/node-v${{ matrix.node }}.0.0-darwin-arm64.tar.xz" | sudo tar -xJ -C /usr/local --strip-components=1
+          else
+            choco install nodejs --version="${{ matrix.node }}.0.0" -y --no-progress
+          fi
+
+      - name: Cache npm downloads
+        uses: actions/cache@v4
+        with:
+          key: npm-${{ runner.os }}-node${{ matrix.node }}-${{ hashFiles('**/package-lock.json') }}
+          path: ~/.npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the test suite
+        run: npm test

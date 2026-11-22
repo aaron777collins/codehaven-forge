@@ -1,0 +1,22 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "body": "Me too",
+  "created_at": "2026-01-02T03:04:05Z",
+  "html_url": "https://code.example.com/octo/haven/issues/42#issuecomment-11",
+  "id": 11,
+  "issue_url": "https://code.example.com/api/v3/repos/octo/haven/issues/42",
+  "updated_at": "2026-01-02T03:04:05Z",
+  "url": "https://code.example.com/api/v3/repos/octo/haven/issues/comments/11",
+  "user": {
+    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "html_url": "https://code.example.com/octocat",
+    "id": 1,
+    "login": "octocat",
+    "site_admin": false,
+    "type": "User",
+    "url": "https://code.example.com/api/v3/users/octocat"
+  }
+}

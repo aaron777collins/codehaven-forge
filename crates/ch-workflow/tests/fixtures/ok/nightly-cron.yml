@@ -1,0 +1,70 @@
+# Nightly full-suite run plus experimental checks; one at a time.
+name: nightly
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  full-suite:
+    name: Full test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        id: install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev ninja-build
+
+      - name: Configure and build
+        id: build
+        run: |
+          cmake -S . -B build -G Ninja
+          cmake --build build --parallel
+
+      - name: Run everything
+        id: test
+        run: ctest --test-dir build --output-on-failure
+
+  experimental:
+    name: Experimental checks
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Fuzz smoke test
+        id: fuzz
+        run: |
+          echo "running fuzz targets for 10 minutes"
+          ./scripts/fuzz-smoke.sh --max-total-time 600
+
+  summary:
+    name: Nightly summary
+    runs-on: ubuntu-latest
+    needs: [full-suite, experimental]
+    if: ${{ always() }}
+    steps:
+      - name: Print step conclusions
+        run: |
+          echo "nightly summary for ${{ github.sha }} on ${{ runner.os }}"
+          echo "checkout:  ${{ needs.full-suite.steps.checkout.conclusion }}"
+          echo "install:   ${{ needs.full-suite.steps.install.conclusion }}"
+          echo "build:     ${{ needs.full-suite.steps.build.conclusion }}"
+          echo "test:      ${{ needs.full-suite.steps.test.conclusion }}"
+          echo "fuzz:      ${{ needs.experimental.steps.fuzz.conclusion }}"
+          if [ "${{ needs.experimental.steps.fuzz.conclusion }}" != 'success' ]; then
+            echo "experimental checks did not pass; investigate before the next release"
+          fi

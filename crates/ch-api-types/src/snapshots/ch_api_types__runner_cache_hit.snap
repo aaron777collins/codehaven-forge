@@ -1,0 +1,12 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "hit": {
+    "exact": true,
+    "id": 4,
+    "key": "cargo-abc",
+    "size": 1024
+  }
+}

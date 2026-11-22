@@ -1,0 +1,8 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "key": "ssh-ed25519 AAAAC3NzaC1lZDI1anNt test",
+  "title": "laptop"
+}

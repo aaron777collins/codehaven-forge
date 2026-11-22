@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="settings-shell">
+  <nav class="settings-nav" aria-label="Settings">
+    <p class="nav-head">Your settings</p>
+    <a {% if section == "profile" %}class="current" {% endif %}href="/settings/profile"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg><span>Profile</span></a>
+    <a {% if section == "password" %}class="current" {% endif %}href="/settings/password"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg><span>Password</span></a>
+    <a {% if section == "security" %}class="current" {% endif %}href="/settings/security"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg><span>Two-factor and security</span></a>
+    <a {% if section == "sessions" %}class="current" {% endif %}href="/settings/sessions"><svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg><span>Sessions</span></a>
+    <a {% if section == "keys" %}class="current" {% endif %}href="/settings/keys"><svg class="icon" aria-hidden="true"><use href="#i-key-round"/></svg><span>SSH keys</span></a>
+    <a {% if section == "tokens" %}class="current" {% endif %}href="/settings/tokens"><svg class="icon" aria-hidden="true"><use href="#i-id-card"/></svg><span>Access tokens</span></a>
+    <a {% if section == "apps" %}class="current" {% endif %}href="/settings/apps"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span>Connected apps</span></a>
+    <a {% if section == "appearance" %}class="current" {% endif %}href="/settings/appearance"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg><span>Appearance</span></a>
+  </nav>
+  <div class="settings-body" id="main">
+    {% block settings_body %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

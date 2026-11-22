@@ -1,0 +1,15 @@
+{% extends "settings/layout.html" %}
+{% import "components.html" as ui %}
+{% block settings_body %}
+<h1>Two-factor is on</h1>
+<p>From now on, signing in asks for a code from your app as well as your password.</p>
+<div class="settings-card stack">
+  <h2>Recovery codes</h2>
+  <p>Save these somewhere safe, such as your password manager. Each one works once in place of your app code, for example if you lose your phone. Copy them now. You will not see them again.</p>
+  <div class="recovery-codes">{% for code in codes %}<span>{{ code }}</span>{% endfor %}</div>
+  <div class="row">
+    <button type="button" class="btn" data-copy="{{ codes_text }}">Copy all codes</button>
+    <a class="btn btn-primary" href="/settings/security">Done</a>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,16 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "body": "Looks great",
+  "comments": [
+    {
+      "body": "Nit",
+      "line": 5,
+      "path": "src/main.rs"
+    }
+  ],
+  "commit_id": "abc123",
+  "event": "APPROVE"
+}

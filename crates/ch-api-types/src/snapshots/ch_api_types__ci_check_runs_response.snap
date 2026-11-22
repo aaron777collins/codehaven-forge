@@ -1,0 +1,27 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "check_runs": [
+    {
+      "completed_at": "2026-01-02T03:04:05Z",
+      "conclusion": "success",
+      "details_url": "https://code.example.com/alice/codehaven/actions/runs/900001",
+      "external_id": "900001",
+      "head_sha": "abc123def4567890abcdef0123456789abcdef01",
+      "html_url": "https://code.example.com/alice/codehaven/actions/runs/900001",
+      "id": 5001,
+      "name": "build",
+      "output": {
+        "summary": "built in 42s",
+        "text": "1 warning",
+        "title": "build"
+      },
+      "started_at": "2026-01-02T03:04:05Z",
+      "status": "completed",
+      "url": "https://code.example.com/api/v3/repos/alice/codehaven/check-runs/5001"
+    }
+  ],
+  "total_count": 1
+}

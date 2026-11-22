@@ -1,0 +1,8 @@
+{% extends "admin/layout.html" %}
+{% block admin_body %}
+<h1>Invite created</h1>
+<p>Copy the link now. For safety the server only keeps a hash and cannot show it again.</p>
+<div class="copy-box"><code>{{ url }}</code><button type="button" class="btn small" data-copy="{{ url }}">Copy</button></div>
+<p>It works until <time datetime="{{ expires.iso }}" title="{{ expires.title }}">{{ expires.title }}</time>.</p>
+<p><a class="btn" href="/admin/invites">Back to invites</a></p>
+{% endblock %}

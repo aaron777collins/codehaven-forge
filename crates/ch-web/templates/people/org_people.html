@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% import "people/macros.html" as m %}
+{% block content %}
+<main id="main" class="page">
+  <div class="profile-head">
+    {% call ui::avatar(login, 32) %}
+    <div>
+      <h1>{{ display }}</h1>
+      <p class="muted">@{{ login }} <span class="chip">Organization</span></p>
+    </div>
+  </div>
+  {% call m::org_tabs(login_enc, base, "people", is_owner) %}
+  {% if is_owner %}
+  <form method="post" action="/orgs/{{ login_enc }}/people/add" class="card pad stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <h3>Add a person</h3>
+    <div class="field">
+      <label for="add-username">Username</label>
+      <input id="add-username" name="username" type="text" maxlength="39" autocapitalize="none" spellcheck="false">
+      <p class="hint">People need an account first. An owner can invite one from Site admin.</p>
+    </div>
+    <div class="field">
+      <label for="add-role">Role</label>
+      <select id="add-role" name="role">
+        <option value="member" selected>Member</option>
+        <option value="owner">Owner</option>
+      </select>
+    </div>
+    <div class="row"><button class="btn btn-primary" type="submit">Add</button></div>
+  </form>
+  {% endif %}
+  {% if rows.is_empty() %}
+  {% call ui::empty("No members", "Nobody is in this organization yet.") %}
+  {% else %}
+  <ul class="collab-list card">
+    {% for r in rows %}
+    <li class="collab-row">
+      {% call ui::avatar(r.username, 28) %}
+      <a href="{{ r.href }}">{{ r.display }}</a>
+      {% if r.is_owner %}<span class="chip">Owner</span>{% else %}<span class="chip chip-muted">Member</span>{% endif %}
+      {% if is_owner %}
+      <span class="row-break" aria-hidden="true"></span>
+      <form method="post" action="/orgs/{{ login_enc }}/people/{{ r.username }}/role" class="inline perm-form">
+        {% call ui::csrf_field(c.csrf) %}
+        <label class="sr-only" for="role-{{ r.user_id }}">Role for {{ r.username }}</label>
+        <select id="role-{{ r.user_id }}" name="role">
+          <option value="member"{% if !r.is_owner %} selected{% endif %}>Member</option>
+          <option value="owner"{% if r.is_owner %} selected{% endif %}>Owner</option>
+        </select>
+        <button class="btn small" type="submit">Save</button>
+      </form>
+      {% endif %}
+      <span class="spacer"></span>
+      {% if is_owner %}
+      <form method="post" action="/orgs/{{ login_enc }}/people/{{ r.username }}/remove" class="inline" data-confirm="Remove {{ r.username }} from this organization?">
+        {% call ui::csrf_field(c.csrf) %}
+        <button class="btn small danger" type="submit">Remove</button>
+      </form>
+      {% endif %}
+      {% if r.is_viewer && !is_owner %}
+      <form method="post" action="/orgs/{{ login_enc }}/people/{{ r.username }}/remove" class="inline">
+        {% call ui::csrf_field(c.csrf) %}
+        <button class="btn small" type="submit">Leave</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</main>
+{% endblock %}

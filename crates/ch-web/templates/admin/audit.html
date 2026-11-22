@@ -1,0 +1,32 @@
+{% extends "admin/layout.html" %}
+{% import "components.html" as ui %}
+{% block admin_body %}
+<h1>Audit log</h1>
+<form class="filter-bar" method="get" action="/admin/audit">
+  <div class="field"><label for="audit-actor">Actor id</label><input id="audit-actor" name="actor" type="number" value="{{ actor }}"></div>
+  <div class="field"><label for="audit-action">Action</label><input id="audit-action" name="action" type="text" value="{{ action }}" placeholder="auth.sign_in" autocapitalize="off" spellcheck="false"></div>
+  <div class="field"><label for="audit-ip">IP address</label><input id="audit-ip" name="ip" type="text" value="{{ ip }}" placeholder="10.0.0.1" autocapitalize="off" spellcheck="false"></div>
+  <button class="btn" type="submit">Filter</button>
+</form>
+{% if rows.is_empty() %}
+{% call ui::empty("Nothing here", "No events match these filters.") %}
+{% else %}
+<table class="data-table card audit-table">
+  <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>IP</th><th>Outcome</th><th>Details</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td data-label="Time" class="audit-time">{% call ui::time(r.at) %}</td>
+      <td data-label="Actor" class="audit-actor">{{ r.actor }}</td>
+      <td data-label="Action" class="audit-action">{{ r.action_label }}</td>
+      <td data-label="Target" class="audit-target">{{ r.target }}</td>
+      <td data-label="IP" class="audit-ip">{{ r.ip }}</td>
+      <td data-label="Outcome" class="audit-outcome"><span class="chip {{ r.chip_class }}">{{ r.chip_label }}</span></td>
+      <td data-label="Details" class="audit-details">{% if !r.details.is_empty() %}<details><summary>details</summary><pre>{{ r.details }}</pre></details>{% else %}-{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if let Some(href) = older_href %}<p><a class="btn" href="{{ href }}">Older</a></p>{% endif %}
+{% endblock %}

@@ -1,0 +1,18 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "teams": [],
+  "users": [
+    {
+      "avatar_url": "https://code.example.com/avatars/2.svg",
+      "html_url": "https://code.example.com/hubot",
+      "id": 2,
+      "login": "hubot",
+      "site_admin": false,
+      "type": "User",
+      "url": "https://code.example.com/api/v3/users/hubot"
+    }
+  ]
+}

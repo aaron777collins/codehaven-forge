@@ -1,0 +1,42 @@
+{% extends "repo/layout.html" %}
+{% import "repo/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="toolbar">
+  {% call m::picker(picker) %}
+  {% call m::crumbs(picker.short, root_href, crumbs) %}
+</div>
+{% if let Some(l) = last %}
+<div class="last-commit">
+  <img class="avatar av-24" src="/avatar/{{ l.row.author_seed }}.svg" alt="" width="24" height="24">
+  <strong>{{ l.row.author }}</strong>
+  <a class="commit-title" href="{{ l.row.href }}">{{ l.row.title }}</a>
+  <span class="spacer"></span>
+  <a class="sha-chip" href="{{ l.row.href }}"><code>{{ l.row.short }}</code></a>
+  <span class="muted">{% call ui::time(l.row.when) %}</span>
+</div>
+{% endif %}
+<section class="card blob">
+  <header class="blob-head">
+    <div class="blob-info"><strong>{{ file_name }}</strong><span class="muted">{% if line_count > 0 %}{{ line_count }} lines &middot; {% endif %}{{ size }}{% if !language.is_empty() %} &middot; {{ language }}{% endif %}</span></div>
+    <div class="blob-actions">
+      {% if kind == "markdown" %}<a class="btn small" href="{{ source_href }}">Source</a>{% else %}{% if showing_source %}<a class="btn small" href="{{ rendered_href }}">Preview</a>{% endif %}{% endif %}
+      <a class="btn small" href="{{ raw_href }}">Raw</a>
+      <a class="btn small" href="{{ blame_href }}">Blame</a>
+      <a class="btn small" href="{{ history_href }}">History</a>
+      <button type="button" class="btn small" data-copy-link="{{ permalink }}" title="Copy a link that always shows this version">Permalink {{ sha_short }}</button>
+      {% if can_edit %}<a class="btn small btn-primary" href="{{ edit_href }}"><svg class="icon" aria-hidden="true"><use href="#i-pencil"/></svg>Edit</a>{% endif %}
+    </div>
+  </header>
+  {% if truncated %}<p class="note">This file is large, so only the start is shown. <a href="{{ raw_href }}">View the raw file</a>.</p>{% endif %}
+  {% if kind == "image" %}
+    <div class="blob-image"><img src="{{ raw_href }}" alt="{{ file_name }}"></div>
+  {% else if kind == "binary" %}
+    <div class="blob-binary"><p>{{ binary_note }}</p><p><a class="btn" href="{{ raw_href }}">Download</a></p></div>
+  {% else if kind == "markdown" %}
+    <div class="markdown blob-markdown">{{ markdown_html|safe }}</div>
+  {% else %}
+    <div class="blob-code" data-wrap-target>{{ code_html|safe }}</div>
+  {% endif %}
+</section>
+{% endblock %}

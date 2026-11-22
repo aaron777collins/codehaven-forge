@@ -1,0 +1,10 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "context": "ci/build",
+  "description": "build passed",
+  "state": "success",
+  "target_url": "https://code.example.com/alice/codehaven/actions/runs/900001"
+}

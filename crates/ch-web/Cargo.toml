@@ -1,0 +1,48 @@
+[package]
+name = "ch-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Every page served from fake services with fixed data, for visual review and screenshots.
+demo = []
+
+[dependencies]
+ch-core.workspace = true
+ch-db.workspace = true
+ch-api-types.workspace = true
+ch-render.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+http.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+askama.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+base64.workspace = true
+hex.workspace = true
+rand.workspace = true
+mime_guess.workspace = true
+form_urlencoded.workspace = true
+sqlx.workspace = true
+
+[dev-dependencies]
+ch-web = { path = ".", features = ["demo"] }
+tower.workspace = true
+http-body-util.workspace = true
+tokio.workspace = true

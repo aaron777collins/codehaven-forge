@@ -1,0 +1,23 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "author_association": "CONTRIBUTOR",
+  "body": "Looks great",
+  "commit_id": "abc123",
+  "html_url": "https://code.example.com/octo/haven/pull/1#pullrequestreview-55",
+  "id": 55,
+  "pull_request_url": "https://code.example.com/api/v3/repos/octo/haven/pulls/1",
+  "state": "APPROVED",
+  "submitted_at": "2026-01-02T03:04:05Z",
+  "user": {
+    "avatar_url": "https://code.example.com/avatars/2.svg",
+    "html_url": "https://code.example.com/hubot",
+    "id": 2,
+    "login": "hubot",
+    "site_admin": false,
+    "type": "User",
+    "url": "https://code.example.com/api/v3/users/hubot"
+  }
+}

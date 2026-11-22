@@ -1,0 +1,129 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "action": "created",
+  "comment": {
+    "body": "fixed by #9",
+    "created_at": "2026-01-02T03:04:05Z",
+    "html_url": "https://code.example.com/alice/codehaven/issues/7#issuecomment-7001",
+    "id": 7001,
+    "issue_url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/7",
+    "updated_at": "2026-01-02T03:04:05Z",
+    "url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/comments/7001",
+    "user": {
+      "avatar_url": "https://code.example.com/avatars/1.svg",
+      "html_url": "https://code.example.com/alice",
+      "id": 1,
+      "login": "alice",
+      "site_admin": false,
+      "type": "User",
+      "url": "https://code.example.com/api/v3/users/alice"
+    }
+  },
+  "issue": {
+    "assignees": [],
+    "body": "the build is red",
+    "comments": 1,
+    "comments_url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/7/comments",
+    "created_at": "2026-01-02T03:04:05Z",
+    "html_url": "https://code.example.com/alice/codehaven/issues/7",
+    "id": 2001,
+    "labels": [
+      {
+        "color": "d73a4a",
+        "default": true,
+        "id": 3001,
+        "name": "bug",
+        "url": "https://code.example.com/api/v3/repos/alice/codehaven/labels/bug"
+      }
+    ],
+    "locked": false,
+    "number": 7,
+    "reactions": {
+      "+1": 0,
+      "-1": 0,
+      "confused": 0,
+      "eyes": 0,
+      "heart": 0,
+      "hooray": 0,
+      "laugh": 0,
+      "rocket": 0,
+      "total_count": 0,
+      "url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/7/reactions"
+    },
+    "repository_url": "https://code.example.com/api/v3/repos/alice/codehaven",
+    "state": "open",
+    "title": "ci red on main",
+    "updated_at": "2026-01-02T03:04:05Z",
+    "url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/7",
+    "user": {
+      "avatar_url": "https://code.example.com/avatars/1.svg",
+      "html_url": "https://code.example.com/alice",
+      "id": 1,
+      "login": "alice",
+      "site_admin": false,
+      "type": "User",
+      "url": "https://code.example.com/api/v3/users/alice"
+    }
+  },
+  "repository": {
+    "allow_merge_commit": true,
+    "allow_rebase_merge": false,
+    "allow_squash_merge": true,
+    "archived": false,
+    "clone_url": "https://code.example.com/alice/codehaven.git",
+    "created_at": "2026-01-02T03:04:05Z",
+    "default_branch": "main",
+    "delete_branch_on_merge": true,
+    "description": "self-hosted forge",
+    "disabled": false,
+    "empty": false,
+    "fork": false,
+    "forks_count": 0,
+    "full_name": "alice/codehaven",
+    "has_issues": true,
+    "html_url": "https://code.example.com/alice/codehaven",
+    "id": 1001,
+    "name": "codehaven",
+    "open_issues_count": 2,
+    "owner": {
+      "avatar_url": "https://code.example.com/avatars/1.svg",
+      "html_url": "https://code.example.com/alice",
+      "id": 1,
+      "login": "alice",
+      "site_admin": false,
+      "type": "User",
+      "url": "https://code.example.com/api/v3/users/alice"
+    },
+    "permissions": {
+      "admin": true,
+      "maintain": true,
+      "pull": true,
+      "push": true,
+      "triage": true
+    },
+    "private": true,
+    "pushed_at": "2026-01-02T03:04:05Z",
+    "size": 42,
+    "ssh_url": "git@code.example.com:alice/codehaven.git",
+    "stargazers_count": 1,
+    "topics": [
+      "forge"
+    ],
+    "updated_at": "2026-01-02T03:04:05Z",
+    "url": "https://code.example.com/api/v3/repos/alice/codehaven",
+    "visibility": "private",
+    "watchers_count": 1
+  },
+  "sender": {
+    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "html_url": "https://code.example.com/alice",
+    "id": 1,
+    "login": "alice",
+    "site_admin": false,
+    "type": "User",
+    "url": "https://code.example.com/api/v3/users/alice"
+  }
+}

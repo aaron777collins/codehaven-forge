@@ -1,0 +1,10 @@
+{% extends "admin/layout.html" %}
+{% block admin_body %}
+<h1>Runner registration token</h1>
+<p>Copy it now. You will not see it again.</p>
+<div class="copy-box"><code>{{ token }}</code><button type="button" class="btn small" data-copy="{{ token }}">Copy</button></div>
+<p>Single use, expires <time datetime="{{ expires.iso }}" title="{{ expires.title }}">{{ expires.title }}</time>.</p>
+<p>Run these commands on the runner machine:</p>
+<pre class="cmd-box"><code>{{ commands }}</code></pre>
+<p><a class="btn" href="/admin/runners">Back to runners</a></p>
+{% endblock %}

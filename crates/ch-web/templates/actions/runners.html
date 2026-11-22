@@ -1,0 +1,30 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="tabs">
+  {% for t in tabs %}<a class="tab{% if t.current %} current{% endif %}" href="{{ t.href }}">{{ t.name }}</a>{% endfor %}
+</div>
+<h2 class="page-h">Runners</h2>
+{% if rows.is_empty() %}
+{% call ui::empty("No runners for this repository", "A site admin registers runners and can scope them to this repository.") %}
+{% else %}
+<table class="data-table card">
+  <thead><tr><th>Name</th><th>Labels</th><th>Status</th><th>Version</th><th>Last seen</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td data-label="Name">{{ r.name }}</td>
+      <td data-label="Labels">{% for l in r.labels %}<span class="chip">{{ l }}</span>{% endfor %}</td>
+      <td data-label="Status"><span class="chip {{ r.chip_class }}">{{ r.chip_label }}</span></td>
+      <td data-label="Version">{% if r.version.is_empty() %}-{% else %}{{ r.version }}{% endif %}</td>
+      <td data-label="Last seen">{% if let Some(t) = r.last_seen %}{% call ui::time(t) %}{% else %}-{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<section class="card pad stack">
+  <h3>Adding a runner</h3>
+  <p>A site admin issues registration tokens under <a href="{{ admin_href }}">Site admin, Runners</a>. Tell the admin this repository's name if the runner should serve only it.</p>
+</section>
+{% endblock %}

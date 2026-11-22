@@ -1,0 +1,9 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "merged": true,
+  "message": "Pull Request successfully merged",
+  "sha": "abc123"
+}

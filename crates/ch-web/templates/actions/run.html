@@ -1,0 +1,84 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="list-head">
+  <h2 class="page-h">Run #{{ number }} <span class="muted">on {{ event }}</span></h2>
+  <div class="spacer"></div>
+  {% if show_approve %}
+  <form method="post" action="{{ approve_action }}" class="inline">
+    {% call ui::csrf_field(c.csrf) %}
+    <button class="btn btn-primary" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Approve run</button>
+  </form>
+  {% endif %}
+  {% if show_cancel %}
+  <form method="post" action="{{ cancel_action }}" class="inline" data-confirm="Cancel this run? Jobs that are still going stop.">
+    {% call ui::csrf_field(c.csrf) %}
+    <button class="btn danger" type="submit">Cancel run</button>
+  </form>
+  {% endif %}
+  {% if show_rerun %}
+  <form method="post" action="{{ rerun_action }}" class="inline">
+    {% call ui::csrf_field(c.csrf) %}<input type="hidden" name="failed_only" value="0">
+    <button class="btn" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"/></svg>Re-run all jobs</button>
+  </form>
+  <form method="post" action="{{ rerun_action }}" class="inline">
+    {% call ui::csrf_field(c.csrf) %}<input type="hidden" name="failed_only" value="1">
+    <button class="btn" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"/></svg>Re-run failed jobs</button>
+  </form>
+  {% endif %}
+</div>
+{% if let Some(r) = hold_reason %}
+<p class="notice" role="status"><strong>Waiting for approval.</strong> {{ r }}. Someone with write access has to approve it before any job runs.</p>
+{% endif %}
+<div class="card pad run-summary">
+  <div class="run-summary-main">
+    {% call ui::status(status) %}
+    <span class="run-state">{{ status.label }}</span>
+    {% if let Some(b) = branch %}<a class="chip" href="{{ branch_href }}">{{ b }}</a>{% endif %}
+    <a class="mono run-sha" href="{{ commit_href }}">{{ short }}</a>
+  </div>
+  <dl class="run-meta">
+    <div><dt>Started</dt><dd>{% call ui::time(when) %}</dd></div>
+    {% if let Some(d) = duration %}<div><dt>Duration</dt><dd>{{ d }}</dd></div>{% endif %}
+  </dl>
+</div>
+{% if has_graph %}
+<div class="job-graph">
+  {% for col in columns %}
+  <div class="job-col">
+    {% for b in col.boxes %}
+    <a class="job-box" href="{{ b.href }}">
+      {% call ui::status(b.status) %}
+      <span class="job-name">{{ b.name }}</span>
+      {% if let Some(d) = b.duration %}<span class="muted">{{ d }}</span>{% endif %}
+    </a>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+<p class="hint">Jobs run left to right: each column waits for the one before it.</p>
+{% else %}
+{% call ui::empty("No jobs", "This run has no jobs to show.") %}
+{% endif %}
+{% if !artifacts.is_empty() %}
+<section class="card pad">
+  <h3>Artifacts</h3>
+  <ul class="artifact-list">
+    {% for a in artifacts %}
+    <li class="artifact-row">
+      <svg class="icon" aria-hidden="true"><use href="#i-package"/></svg>
+      <span>{{ a.name }}</span>
+      <span class="muted">{{ a.size }}</span>
+      {% call ui::time(a.when) %}
+      <span class="spacer"></span>
+      {% if a.expired %}
+      <span class="chip chip-muted">Expired</span>
+      {% else %}
+      <a class="btn small" href="{{ a.href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download</a>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

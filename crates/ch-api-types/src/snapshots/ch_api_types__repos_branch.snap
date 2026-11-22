@@ -1,0 +1,12 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "commit": {
+    "sha": "c0ffee01",
+    "url": "https://code.example.com/api/v3/repos/alice/codehaven/commits/c0ffee01"
+  },
+  "name": "main",
+  "protected": true
+}

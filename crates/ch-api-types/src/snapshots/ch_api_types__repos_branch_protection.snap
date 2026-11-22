@@ -1,0 +1,23 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "allow_deletions": false,
+  "allow_direct_push": false,
+  "allow_force_pushes": false,
+  "enforce_admins": true,
+  "required_conversation_resolution": true,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": false,
+    "required_approving_review_count": 1
+  },
+  "required_status_checks": {
+    "contexts": [
+      "ci"
+    ],
+    "strict": true
+  },
+  "url": "https://code.example.com/api/v3/repos/alice/codehaven/branches/main/protection"
+}

@@ -1,0 +1,21 @@
+{% extends "repo/layout.html" %}
+{% import "repo/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="toolbar">
+  {% call m::picker(picker) %}
+  <h2 class="toolbar-title">Go to file</h2>
+  <div class="spacer"></div>
+  <a class="btn" href="{{ back_href }}">Back to the file list</a>
+</div>
+<div class="field">
+  <label class="sr-only" for="find-input">Type part of a file name</label>
+  <input id="find-input" type="search" placeholder="Type part of a file name" autocomplete="off" autocapitalize="none" spellcheck="false" data-filter-input autofocus>
+</div>
+<ul class="find-list card" data-filter-list>
+{% for f in files %}<li data-path="{{ f.0 }}"><a href="{{ f.1 }}"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg>{{ f.0 }}</a></li>
+{% endfor %}
+</ul>
+<p class="muted small" data-filter-empty hidden>No file matches.</p>
+{% if truncated %}<p class="note">This repository has a lot of files, so only the first {{ files.len() }} are listed.</p>{% endif %}
+{% endblock %}

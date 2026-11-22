@@ -1,0 +1,34 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<article class="card release">
+  <header class="release-head">
+    <div>
+      <h2 class="release-title"><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg>{{ row.title }}</h2>
+      <p class="muted release-meta">{% if row.draft %}<span class="chip chip-warn">Draft</span> {% endif %}{% if row.prerelease %}<span class="chip">Pre-release</span> {% endif %}<code>{{ row.tag }}</code> {% if row.draft %}saved{% else %}released{% endif %} <time datetime="{{ row.when.iso }}" title="{{ row.when.title }}">{{ row.when.ago }}</time></p>
+    </div>
+    <div class="spacer"></div>
+    <nav class="release-assets" aria-label="Source code">
+      <a class="btn" href="{{ row.zip_href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Source code (zip)</a>
+      <a class="btn" href="{{ row.tar_href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Source code (tar.gz)</a>
+    </nav>
+  </header>
+  <div class="markdown release-body">{% if row.body_html.is_empty() %}<p class="muted">No release notes.</p>{% else %}{{ row.body_html|safe }}{% endif %}</div>
+{% if !row.assets.is_empty() %}
+<section class="release-files" aria-label="Files">
+  <h4 class="release-files-h">Files</h4>
+  <ul class="release-file-list">
+    {% for a in row.assets %}
+    <li class="release-file"><a class="release-file-name" href="{{ a.href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>{{ a.name }}</a><span class="muted release-file-meta">{{ a.size }}, {{ a.downloads }}</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+  {% if can_write %}
+  <form method="post" action="{{ delete_action }}" class="release-delete" data-confirm="Delete this release? This cannot be undone.">
+    {% call ui::csrf_field(c.csrf) %}
+    <button class="btn small danger" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"/></svg>Delete this release</button>
+  </form>
+  {% endif %}
+</article>
+{% endblock %}

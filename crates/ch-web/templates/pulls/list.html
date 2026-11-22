@@ -1,0 +1,42 @@
+{% extends "repo/layout.html" %}
+{% import "issues/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="list-head">
+  <div class="tabs" role="tablist">
+    <a class="tab{% if show == "open" %} current{% endif %}" href="{{ open_href }}"><svg class="icon" aria-hidden="true"><use href="#i-git-pull-request"/></svg>Open <span class="count">{{ open_count }}</span></a>
+    <a class="tab{% if show == "merged" %} current{% endif %}" href="{{ merged_href }}"><svg class="icon" aria-hidden="true"><use href="#i-git-merge"/></svg>Merged</a>
+    <a class="tab{% if show == "closed" %} current{% endif %}" href="{{ closed_href }}"><svg class="icon" aria-hidden="true"><use href="#i-circle-x"/></svg>Closed <span class="count">{{ closed_count }}</span></a>
+  </div>
+  <div class="spacer"></div>
+  {% if can_create %}<a class="btn btn-primary" href="{{ base }}/pulls/new">New pull request</a>{% endif %}
+</div>
+<form class="filter-bar" method="get" action="{{ base }}/pulls">
+  <input type="hidden" name="state" value="{{ show }}">
+  <label class="sr-only" for="pr-q">Search pull requests</label>
+  <input id="pr-q" class="filter-search" type="search" name="q" value="{{ query }}" placeholder="Search pull requests">
+  <button class="btn" type="submit">Search</button>
+  {% if filtered %}<a class="btn btn-quiet" href="{{ clear_href }}">Clear filters</a>{% endif %}
+</form>
+{% if rows.is_empty() %}
+  {% if filtered %}{% call ui::empty("No pull requests match", "Try fewer filters.") %}{% else %}{% call ui::empty("No pull requests here", "A pull request proposes a change from one branch to another, so people can review it first.") %}{% endif %}
+{% else %}
+<ul class="issue-list card">
+{% for p in rows %}
+  <li class="issue-row">
+    <span class="state-icon state-{{ p.state_class }}"><svg class="icon" aria-hidden="true"><use href="#i-{{ p.icon }}"/></svg><span class="sr-only">{{ p.state_label }}</span></span>
+    <div class="issue-main">
+      <a class="issue-title" href="{{ p.row.href }}">{{ p.row.title }}</a>
+      {% for l in p.row.labels %}<a class="label {{ l.class }}" href="{{ l.href }}">{{ l.name }}</a>{% endfor %}
+      <p class="issue-meta">#{{ p.row.number }} opened <time datetime="{{ p.row.when.iso }}" title="{{ p.row.when.title }}">{{ p.row.when.ago }}</time> by {{ p.row.author.display }} <code class="branch-chip">{{ p.head_ref }}</code> into <code class="branch-chip">{{ p.base_ref }}</code></p>
+    </div>
+    <div class="issue-side">
+      {% for a in p.row.assignees %}<img class="avatar av-20" src="/avatar/{{ a.username }}.svg" alt="Assigned to {{ a.display }}" title="{{ a.display }}" width="20" height="20">{% endfor %}
+      {% if p.row.comments > 0 %}<a class="comment-count" href="{{ p.row.href }}#comments"><svg class="icon" aria-hidden="true"><use href="#i-message-square"/></svg>{{ p.row.comments }}</a>{% endif %}
+    </div>
+  </li>
+{% endfor %}
+</ul>
+{% call ui::pager(pager) %}
+{% endif %}
+{% endblock %}

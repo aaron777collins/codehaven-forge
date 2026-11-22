@@ -1,0 +1,10 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "email": "alice@example.com",
+  "primary": true,
+  "verified": true,
+  "visibility": "public"
+}

@@ -1,0 +1,15 @@
+# Fails when something that belongs to one deployment (a host, an address, a person's name, an
+# absolute path) is added to the tree. The same check is the first step of `cargo xtask ci`.
+name: portable
+on:
+  push:
+  pull_request:
+jobs:
+  portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The check catches every kind of leak it knows
+        run: python3 deploy/check-portable.py --self-test
+      - name: The tree is portable
+        run: python3 deploy/check-portable.py

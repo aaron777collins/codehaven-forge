@@ -1,0 +1,59 @@
+name: Rust Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build optimized binary
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.83.0 --profile minimal
+          rustup default 1.83.0
+
+      - name: Build in release mode and record the version
+        id: build
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cargo build --release
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the built binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mytool-${{ steps.build.outputs.version }}-x86_64-linux
+          path: target/release/mytool
+
+  package:
+    name: Package the release archive
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download the built binary
+        uses: actions/download-artifact@v4
+        with:
+          name: mytool-${{ needs.build.outputs.version }}-x86_64-linux
+
+      - name: Create tarball and checksums
+        run: |
+          tar czf "mytool-${{ needs.build.outputs.version }}.tar.gz" mytool
+          sha256sum "mytool-${{ needs.build.outputs.version }}.tar.gz" > checksums.txt
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: mytool-dist-${{ needs.build.outputs.version }}
+          path: |
+            mytool-*.tar.gz
+            checksums.txt

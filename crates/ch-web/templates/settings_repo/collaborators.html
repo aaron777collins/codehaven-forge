@@ -1,0 +1,71 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% import "settings_repo/tabs.html" as st %}
+{% block repo_body %}
+{% call st::tabs(base, "collaborators") %}
+<h2 class="page-h">Collaborators</h2>
+{% if can_admin %}
+<form method="post" action="{{ base }}/settings/collaborators" class="card pad stack">
+  {% call ui::csrf_field(c.csrf) %}
+  <h3>Add a collaborator</h3>
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="field">
+    <label for="collab-user">Username</label>
+    <input id="collab-user" name="username" type="text" value="{{ new_username }}" maxlength="39" autocapitalize="none" spellcheck="false">
+    {% call ui::field_error(errors.get("username")) %}
+  </div>
+  <div class="field">
+    <label for="collab-perm">Permission</label>
+    <select id="collab-perm" name="permission">
+      {% for o in perm_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+    </select>
+    {% call ui::field_error(errors.get("permission")) %}
+  </div>
+  <div class="row"><button class="btn btn-primary" type="submit">Add</button></div>
+</form>
+{% endif %}
+<ul class="collab-list card">
+  <li class="collab-row">
+    {% call ui::avatar(owner_username, 28) %}
+    <a href="/{{ owner_username }}">{{ owner_display }}</a>
+    <span class="chip">Owner</span>
+    <span class="spacer"></span>
+  </li>
+  {% for r in rows %}
+  <li class="collab-row">
+    {% call ui::avatar(r.username, 28) %}
+    <a href="/{{ r.username }}">{{ r.username }}</a>
+    {% if can_admin %}
+    <form method="post" action="{{ base }}/settings/collaborators" class="inline perm-form">
+      {% call ui::csrf_field(c.csrf) %}
+      <input type="hidden" name="user_id" value="{{ r.user_id }}">
+      <label class="sr-only" for="perm-{{ r.user_id }}">Permission for {{ r.username }}</label>
+      <select id="perm-{{ r.user_id }}" name="permission" data-autosubmit>
+        {% for o in r.options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+      </select>
+      <button class="btn small" type="submit">Save</button>
+    </form>
+    {% else %}
+    <span class="chip">{{ r.perm_label }}</span>
+    {% endif %}
+    <span class="spacer"></span>
+    {% if can_admin %}
+    <form method="post" action="{{ base }}/settings/collaborators/{{ r.user_id }}/remove" class="inline" data-confirm="Remove {{ r.username }}'s access to this repository?">
+      {% call ui::csrf_field(c.csrf) %}
+      <button class="btn small danger" type="submit">Remove</button>
+    </form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+<details class="card pad perm-help">
+  <summary>What each permission allows</summary>
+  <dl class="perm-list">
+    <dt>Read</dt><dd>Clone, open issues and pull requests, comment.</dd>
+    <dt>Triage</dt><dd>Also manage labels and close issues.</dd>
+    <dt>Write</dt><dd>Also push and merge.</dd>
+    <dt>Maintain</dt><dd>Also change settings.</dd>
+    <dt>Admin</dt><dd>Also manage collaborators and delete.</dd>
+  </dl>
+</details>
+{% endblock %}

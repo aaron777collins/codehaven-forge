@@ -1,0 +1,15 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "created_at": "2026-01-02T03:04:05Z",
+  "expires_at": "2026-01-02T03:04:05Z",
+  "id": 50,
+  "name": "ci token",
+  "scopes": [
+    "repo"
+  ],
+  "token": "haven_tok_9f8e7d6c",
+  "token_last_eight": "abcd1234"
+}

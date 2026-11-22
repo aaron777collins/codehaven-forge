@@ -1,0 +1,16 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "active": false,
+  "config": {
+    "content_type": "json",
+    "insecure_ssl": "0",
+    "secret": "s3cret",
+    "url": "https://example.test/hook"
+  },
+  "events": [
+    "push"
+  ]
+}

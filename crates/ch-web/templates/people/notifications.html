@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block content %}
+<main id="main" class="page">
+  <h1>Notifications</h1>
+  <div class="list-head">
+    <nav class="tabs" role="tablist">
+      <a class="tab{% if !all %} current{% endif %}" href="/notifications">Unread</a>
+      <a class="tab{% if all %} current{% endif %}" href="/notifications?all=1">All</a>
+    </nav>
+    <div class="spacer"></div>
+    {% if !rows.is_empty() %}
+    <form method="post" action="/notifications/read" class="inline">
+      {% call ui::csrf_field(c.csrf) %}
+      <button class="btn" type="submit">Mark all as read</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if rows.is_empty() %}
+  {% if all %}{% call ui::empty("No notifications", "When something needs you, it will show up here.") %}{% else %}{% call ui::empty("You are all caught up", "Nothing is waiting for you.") %}{% endif %}
+  {% else %}
+  <ul class="card">
+    {% for n in rows %}
+    <li class="notif-row">
+      {% if n.unread %}<span class="unread-dot" title="Unread"><span class="sr-only">Unread</span></span>{% endif %}
+      <div class="notif-main">
+        {% if let Some(u) = n.href %}<a href="{{ u }}">{{ n.title }}</a>{% else %}<span>{{ n.title }}</span>{% endif %}
+        <p class="muted small">{% if let Some(r) = n.repo %}{{ r }} <span class="dot" aria-hidden="true">&middot;</span> {% endif %}{{ n.reason }} <span class="dot" aria-hidden="true">&middot;</span> {% call ui::time(n.when) %}</p>
+      </div>
+      <form method="post" action="/notifications/{{ n.id }}/read" class="inline">
+        {% call ui::csrf_field(c.csrf) %}
+        <button class="btn small" type="submit">Mark read</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% call ui::pager(pager) %}
+  {% endif %}
+</main>
+{% endblock %}

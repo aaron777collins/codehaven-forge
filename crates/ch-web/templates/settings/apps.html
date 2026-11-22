@@ -1,0 +1,45 @@
+{% extends "settings/layout.html" %}
+{% import "components.html" as ui %}
+{% block settings_body %}
+<h1>Connected apps</h1>
+{% if enabled %}
+<div class="settings-card stack">
+  <h2>Connect Claude</h2>
+  <p>The address of this server's connector is <code>{{ mcp_url }}</code>.</p>
+  <p>In Claude on the web, desktop or mobile, open Settings, Connectors, add a custom connector and paste that address. In Claude Code, run:</p>
+  <div class="token-box"><code>claude mcp add --transport http codehaven {{ mcp_url }}</code><button type="button" class="btn small" data-copy="claude mcp add --transport http codehaven {{ mcp_url }}">Copy</button></div>
+  <p class="hint">Then run <code>/mcp</code> in Claude Code and choose Authenticate. You will come back to this site to choose what it may reach.</p>
+</div>
+{% else %}
+<p class="muted">The connector is turned off on this server. You can still see and disconnect any apps you connected before.</p>
+{% endif %}
+{% if rows.is_empty() %}
+{% call ui::empty("No connected apps", "Apps you connect appear here, with the repositories they may reach.") %}
+{% else %}
+<table class="data-table">
+  <thead><tr><th>App</th><th>Reach</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td data-label="App"><strong>{{ r.host }}</strong>{% if !r.name.is_empty() %}<br><span class="muted">{{ r.name }}</span>{% endif %}<br><span class="muted small">returns to {{ r.redirect_host }}</span></td>
+      <td data-label="Reach">
+        <span class="chip">{{ r.scopes }}</span>
+        {% if r.all_read %}<br><span class="small">All repositories you can access{% if r.all_write %}, with write{% endif %}</span>{% endif %}
+        {% for p in r.repos %}<br><span class="small">{{ p.name }}: {{ p.access }}</span>{% endfor %}
+      </td>
+      <td data-label="Created">{% call ui::time(r.created) %}</td>
+      <td data-label="Last used">{% if let Some(t) = r.last_used %}{% call ui::time(t) %}{% else %}<span class="muted">Never used</span>{% endif %}</td>
+      <td data-label="Expires">{% call ui::time(r.expires) %}</td>
+      <td data-label="">
+        <form method="post" action="/settings/apps/{{ r.id }}/revoke" class="inline" data-confirm="Disconnect this app? It stops working at once.">
+          {% call ui::csrf_field(c.csrf) %}
+          <button class="btn small btn-danger" type="submit">Revoke</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">To give an app more, connect it again from the app and choose more.</p>
+{% endif %}
+{% endblock %}

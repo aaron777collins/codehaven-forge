@@ -1,0 +1,10 @@
+{% extends "repo/layout.html" %}
+{% import "pulls/head.html" as ph %}
+{% import "repo/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+{% call ph::head(h) %}
+{% if rows.is_empty() %}{% call ui::empty("No commits", "There is nothing to show for this branch.") %}{% else %}
+<ul class="commit-list card">{% for r in rows %}{% call m::commit_row(r) %}{% endfor %}</ul>
+{% endif %}
+{% endblock %}

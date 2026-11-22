@@ -1,0 +1,26 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="tabs" role="tablist"><a class="tab{% if kind == "branches" %} current{% endif %}" href="{{ branches_href }}">Branches</a><a class="tab{% if kind == "tags" %} current{% endif %}" href="{{ tags_href }}">Tags</a></div>
+{% if rows.is_empty() %}
+{% call ui::empty("Nothing here yet", "Branches and tags show up after the first push.") %}
+{% else %}
+<ul class="ref-list card">
+{% for r in rows %}
+  <li class="ref-row">
+    <svg class="icon" aria-hidden="true"><use href="#i-{% if kind == "tags" %}tag{% else %}git-branch{% endif %}"/></svg>
+    <a class="ref-name" href="{{ r.tree_href }}">{{ r.name }}</a>
+    {% if r.is_default %}<span class="chip">default</span>{% endif %}
+    <a class="sha-chip" href="{{ r.commit_href }}"><code>{{ r.sha_short }}</code></a>
+    <span class="spacer"></span>
+    {% if kind == "branches" %}{% if !r.is_default %}<a class="btn small" href="{{ r.compare_href }}">Compare</a>{% endif %}{% else %}<a class="btn small" href="{{ r.release_href }}">Release</a><a class="btn small" href="{{ r.zip }}">ZIP</a>{% endif %}
+    {% if can_delete %}{% if !r.is_default %}
+    <form method="post" action="{{ r.delete_action }}" class="inline" data-confirm="Delete {{ r.name }}? This cannot be undone.">
+      <input type="hidden" name="_csrf" value="{{ c.csrf }}"><input type="hidden" name="name" value="{{ r.name }}">
+      <button class="icon-btn small danger" type="submit" aria-label="Delete {{ r.name }}"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"/></svg></button>
+    </form>{% endif %}{% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

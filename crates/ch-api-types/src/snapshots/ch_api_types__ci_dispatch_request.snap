@@ -1,0 +1,11 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "inputs": {
+    "branch": "ci",
+    "count": 3
+  },
+  "ref": "main"
+}

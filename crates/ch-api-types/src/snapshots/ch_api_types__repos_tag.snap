@@ -1,0 +1,13 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "commit": {
+    "sha": "dead10cc",
+    "url": "https://code.example.com/api/v3/repos/alice/codehaven/commits/dead10cc"
+  },
+  "name": "v0.1.0",
+  "tarball_url": "https://code.example.com/alice/codehaven/tarball/v0.1.0",
+  "zipball_url": "https://code.example.com/alice/codehaven/zipball/v0.1.0"
+}

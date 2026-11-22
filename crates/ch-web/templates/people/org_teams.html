@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% import "people/macros.html" as m %}
+{% block content %}
+<main id="main" class="page">
+  <div class="profile-head">
+    {% call ui::avatar(login, 32) %}
+    <div>
+      <h1>{{ display }}</h1>
+      <p class="muted">@{{ login }} <span class="chip">Organization</span></p>
+    </div>
+  </div>
+  {% call m::org_tabs(login_enc, base, "teams", is_owner) %}
+  {% if is_owner %}
+  <form method="post" action="/orgs/{{ login_enc }}/teams/new" class="card pad stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <h3>New team</h3>
+    <div class="field">
+      <label for="team-name">Name</label>
+      <input id="team-name" name="name" type="text" maxlength="100" autocapitalize="none" spellcheck="false">
+      <p class="hint">Letters, numbers, hyphens and underscores, starting with a letter or number.</p>
+    </div>
+    <div class="field">
+      <label for="team-description">Description</label>
+      <input id="team-description" name="description" type="text" maxlength="500">
+    </div>
+    <div class="field">
+      <label for="team-permission">Permission</label>
+      <select id="team-permission" name="permission">
+        {% for o in perm_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+      </select>
+      <p class="hint">The access members get on the repositories given to this team.</p>
+    </div>
+    <div class="row"><button class="btn btn-primary" type="submit">Create team</button></div>
+  </form>
+  {% endif %}
+  {% if rows.is_empty() %}
+  {% if is_owner %}
+  {% call ui::empty("No teams", "Make the first team with the form above.") %}
+  {% else %}
+  {% call ui::empty("No teams", "Teams group people together and give them shared access to repositories.") %}
+  {% endif %}
+  {% else %}
+  <ul class="card">
+    {% for t in rows %}
+    <li class="repo-item">
+      <p class="repo-item-title"><a href="{{ t.href }}">{{ t.name }}</a><span class="chip">{{ t.permission }}</span></p>
+      {% if !t.description.is_empty() %}<p>{{ t.description }}</p>{% endif %}
+      <p class="muted small">{{ t.members_text }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</main>
+{% endblock %}

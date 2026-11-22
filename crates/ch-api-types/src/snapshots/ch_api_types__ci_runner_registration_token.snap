@@ -1,0 +1,8 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "expires_at": "2026-01-02T03:04:05Z",
+  "token": "registration-token-1"
+}

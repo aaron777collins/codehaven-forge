@@ -1,0 +1,14 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "created_at": "2026-01-02T03:04:05Z",
+  "id": 40,
+  "key": "ssh-ed25519 AAAAC3NzaC1lZDI1anNt test",
+  "last_used_at": "2026-01-02T03:04:05Z",
+  "read_only": true,
+  "title": "laptop",
+  "url": "https://code.example.com/api/v3/user/keys/40",
+  "verified": false
+}

@@ -1,0 +1,27 @@
+# haven-runner settings for the compose stack. Every key is optional; these are the values the
+# stack wants. Defaults and the meaning of each key: deploy/runner.example.toml.
+[runner]
+work_dir = "/work"
+concurrency = 2
+shutdown_grace_seconds = 90
+
+[limits]
+cpus = 4
+memory = "8g"
+pids = 4096
+max_job_minutes = 360
+
+[disk]
+# /work is the shared volume; /dind-data is the Docker data root mounted read-only so the
+# guard sees the disk the images live on.
+guard_paths = ["/work", "/dind-data"]
+max_percent = 85
+
+[docker]
+pull_policy = "if-not-present"
+prune_after_days = 7
+
+[labels]
+ubuntu-latest = "codehaven-job:trixie"
+"ubuntu-24.04" = "codehaven-job:trixie"
+linux = "codehaven-job:trixie"

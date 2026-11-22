@@ -1,0 +1,11 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "allow_merge_commit": false,
+  "archived": false,
+  "delete_branch_on_merge": true,
+  "description": "a self-hosted forge",
+  "private": true
+}

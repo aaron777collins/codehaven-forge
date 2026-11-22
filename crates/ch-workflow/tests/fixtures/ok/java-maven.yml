@@ -1,0 +1,33 @@
+name: Java Maven Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    name: Maven verify on JDK ${{ matrix.jdk }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: [17, 21]
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install JDK ${{ matrix.jdk }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "openjdk-${{ matrix.jdk }}-jdk"
+          echo "JAVA_HOME=/usr/lib/jvm/java-${{ matrix.jdk }}-openjdk-amd64" >> "$GITHUB_ENV"
+
+      - name: Cache the local Maven repository
+        uses: actions/cache@v4
+        with:
+          key: m2-${{ runner.os }}-jdk${{ matrix.jdk }}-${{ hashFiles('**/pom.xml') }}
+          path: ~/.m2/repository
+
+      - name: Run Maven verify
+        run: mvn -B -ntp verify

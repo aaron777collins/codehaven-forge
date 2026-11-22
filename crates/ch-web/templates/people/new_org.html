@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block content %}
+<main id="main" class="page">
+  <h1>New organization</h1>
+  <p class="muted">Repositories can belong to an organization instead of a person.</p>
+  <section class="card stack">
+    <form method="post" action="/new/org" class="stack">
+      {% call ui::csrf_field(c.csrf) %}
+      {% if !errors.general.is_empty() %}<p class="form-error">{{ errors.general }}</p>{% endif %}
+      <div class="field">
+        <label for="name">Organization name</label>
+        <input id="name" name="name" type="text" value="{{ name }}" maxlength="39" required>
+        {% call ui::field_error(errors.get("name")) %}
+        <p class="hint">Letters, numbers, dashes, dots and underscores. It becomes part of your repository addresses.</p>
+      </div>
+      <div class="field">
+        <label for="display_name">Display name <span class="muted">(optional)</span></label>
+        <input id="display_name" name="display_name" type="text" value="{{ display }}" maxlength="80">
+        {% call ui::field_error(errors.get("display_name")) %}
+      </div>
+      <div class="inline">
+        <button class="btn btn-primary" type="submit">Create organization</button>
+      </div>
+    </form>
+  </section>
+</main>
+{% endblock %}

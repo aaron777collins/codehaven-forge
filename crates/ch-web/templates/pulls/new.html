@@ -1,0 +1,32 @@
+{% extends "repo/layout.html" %}
+{% import "repo/macros.html" as rm %}
+{% import "issues/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<h2 class="page-h">Open a pull request</h2>
+<form class="compare-form" method="get" action="{{ compare_href }}">
+  <label class="field-inline"><span>Into</span><select name="base">{% for b in branches %}<option value="{{ b }}"{% if *b == base_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</select></label>
+  <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"/></svg>
+  <label class="field-inline"><span>From</span><select name="head"><option value="">Choose a branch</option>{% for b in branches %}<option value="{{ b }}"{% if *b == head_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</select></label>
+  <button class="btn" type="submit">Compare</button>
+</form>
+{% if has_result %}
+  {% if nothing %}
+  {% call ui::empty("Nothing to merge", "These branches have the same content. Make a change on the branch first.") %}
+  {% else %}
+  <form method="post" action="{{ compare_href }}" class="card pad stack issue-form">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="base" value="{{ base_ref }}"><input type="hidden" name="head" value="{{ head_ref }}">
+    <div class="field"><label for="title">Title</label><input id="title" name="title" type="text" value="{{ title }}" maxlength="256" required>{% call ui::field_error(errors.get("title")) %}</div>
+    {% call m::editor("body", "body", body, 8, owner, repo) %}
+    {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+    <div class="row"><button class="btn btn-primary" type="submit">Create pull request</button><label class="choice"><input type="checkbox" name="draft" value="1"> Create as draft</label></div>
+  </form>
+  {% if !rows.is_empty() %}<ul class="commit-list card">{% for r in rows %}{% call rm::commit_row(r) %}{% endfor %}</ul>{% endif %}
+  <div class="diff-bar"><p><strong>{{ files }}</strong> file{% if files != 1 %}s{% endif %} changed, <span class="add">+{{ additions }}</span> <span class="del">-{{ deletions }}</span></p></div>
+  <div class="diffs">{{ diff_html|safe }}</div>
+  {% endif %}
+{% else %}
+  <p class="muted">Pick the branch with your changes to compare it with the base.</p>
+{% endif %}
+{% endblock %}

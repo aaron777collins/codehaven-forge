@@ -1,0 +1,39 @@
+# Example instance config for the server itself. Deployed with compose, the env file (.env.example)
+# sets these as CODEHAVEN__SECTION__KEY variables instead. Environment variables CODEHAVEN__SECTION__KEY override every key.
+# Secrets never go in this file: use `url_file` style keys that point at a file.
+
+[server]
+name = "Codehaven"
+bind = "0.0.0.0:3200"
+# Loopback only. Serves /readyz and /metrics.
+internal_bind = "127.0.0.1:9300"
+# The one origin people use. Links, clone URLs, CSRF origin checks and HSTS all follow it.
+external_url = "https://code.example.com"
+
+[http]
+# Peers allowed to set X-Forwarded-For and X-Forwarded-Proto: the network your reverse proxy reaches
+# the server from. Empty when nothing sits in front.
+trusted_proxies = []
+request_timeout_secs = 60
+
+[database]
+url_file = "/run/secrets/database_url"
+max_connections = 20
+
+[storage]
+data_dir = "/data"
+
+[ssh]
+bind = "0.0.0.0:2222"
+# What the UI shows. Reachable through `ssh -L` only.
+external = "127.0.0.1:2222"
+
+[invites]
+org_owners_can_invite = false
+default_expiry_hours = 168
+min_expiry_hours = 1
+max_expiry_hours = 720
+
+[log]
+format = "json"
+level = "info"

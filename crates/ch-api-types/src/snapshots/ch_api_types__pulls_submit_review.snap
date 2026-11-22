@@ -1,0 +1,8 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "body": "Closing this out",
+  "event": "COMMENT"
+}

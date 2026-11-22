@@ -1,0 +1,27 @@
+{% extends "repo/layout.html" %}
+{% import "pulls/head.html" as ph %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+{% call ph::head(h) %}
+<div class="diff-bar sticky">
+  <p><strong>{{ files }}</strong> file{% if files != 1 %}s{% endif %} changed, <span class="add">+{{ additions }}</span> <span class="del">-{{ deletions }}</span></p>
+  <div class="spacer"></div>
+  <div class="seg" role="group" aria-label="Diff view"><a class="seg-btn{% if !split %} current{% endif %}" href="{{ mode_unified }}">Unified</a><a class="seg-btn{% if split %} current{% endif %}" href="{{ mode_split }}">Split</a></div>
+  {% if can_review %}
+  <details class="menu menu-right" data-menu><summary class="btn btn-primary">Review changes</summary>
+    <form class="menu-panel pad stack" method="post" action="{{ base }}/pulls/{{ h.number }}/review">
+      {% call ui::csrf_field(c.csrf) %}<input type="hidden" name="back" value="files">
+      <label class="sr-only" for="review-body">Review comment</label><textarea id="review-body" name="body" rows="4" placeholder="Leave a comment"></textarea>
+      <label class="choice"><input type="radio" name="state" value="comment" checked> Comment</label>
+      <label class="choice"><input type="radio" name="state" value="approve"> Approve</label>
+      <label class="choice"><input type="radio" name="state" value="changes"> Request changes</label>
+      <button class="btn btn-primary" type="submit">Submit review</button>
+    </form>
+  </details>
+  {% endif %}
+</div>
+{% if !file_index.is_empty() %}
+<details class="file-index card"><summary>Files ({{ files }})</summary><ul>{% for f in file_index %}<li><a href="#{{ f.0 }}">{{ f.1 }}</a> <span class="add">+{{ f.2 }}</span> <span class="del">-{{ f.3 }}</span></li>{% endfor %}</ul></details>
+{% endif %}
+<div class="diffs" data-inline-action="{{ inline_action }}" data-csrf="{{ c.csrf }}">{{ diff_html|safe }}</div>
+{% endblock %}

@@ -1,0 +1,10 @@
+{% macro tabs(base, current) %}
+<nav class="settings-tabs" aria-label="Repository settings">
+  <a class="settings-tab{% if current == "general" %} current{% endif %}" href="{{ base }}/settings">General</a>
+  <a class="settings-tab{% if current == "collaborators" %} current{% endif %}" href="{{ base }}/settings/collaborators">Collaborators</a>
+  <a class="settings-tab{% if current == "branches" %} current{% endif %}" href="{{ base }}/settings/branches">Branches</a>
+  <a class="settings-tab{% if current == "hooks" %} current{% endif %}" href="{{ base }}/settings/hooks">Webhooks</a>
+  <a class="settings-tab{% if current == "secrets" %} current{% endif %}" href="{{ base }}/settings/secrets">Secrets and variables</a>
+  <a class="settings-tab{% if current == "runners" %} current{% endif %}" href="{{ base }}/settings/runners">Runners</a>
+</nav>
+{% endmacro %}

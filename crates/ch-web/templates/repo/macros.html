@@ -1,0 +1,33 @@
+{% macro picker(p) %}
+<details class="menu picker" data-menu>
+  <summary class="btn"><svg class="icon" aria-hidden="true"><use href="#i-git-branch"/></svg><span class="picker-label">{{ p.short }}</span><svg class="icon icon-xs" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+  <div class="menu-panel picker-panel">
+    <p class="menu-head">Switch branches or tags</p>
+    <div class="picker-list" role="menu">
+      {% for b in p.branches %}<a role="menuitem" class="pick{% if b.current %} current{% endif %}" href="{{ b.href }}"><svg class="icon" aria-hidden="true"><use href="#i-git-branch"/></svg>{{ b.name }}{% if b.current %}<svg class="icon check" aria-hidden="true"><use href="#i-check"/></svg>{% endif %}</a>{% endfor %}
+      {% if p.more_branches %}<a role="menuitem" class="pick more" href="{{ p.all_branches_url }}">View all branches</a>{% endif %}
+      {% if !p.tags.is_empty() %}<p class="menu-sub">Tags</p>{% endif %}
+      {% for t in p.tags %}<a role="menuitem" class="pick{% if t.current %} current{% endif %}" href="{{ t.href }}"><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg>{{ t.name }}{% if t.current %}<svg class="icon check" aria-hidden="true"><use href="#i-check"/></svg>{% endif %}</a>{% endfor %}
+    </div>
+  </div>
+</details>
+{% endmacro %}
+
+{% macro commit_row(r) %}
+<li class="commit-row">
+  <img class="avatar av-28" src="/avatar/{{ r.author_seed }}.svg" alt="" width="28" height="28" loading="lazy">
+  <div class="commit-main">
+    <a class="commit-title" href="{{ r.href }}">{{ r.title }}</a>
+    <p class="commit-meta"><strong>{{ r.author }}</strong> committed <time datetime="{{ r.when.iso }}" title="{{ r.when.title }}">{{ r.when.ago }}</time></p>
+  </div>
+  {% if let Some(s) = r.status %}<span class="status status-{{ s.class }}" title="{{ s.label }}"><svg class="icon" aria-hidden="true"><use href="#i-{{ s.icon }}"/></svg><span class="sr-only">{{ s.label }}</span></span>{% endif %}
+  <a class="sha-chip" href="{{ r.href }}" title="{{ r.sha }}"><code>{{ r.short }}</code></a>
+  <button type="button" class="icon-btn small" data-copy="{{ r.sha }}" aria-label="Copy full commit id"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg></button>
+</li>
+{% endmacro %}
+
+{% macro crumbs(root_name, root_href, crumbs) %}
+<nav class="crumbs" aria-label="Path">
+  <a href="{{ root_href }}">{{ root_name }}</a>{% for cr in crumbs %}<span class="sep" aria-hidden="true">/</span>{% if loop.last %}<strong>{{ cr.name }}</strong>{% else %}<a href="{{ cr.href }}">{{ cr.name }}</a>{% endif %}{% endfor %}
+</nav>
+{% endmacro %}

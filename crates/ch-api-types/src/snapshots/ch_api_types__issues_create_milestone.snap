@@ -1,0 +1,10 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "description": "First release",
+  "due_on": "2026-01-02T03:04:05Z",
+  "state": "open",
+  "title": "v1.0"
+}

@@ -1,0 +1,9 @@
+target/
+.git/
+.worktrees/
+data/
+.env
+*.env
+!.env.example
+*.swp
+.DS_Store

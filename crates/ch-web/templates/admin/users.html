@@ -1,0 +1,53 @@
+{% extends "admin/layout.html" %}
+{% import "components.html" as ui %}
+{% block admin_body %}
+<h1>Users</h1>
+<form class="filter-bar" method="get" action="/admin/users">
+  <div class="field"><label for="user-q">Find people</label><input id="user-q" name="q" type="search" value="{{ q }}" placeholder="username or email"></div>
+  <button class="btn" type="submit">Search</button>
+</form>
+{% if rows.is_empty() %}
+{% call ui::empty("Nobody matches", "Try another name, or clear the search to see everyone.") %}
+{% else %}
+<table class="data-table card">
+  <thead><tr><th></th><th>Username</th><th>Display name</th><th>Email</th><th>Roles</th><th>Joined</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td data-label="">{% call ui::avatar(r.username, 20) %}</td>
+      <td data-label="Username"><a href="{{ r.href }}">{{ r.username }}</a></td>
+      <td data-label="Display name">{% if let Some(d) = r.display %}{{ d }}{% else %}-{% endif %}</td>
+      <td data-label="Email">{% if let Some(e) = r.email %}{{ e }}{% else %}-{% endif %}</td>
+      <td data-label="Roles">{% if r.is_admin %}<span class="chip">Admin</span>{% endif %}{% if r.suspended %}<span class="chip chip-danger">Suspended</span>{% endif %}{% if r.can_run_ci %}<span class="chip">Can run CI</span>{% endif %}{% if r.has_2fa %}<span class="chip">Two-factor</span>{% endif %}</td>
+      <td data-label="Joined">{% call ui::time(r.joined) %}</td>
+      <td data-label="Actions" class="row-actions">
+      {% if !r.is_self %}
+        <form method="post" action="/admin/users/{{ r.id }}/suspend" class="inline" data-confirm="Suspend this account? They cannot sign in until unlocked.">
+          {% call ui::csrf_field(c.csrf) %}<input type="hidden" name="q" value="{{ q }}">
+          <button class="btn small danger" type="submit">Suspend</button>
+        </form>
+      {% endif %}
+        <form method="post" action="/admin/users/{{ r.id }}/ci" class="inline">
+          {% call ui::csrf_field(c.csrf) %}<input type="hidden" name="q" value="{{ q }}">
+          <input type="hidden" name="value" value="{% if r.can_run_ci %}0{% else %}1{% endif %}">
+          <button class="btn small" type="submit">{% if r.can_run_ci %}Stop CI{% else %}Allow CI{% endif %}</button>
+        </form>
+        <form method="post" action="/admin/users/{{ r.id }}/unlock" class="inline">
+          {% call ui::csrf_field(c.csrf) %}<input type="hidden" name="q" value="{{ q }}">
+          <button class="btn small" type="submit">Unlock</button>
+        </form>
+        <form method="post" action="/admin/users/{{ r.id }}/signout" class="inline" data-confirm="Sign this account out of every browser?">
+          {% call ui::csrf_field(c.csrf) %}<input type="hidden" name="q" value="{{ q }}">
+          <button class="btn small" type="submit">Sign out everywhere</button>
+        </form>
+        <form method="post" action="/admin/users/{{ r.id }}/reset-password" class="inline">
+          {% call ui::csrf_field(c.csrf) %}<input type="hidden" name="q" value="{{ q }}">
+          <button class="btn small" type="submit">Reset password</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

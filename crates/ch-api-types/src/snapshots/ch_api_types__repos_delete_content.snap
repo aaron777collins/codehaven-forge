@@ -1,0 +1,9 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "branch": "docs",
+  "message": "remove stale doc",
+  "sha": "b10b1234"
+}

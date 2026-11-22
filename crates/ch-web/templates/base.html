@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en" data-theme="{{ c.theme }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0}'>
+<meta name="referrer" content="same-origin">
+<title>{{ c.title }}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{ c.css_app }}">
+<link rel="stylesheet" href="{{ c.css_code }}">
+<link rel="stylesheet" href="{{ c.css_forge }}">
+<script src="{{ c.js_htmx }}" defer></script>
+<script src="{{ c.js_sse }}" defer></script>
+<script src="{{ c.js_app }}" defer></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{ c.csrf }}"}'>
+{% include "sprite.html" %}
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/" aria-label="{{ c.instance }} home">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M6 28V15a10 10 0 0 1 20 0v13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M11 20h10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+      <span class="brand-name">{{ c.instance }}</span>
+    </a>
+    {% if let Some(u) = c.user %}
+    <form class="topsearch" action="/search" method="get" role="search">
+      <label class="sr-only" for="global-search">Search</label>
+      <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+      <input id="global-search" name="q" type="search" placeholder="Search" autocomplete="off" data-shortcut="/">
+    </form>
+    <nav class="topnav" aria-label="Primary">
+      <a class="topnav-link{% if c.nav == "explore" %} current{% endif %}" href="/explore">Explore</a>
+      <details class="menu" data-menu>
+        <summary class="icon-btn" aria-label="Create new"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><svg class="icon icon-xs" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+        <div class="menu-panel" role="menu">
+          <a role="menuitem" href="/new"><svg class="icon" aria-hidden="true"><use href="#i-book-open"/></svg>New repository</a>
+          <a role="menuitem" href="/new/org"><svg class="icon" aria-hidden="true"><use href="#i-building-2"/></svg>New organization</a>
+        </div>
+      </details>
+      <a class="icon-btn notif{% if c.nav == "notifications" %} current{% endif %}" href="/notifications" aria-label="Notifications{% if u.unread > 0 %}, {{ u.unread }} unread{% endif %}">
+        <svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg>{% if u.unread > 0 %}<span class="badge-dot">{{ u.unread }}</span>{% endif %}
+      </a>
+      <details class="menu menu-right" data-menu>
+        <summary class="avatar-btn" aria-label="Your account"><img class="avatar av-28" src="/avatar/{{ u.username }}.svg" alt="" width="28" height="28"></summary>
+        <div class="menu-panel" role="menu">
+          <p class="menu-head">Signed in as<br><strong>{{ u.username }}</strong></p>
+          <a role="menuitem" href="/{{ u.username }}"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>Your profile</a>
+          <a role="menuitem" href="/settings/profile"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>Settings</a>
+          {% if u.is_admin %}<a role="menuitem" href="/admin"><svg class="icon" aria-hidden="true"><use href="#i-shield-check"/></svg>Site admin</a>{% endif %}
+          <button type="button" role="menuitem" class="menu-btn" data-theme-toggle><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg>Switch theme</button>
+          <form method="post" action="/logout"><input type="hidden" name="_csrf" value="{{ c.csrf }}"><button role="menuitem" class="menu-btn" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-log-out"/></svg>Sign out</button></form>
+        </div>
+      </details>
+    </nav>
+    {% endif %}
+  </div>
+</header>
+{% if let Some(b) = c.banner %}<div class="banner" role="status"><a href="/settings/security">{{ b }}</a></div>{% endif %}
+{% if let Some(f) = c.flash %}<div class="flash flash-{{ f.kind }}" role="status">{{ f.text }}</div>{% endif %}
+{% block content %}{% endblock %}
+<footer class="site-footer">
+  <span>{{ c.instance }}</span>
+  <span class="dot" aria-hidden="true">&middot;</span>
+  <span class="muted">Self-hosted. Invite only.</span>
+</footer>
+</body>
+</html>

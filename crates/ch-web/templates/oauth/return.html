@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="refresh" content="0;url={{ url }}">
+<title>Returning to the app</title>
+<link rel="stylesheet" href="{{ css_app }}">
+<link rel="stylesheet" href="{{ css_forge }}">
+</head>
+<body>
+<main id="main" class="auth-wrap">
+  <section class="auth-card">
+    {% if denied %}<h1>You did not connect the app</h1>{% else %}<h1>Connected</h1>{% endif %}
+    <p>Taking you back to <strong>{{ host }}</strong>.</p>
+    <p><a class="btn btn-primary btn-block" href="{{ url }}" rel="noreferrer">Return to {{ host }}</a></p>
+    <p class="muted small">If nothing happens, use the button.</p>
+  </section>
+</main>
+</body>
+</html>

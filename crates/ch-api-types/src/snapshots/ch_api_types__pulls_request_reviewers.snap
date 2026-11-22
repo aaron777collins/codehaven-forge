@@ -1,0 +1,10 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "reviewers": [
+    "hubot"
+  ],
+  "team_reviewers": []
+}

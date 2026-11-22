@@ -1,0 +1,143 @@
+# A throwaway, seeded copy of the whole stack, only to take screenshots: deploy/dev/shots.sh
+# starts it in a project of its own (shots-<word>), runs the harness and shoot.mjs against it, and
+# tears it down with `down -v` (the trap at the end of the script), so nothing survives a run.
+# It never touches the instance people use: its own name, its own subnets, tmpfs and named
+# volumes only. Nothing here may join the external `caddy` network or mount a host path;
+# the host reaches the server straight at its container address on `shots`.
+#
+#   bash deploy/dev/shots.sh --tag shots-mine [outdir]
+name: shots-default
+
+services:
+  postgres:
+    labels: {org.codehaven.throwaway: "true"}
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: codehaven
+      POSTGRES_PASSWORD: shots-only-not-a-secret
+      POSTGRES_DB: codehaven
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codehaven -d codehaven"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    mem_limit: 1g
+    networks: [shots]
+
+  server:
+    labels: {org.codehaven.throwaway: "true"}
+    image: codehaven-server:${CODEHAVEN_TAG:?a throwaway tag, set by deploy/dev/shots.sh}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["codehaven", "serve", "--migrate"]
+    environment:
+      CODEHAVEN__SERVER__EXTERNAL_URL: https://shots.example.invalid
+      CODEHAVEN__SERVER__NAME: Codehaven
+      # The harness on the host connects through the gateway of `shots`, inside this subnet, so
+      # the server honours its X-Forwarded-For and X-Forwarded-Proto.
+      CODEHAVEN__HTTP__TRUSTED_PROXIES: '["${CODEHAVEN_E2E_SUBNET:?set CODEHAVEN_E2E_SUBNET to a free /20}"]'
+      CODEHAVEN__DATABASE__URL: postgres://codehaven:shots-only-not-a-secret@postgres:5432/codehaven
+      CODEHAVEN__STORAGE__DATA_DIR: /data
+      CODEHAVEN__SSH__EXTERNAL: shots.example.invalid:2222
+      CODEHAVEN__LOG__FORMAT: pretty
+      # The webhook step delivers to a listener on the host, a private address.
+      CODEHAVEN__WEBHOOKS__ALLOW_PRIVATE: "true"
+      # The host's own public addresses (deploy/prod/host-ips.sh --json): webhooks may not reach them.
+      CODEHAVEN__WEBHOOKS__BLOCKED_IPS: ${WEBHOOK_BLOCKED_IPS?set by deploy/dev/shots.sh}
+    tmpfs:
+      # exec: docker mounts tmpfs noexec by default, and git then silently skips the pre-receive hook,
+      # which is the only thing that enforces branch protection on a push.
+      - /data:exec,uid=10001,gid=10001,mode=0755
+    healthcheck:
+      test: ["CMD", "codehaven", "healthcheck"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    mem_limit: 2g
+    networks:
+      shots: {}
+      runners: {}
+
+  # CI. The runner never gets the host's Docker socket. Jobs run in this separate daemon, whose
+  # image store is a named volume of this project, thrown away with everything else.
+  dind:
+    labels: {org.codehaven.throwaway: "true"}
+    image: docker:27.5.1-dind
+    privileged: true
+    # The guard entry point passes its arguments on to dockerd. `--icc=false` keeps the default
+    # bridge from carrying container-to-container traffic as a second layer; the runner puts
+    # every job on a network of its own anyway (haven-runner's docker backend).
+    command: ["--icc=false"]
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+      # The runner connects to `dind` by name, so the daemon's certificate must be valid for it.
+      DOCKER_TLS_SAN: DNS:dind
+      # The host's public addresses (deploy/prod/host-ips.sh): the guard blocks job traffic to
+      # them all, except tcp/443, the public https site.
+      HOST_PUBLIC_IPS: ${HOST_PUBLIC_IPS?set by deploy/dev/shots.sh}
+    # Wraps the image's entry point to keep jobs off the host's private and public addresses.
+    entrypoint: ["sh", "/guard/guard.sh"]
+    volumes:
+      - dind-data:/var/lib/docker
+      - docker-certs:/certs
+      - runner-work:/work
+      - ./dind/guard.sh:/guard/guard.sh:ro
+    networks: [runners]
+
+  # One-shot: makes the shared work volume writable by the runner (uid 10001). Whichever of
+  # `dind` and `runner` starts first creates the volume as root, so this runs before the runner.
+  work-init:
+    labels: {org.codehaven.throwaway: "true"}
+    image: docker:27.5.1-dind
+    entrypoint: ["sh", "-c", "chown 10001:10001 /work && chmod 0755 /work"]
+    restart: "no"
+    volumes:
+      - runner-work:/work
+    networks: [runners]
+
+  # Registered from outside by deploy/dev/shots.sh (token through the environment), then started.
+  runner:
+    labels: {org.codehaven.throwaway: "true"}
+    image: codehaven-runner:${CODEHAVEN_TAG:?a throwaway tag, set by deploy/dev/shots.sh}
+    depends_on:
+      dind: {condition: service_started}
+      server: {condition: service_healthy}
+      work-init: {condition: service_completed_successfully}
+    # Jobs get this long to finish on `docker stop` before they are cancelled.
+    stop_grace_period: 20s
+    environment:
+      DOCKER_HOST: tcp://dind:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+      HAVEN_RUNNER_CONFIG: /etc/haven-runner/config.toml
+    volumes:
+      - docker-certs:/certs:ro
+      - runner-work:/work
+      - runner-state:/home/codehaven
+      - ./runner.toml:/etc/haven-runner/config.toml:ro
+      # Only for the disk guard: statvfs on this path reports the disk the dind images live on.
+      - dind-data:/dind-data:ro
+    networks: [runners]
+
+networks:
+  # Not internal: the host must reach the server's container address for the harness and the
+  # screenshots, and the webhook step delivers to a listener on the host (the subnet gateway).
+  shots:
+    ipam:
+      config:
+        - subnet: ${CODEHAVEN_E2E_SUBNET:?set CODEHAVEN_E2E_SUBNET to a free /20}
+  # The default address pools can be used up on a busy host, so this one is fixed too.
+  runners:
+    ipam:
+      config:
+        - subnet: ${CODEHAVEN_SHOTS_RUNNERS_SUBNET:?set CODEHAVEN_SHOTS_RUNNERS_SUBNET to a free /24}
+
+volumes:
+  dind-data: {}
+  docker-certs: {}
+  runner-work: {}
+  runner-state: {}

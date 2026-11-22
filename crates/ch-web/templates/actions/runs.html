@@ -1,0 +1,57 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+{% if !notice.is_empty() %}<p class="notice notice-warn" role="status">{{ notice }}</p>{% endif %}
+<div class="list-head">
+  <h2 class="page-h">Actions</h2>
+  <div class="spacer"></div>
+  {% if can_write && any_dispatch %}<a class="btn btn-primary" href="{{ run_workflow_href }}"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>Run workflow</a>{% endif %}
+</div>
+<div class="actions-cols">
+  <aside class="actions-side card pad">
+    <h3>Workflows</h3>
+    {% if workflows.is_empty() %}
+    <p class="muted">No workflow files in this repository yet.</p>
+    {% else %}
+    <ul class="wf-list">
+      {% for w in workflows %}
+      <li class="wf-item">
+        <span class="wf-name">{{ w.name }}</span>
+        {% if !w.triggers.is_empty() %}<span class="muted">{{ w.triggers }}</span>{% endif %}
+        {% if w.can_dispatch %}<span class="chip">Runs by hand</span>{% endif %}
+        {% if let Some(e) = w.error %}
+        <span class="chip chip-warn">Error</span>
+        <details class="wf-error">
+          <summary>Show the problem</summary>
+          <p class="field-error">{{ e }}</p>
+        </details>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </aside>
+  <section class="actions-main">
+    <nav class="chips" aria-label="Filter runs">
+      {% for ch in chips %}<a class="chip{% if ch.current %} chip-current{% endif %}" href="{{ ch.href }}" aria-current="{% if ch.current %}true{% else %}false{% endif %}">{{ ch.label }} <span class="chip-count">{{ ch.count }}</span></a>{% endfor %}
+    </nav>
+    {% if rows.is_empty() %}
+    {% call ui::empty("No runs to show", "Nothing has run here yet. Workflows start on push, on pull request, or by hand.") %}
+    {% else %}
+    <ul class="run-list card">
+      {% for r in rows %}
+      <li class="run-row">
+        {% call ui::status(r.status) %}
+        <a class="run-title" href="{{ r.href }}">{{ r.title }}</a>
+        {% if let Some(b) = r.branch %}<a class="chip" href="{{ r.branch_href }}">{{ b }}</a>{% endif %}
+        <a class="mono run-sha" href="{{ r.commit_href }}">{{ r.short }}</a>
+        <span class="spacer"></span>
+        {% call ui::time(r.when) %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% call ui::pager(pager) %}
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

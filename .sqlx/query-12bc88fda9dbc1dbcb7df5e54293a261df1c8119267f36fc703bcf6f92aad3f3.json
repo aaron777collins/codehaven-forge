@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE blobs SET refcount = GREATEST(refcount - 1, 0),\n                unreferenced_since = CASE WHEN refcount <= 1 THEN now() ELSE unreferenced_since END\n         WHERE sha256 = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "12bc88fda9dbc1dbcb7df5e54293a261df1c8119267f36fc703bcf6f92aad3f3"
+}

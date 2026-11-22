@@ -1,0 +1,41 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="list-head">
+  <h2 class="page-h">Releases</h2>
+  <div class="spacer"></div>
+  {% if can_write %}<a class="btn btn-primary" href="{{ base }}/releases/new"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>New release</a>{% endif %}
+</div>
+{% if rows.is_empty() %}
+{% call ui::empty("No releases yet", "Tag a version of this repository and it will show up here.") %}
+{% else %}
+<div class="stack">
+  {% for r in rows %}
+  <section class="card release">
+    <header class="release-head">
+      <div>
+        <h3 class="release-title"><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg><a href="{{ r.href }}">{{ r.title }}</a></h3>
+        <p class="muted release-meta">{% if r.draft %}<span class="chip chip-warn">Draft</span> {% endif %}{% if r.prerelease %}<span class="chip">Pre-release</span> {% endif %}<code>{{ r.tag }}</code> {% if r.draft %}saved{% else %}released{% endif %} <time datetime="{{ r.when.iso }}" title="{{ r.when.title }}">{{ r.when.ago }}</time></p>
+      </div>
+      <div class="spacer"></div>
+      <nav class="release-assets" aria-label="Source code">
+        <a class="btn small" href="{{ r.zip_href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Source code (zip)</a>
+        <a class="btn small" href="{{ r.tar_href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Source code (tar.gz)</a>
+      </nav>
+    </header>
+    <div class="markdown release-body">{% if r.body_html.is_empty() %}<p class="muted">No release notes.</p>{% else %}{{ r.body_html|safe }}{% endif %}</div>
+{% if !r.assets.is_empty() %}
+<section class="release-files" aria-label="Files">
+  <h4 class="release-files-h">Files</h4>
+  <ul class="release-file-list">
+    {% for a in r.assets %}
+    <li class="release-file"><a class="release-file-name" href="{{ a.href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>{{ a.name }}</a><span class="muted release-file-meta">{{ a.size }}, {{ a.downloads }}</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

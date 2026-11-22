@@ -1,0 +1,27 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "runners": [
+    {
+      "busy": false,
+      "id": 3,
+      "labels": [
+        {
+          "id": 1,
+          "name": "self-hosted",
+          "type": "read-only"
+        },
+        {
+          "name": "linux",
+          "type": "custom"
+        }
+      ],
+      "name": "runner-1",
+      "os": "Linux",
+      "status": "online"
+    }
+  ],
+  "total_count": 1
+}

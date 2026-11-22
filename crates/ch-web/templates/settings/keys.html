@@ -1,0 +1,48 @@
+{% extends "settings/layout.html" %}
+{% import "components.html" as ui %}
+{% block settings_body %}
+<h1>SSH keys</h1>
+<p class="muted">Keys this account can git over SSH with. Clone your repositories from <code>{{ ssh_example }}</code>, with your own repository name.</p>
+{% if rows.is_empty() %}
+{% call ui::empty("No SSH keys", "Add one to clone and push over SSH without typing a password.") %}
+{% else %}
+<table class="data-table">
+  <thead><tr><th>Title</th><th>Type</th><th>Fingerprint</th><th>Added</th><th>Last used</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td data-label="Title">{{ r.title }}</td>
+      <td data-label="Type">{{ r.key_type }}</td>
+      <td data-label="Fingerprint"><code>{{ r.fingerprint }}</code></td>
+      <td data-label="Added">{% call ui::time(r.added) %}</td>
+      <td data-label="Last used">{% if let Some(t) = r.last_used %}{% call ui::time(t) %}{% else %}<span class="muted">Never used</span>{% endif %}</td>
+      <td data-label="">
+        <form method="post" action="/settings/keys/{{ r.id }}/delete" class="inline" data-confirm="Remove this SSH key? Anything signed in with it stops working.">
+          {% call ui::csrf_field(c.csrf) %}
+          <button class="btn small btn-danger" type="submit">Remove</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<form method="post" action="/settings/keys" class="settings-card stack">
+  <h2>Add an SSH key</h2>
+  {% call ui::csrf_field(c.csrf) %}
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="field">
+    <label for="title">Title</label>
+    <input id="title" name="title" type="text" value="{{ form.title }}" maxlength="100">
+    <p class="hint">A name that tells you which device this key lives on.</p>
+    {% call ui::field_error(errors.get("title")) %}
+  </div>
+  <div class="field">
+    <label for="public_key">Public key</label>
+    <textarea id="public_key" name="public_key" rows="3" spellcheck="false">{{ form.public_key }}</textarea>
+    <p class="hint">The public part, one line, usually from a file like <code>~/.ssh/id_ed25519.pub</code>. Never paste a private key here.</p>
+    {% call ui::field_error(errors.get("public_key")) %}
+  </div>
+  <div class="row"><button class="btn btn-primary" type="submit">Add key</button></div>
+</form>
+{% endblock %}

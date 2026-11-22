@@ -1,0 +1,44 @@
+name: Python CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Cache pip downloads
+        uses: actions/cache@v4
+        with:
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
+          path: ~/.cache/pip
+
+      - name: Upgrade pip and install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements-dev.txt -r requirements.txt
+
+      - name: Install ruff
+        run: python3 -m pip install ruff==0.8.4
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Run pytest with coverage
+        run: pytest --cov=acme --cov-report=term-missing --cov-report=html --cov-fail-under=85
+
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov/

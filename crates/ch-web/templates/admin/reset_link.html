@@ -1,0 +1,9 @@
+{% extends "admin/layout.html" %}
+{% block admin_body %}
+<h1>Password reset link</h1>
+{% if !username.is_empty() %}<p>For <strong>{{ username }}</strong>.</p>{% endif %}
+<p>Copy it now. You will not see it again.</p>
+<div class="copy-box"><code>{{ url }}</code><button type="button" class="btn small" data-copy="{{ url }}">Copy</button></div>
+<p>Valid for 1 hour, until <time datetime="{{ expires.iso }}" title="{{ expires.title }}">{{ expires.title }}</time>.</p>
+<p><a class="btn" href="/admin/users">Back to users</a></p>
+{% endblock %}

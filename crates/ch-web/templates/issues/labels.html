@@ -1,0 +1,27 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="list-head"><h2 class="page-h">Labels</h2><div class="spacer"></div><a class="btn" href="{{ base }}/issues">Back to issues</a></div>
+{% if can_manage %}
+<form method="post" action="{{ base }}/labels" class="card pad stack label-form">
+  {% call ui::csrf_field(c.csrf) %}
+  <h3>New label</h3>
+  <div class="grid-3">
+    <div class="field"><label for="label-name">Name</label><input id="label-name" name="name" type="text" value="{{ name }}" maxlength="50" required>{% call ui::field_error(errors.get("name")) %}</div>
+    <div class="field"><label for="label-desc">Description</label><input id="label-desc" name="description" type="text" value="{{ description }}" maxlength="200"></div>
+    <div class="field"><label for="label-color">Colour</label>
+      <select id="label-color" name="color">{% for p in palette %}<option value="{{ p }}"{% if *p == color %} selected{% endif %}>{{ p }}</option>{% endfor %}</select>
+      {% call ui::field_error(errors.get("color")) %}</div>
+  </div>
+  <div class="row"><button class="btn btn-primary" type="submit">Create label</button></div>
+</form>
+{% endif %}
+{% if rows.is_empty() %}{% call ui::empty("No labels yet", "Labels sort issues and pull requests into groups.") %}{% else %}
+<ul class="label-list card">
+{% for r in rows %}
+  <li class="label-row"><a class="label {{ r.class }}" href="{{ r.href }}">{{ r.name }}</a><span class="muted">{{ r.description }}</span><span class="spacer"></span>
+  {% if can_manage %}<form method="post" action="{{ base }}/labels/delete" class="inline" data-confirm="Delete the label {{ r.name }}?">{% call ui::csrf_field(c.csrf) %}<input type="hidden" name="name" value="{{ r.name }}"><button class="icon-btn small danger" type="submit" aria-label="Delete {{ r.name }}"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"/></svg></button></form>{% endif %}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

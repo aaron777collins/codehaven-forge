@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% import "people/macros.html" as m %}
+{% block content %}
+<main id="main" class="page">
+  <div class="profile-head">
+    {% call ui::avatar(login, 32) %}
+    <div>
+      <h1>{{ display }}</h1>
+      <p class="muted">@{{ login }} <span class="chip">Organization</span></p>
+    </div>
+  </div>
+  {% call m::org_tabs(login_enc, base, "settings", true) %}
+  <form method="post" action="/orgs/{{ login_enc }}/settings" class="card pad stack">
+    {% call ui::csrf_field(c.csrf) %}
+    {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+    <div class="field">
+      <label for="display_name">Display name</label>
+      <input id="display_name" name="display_name" type="text" value="{{ display_name }}" maxlength="100">
+      {% call ui::field_error(errors.get("display_name")) %}
+    </div>
+    <div class="field">
+      <label for="description">Description</label>
+      <input id="description" name="description" type="text" value="{{ description }}" maxlength="500">
+      {% call ui::field_error(errors.get("description")) %}
+    </div>
+    <div class="field">
+      <label for="base_permission">Default repository permission</label>
+      <select id="base_permission" name="base_permission">
+        {% for o in base_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+      </select>
+      <p class="hint">What organization members can do with a new repository, until a team gives them more or less.</p>
+      {% call ui::field_error(errors.get("base_permission")) %}
+    </div>
+    <div class="row"><button class="btn btn-primary" type="submit">Save changes</button></div>
+  </form>
+  <div class="danger-zone card pad stack">
+    <h3>Danger zone</h3>
+    <div class="danger-row">
+      <form method="post" action="/orgs/{{ login_enc }}/settings/delete" class="stack danger-form">
+        {% call ui::csrf_field(c.csrf) %}
+        <h4>Delete this organization</h4>
+        <p class="muted">This removes the organization and its teams. Its repositories must be deleted or transferred first. There is no undo.</p>
+        <div class="field">
+          <label for="delete_confirm">Type <code>{{ login }}</code> to confirm</label>
+          <input id="delete_confirm" name="confirm" type="text" autocapitalize="none" spellcheck="false">
+        </div>
+        <div class="row"><button class="btn danger" type="submit">Delete this organization</button></div>
+      </form>
+    </div>
+  </div>
+</main>
+{% endblock %}

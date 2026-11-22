@@ -1,0 +1,93 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, at, actor_kind, actor_id, actor_label, client_ip, user_agent, action, target_type, target_id, outcome, details\n               FROM audit_events\n               WHERE ($1::bigint IS NULL OR actor_id = $1)\n                 AND ($2::text IS NULL OR action = $2)\n                 AND ($3::inet IS NULL OR client_ip = $3)\n                 AND ($4::timestamptz IS NULL OR at >= $4)\n                 AND ($5::bigint IS NULL OR id < $5)\n               ORDER BY id DESC\n               LIMIT $6",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "actor_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "actor_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "actor_label",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "client_ip",
+        "type_info": "Inet"
+      },
+      {
+        "ordinal": 6,
+        "name": "user_agent",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "target_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "target_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "outcome",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "details",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Inet",
+        "Timestamptz",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "bb0cd69751d489c88341f042b545dde5a0669ee460e2cfeeeb691693acf6812f"
+}

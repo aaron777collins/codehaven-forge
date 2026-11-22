@@ -1,0 +1,79 @@
+name: Condition idioms
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      env:
+        required: true
+        default: staging
+        type: string
+
+jobs:
+  e2e:
+    name: End-to-end suite
+    runs-on: ubuntu-latest
+    if: ${{ contains(github.event.head_commit.message, '[skip-e2e]') == false }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Running the e2e suite"
+
+  release:
+    name: Tagged release build
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Building release for ${{ github.ref_name }}"
+
+  macos-only:
+    name: macOS guard
+    runs-on: macos-latest
+    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Runs only where the runner OS label ends with macOS
+        if: ${{ endsWith(runner.os, 'macOS') }}
+        run: echo "On ${{ runner.os }}"
+
+  generate:
+    name: Emit matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: echo 'matrix={"target":["x86_64","aarch64"]}' >> "$GITHUB_OUTPUT"
+
+  build-matrix:
+    name: Matrix from fromJSON
+    runs-on: ubuntu-latest
+    needs: generate
+    strategy:
+      matrix: ${{ fromJSON(needs.generate.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Building for ${{ matrix.target }}"
+
+  dispatch-deploy:
+    name: Manual deploy
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    concurrency:
+      group: ${{ format('deploy-{0}', inputs.env) }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Deploying to ${{ inputs.env }}"
+
+  lockfile:
+    name: Audit when lockfile exists
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit npm dependencies
+        if: ${{ hashFiles('**/package-lock.json') != '' }}
+        run: npm audit --audit-level=high

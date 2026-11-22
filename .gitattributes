@@ -1,0 +1,3 @@
+# Keep the private tracker out of any git archive (public export).
+.beads export-ignore
+.beads/** export-ignore

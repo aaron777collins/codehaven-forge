@@ -1,0 +1,103 @@
+{% extends "repo/layout.html" %}
+{% import "pulls/head.html" as ph %}
+{% import "issues/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+{% call ph::head(h) %}
+<div class="two-col">
+  <div class="timeline" id="comments">
+    <article class="timeline-item comment">
+      <img class="avatar av-32" src="/avatar/{{ h.author.username }}.svg" alt="" width="32" height="32">
+      <div class="comment-box"><header class="comment-head"><strong>{{ h.author.display }}</strong> <span class="chip">Author</span> <span class="muted">opened {% call ui::time(h.when) %}</span>
+        {% if h.can_edit %}<details class="edit-title inline-edit"><summary class="btn small">Edit</summary>
+          <form method="post" action="{{ base }}/pulls/{{ h.number }}/edit" class="stack">{% call ui::csrf_field(c.csrf) %}
+            <div class="field"><label for="edit-title">Title</label><input id="edit-title" name="title" type="text" value="{{ h.raw_title }}" maxlength="256" required></div>
+            {% call m::editor("edit-body", "body", h.raw_body, 8, owner, repo) %}
+            <div class="row"><button class="btn btn-primary" type="submit">Save</button></div></form></details>{% endif %}
+        </header>
+        <div class="markdown comment-body">{% if body_html.is_empty() %}<p class="muted">No description given.</p>{% else %}{{ body_html|safe }}{% endif %}</div></div>
+    </article>
+    {% for t in timeline %}
+      {% if t.kind == "comment" %}
+      <article class="timeline-item comment" id="comment-{{ t.id }}">
+        <img class="avatar av-32" src="/avatar/{{ t.author.username }}.svg" alt="" width="32" height="32" loading="lazy">
+        <div class="comment-box"><header class="comment-head"><strong>{{ t.author.display }}</strong>{% if t.is_pr_author %} <span class="chip">Author</span>{% endif %} <span class="muted">commented {% call ui::time(t.when) %}</span></header>
+          <div class="markdown comment-body">{{ t.html|safe }}</div></div>
+      </article>
+      {% else %}
+      <article class="timeline-item review review-{{ t.class }}" id="review-{{ t.id }}">
+        <img class="avatar av-32" src="/avatar/{{ t.author.username }}.svg" alt="" width="32" height="32" loading="lazy">
+        <div class="comment-box"><header class="comment-head"><strong>{{ t.author.display }}</strong> <span class="review-verb review-{{ t.class }}">{{ t.verb }}</span> <span class="muted">{% call ui::time(t.when) %}</span></header>
+          {% if !t.html.is_empty() %}<div class="markdown comment-body">{{ t.html|safe }}</div>{% endif %}
+          {% for il in t.inline %}<div class="review-inline"><p class="muted small"><a href="{{ il.files_href }}"><code>{{ il.location }}</code></a></p>{{ il.html|safe }}</div>{% endfor %}
+        </div>
+      </article>
+      {% endif %}
+    {% endfor %}
+
+    {% if is_merged %}
+    <div class="merge-box merged"><svg class="icon" aria-hidden="true"><use href="#i-git-merge"/></svg><div><strong>Merged</strong>{% if let Some(u) = h.merged_by %} by {{ u.display }}{% endif %}{% if let Some(w) = h.merged_when %} {% call ui::time(w) %}{% endif %}{% if let Some(s) = h.merge_sha %} as <code>{{ s }}</code>{% endif %}. <span class="muted">The branch changes are now in <code class="branch-chip">{{ h.base_ref }}</code>.</span></div></div>
+    {% else if is_open %}
+    <section class="merge-box {% if gate.mergeable %}ready{% else %}blocked{% endif %}" aria-label="Merge status">
+      {% if is_draft %}
+        <div class="merge-line"><svg class="icon" aria-hidden="true"><use href="#i-git-pull-request-draft"/></svg><strong>This pull request is a draft.</strong> <span class="muted">It cannot be merged until it is ready.</span></div>
+      {% else if gate.mergeable %}
+        <div class="merge-line ok"><svg class="icon" aria-hidden="true"><use href="#i-circle-check"/></svg><strong>This branch can be merged.</strong> <span class="muted">There are no conflicts and every rule is met.</span></div>
+      {% else %}
+        <div class="merge-line fail"><svg class="icon" aria-hidden="true"><use href="#i-circle-x"/></svg><strong>This cannot be merged yet.</strong></div>
+        <ul class="gate-reasons">{% for r in gate.reasons %}<li><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>{{ r }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if let Some(s) = checks_summary %}<div class="merge-line">{% call ui::status(s) %} <span>Checks: {{ s.label }}</span> <a href="{{ h.href }}/checks">Details</a></div>{% endif %}
+      {% if can_merge %}
+      <form method="post" action="{{ base }}/pulls/{{ h.number }}/merge" class="merge-form row">
+        {% call ui::csrf_field(c.csrf) %}
+        <label class="sr-only" for="merge-method">Merge method</label>
+        <select id="merge-method" name="method"><option value="merge">Create a merge commit</option><option value="squash">Squash and merge</option><option value="rebase">Rebase and merge</option></select>
+        <button class="btn btn-primary" type="submit"{% if !gate.mergeable %} disabled{% endif %}><svg class="icon" aria-hidden="true"><use href="#i-git-merge"/></svg>Merge pull request</button>
+      </form>
+      {% else if !is_draft %}<p class="muted small">Someone with write access merges this.</p>{% endif %}
+    </section>
+    {% else %}
+    <div class="merge-box closed"><svg class="icon" aria-hidden="true"><use href="#i-git-pull-request-closed"/></svg><div><strong>This pull request is closed.</strong> <span class="muted">Nothing was merged.</span></div></div>
+    {% endif %}
+
+    {% if can_review %}
+    <form method="post" action="{{ base }}/pulls/{{ h.number }}/review" class="comment-form stack review-form">
+      {% call ui::csrf_field(c.csrf) %}
+      <h3>Review</h3>
+      <label class="sr-only" for="review-text">Review comment</label>
+      <textarea id="review-text" name="body" rows="3" placeholder="Say what you think of the change as a whole"></textarea>
+      <div class="row">
+        <label class="choice"><input type="radio" name="state" value="comment" checked> Comment</label>
+        <label class="choice"><input type="radio" name="state" value="approve"> Approve</label>
+        <label class="choice"><input type="radio" name="state" value="changes"> Request changes</label>
+        <button class="btn btn-primary" type="submit">Submit review</button>
+      </div>
+    </form>
+    {% endif %}
+
+    {% if can_comment %}
+    <form method="post" action="{{ base }}/pulls/{{ h.number }}/comment" class="comment-form stack">
+      {% call ui::csrf_field(c.csrf) %}
+      {% call m::editor("new-comment", "body", "", 5, owner, repo) %}
+      <div class="row">
+        {% if h.can_edit %}{% if is_open %}<button class="btn" type="submit" name="action" value="close">Close pull request</button>{% endif %}{% endif %}
+        <button class="btn btn-primary" type="submit">Comment</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+  <aside class="issue-side-col" aria-label="Details">
+    <section class="side-block"><h2>Reviewers</h2>
+      {% if reviewers.is_empty() %}<p class="muted">No reviews yet</p>{% endif %}
+      {% for r in reviewers %}<p class="person"><img class="avatar av-20" src="/avatar/{{ r.0.username }}.svg" alt="" width="20" height="20"> {{ r.0.display }} <span class="chip chip-{{ r.2 }}">{{ r.1 }}</span></p>{% endfor %}
+    </section>
+    <section class="side-block"><h2>Labels</h2>
+      {% if labels.is_empty() %}<p class="muted">None yet</p>{% endif %}
+      <p>{% for l in labels %}{% call ui::label(l) %} {% endfor %}</p>
+      {% if can_triage %}{% if !label_choices.is_empty() %}<details class="menu" data-menu><summary class="btn small">Change</summary><form class="menu-panel pad" method="post" action="{{ base }}/pulls/{{ h.number }}/labels">{% call ui::csrf_field(c.csrf) %}{% for l in label_choices %}<label class="choice"><input type="checkbox" name="labels" value="{{ l.value }}"{% if l.on %} checked{% endif %}><span class="label {{ l.class }}">{{ l.text }}</span></label>{% endfor %}<button class="btn btn-primary small" type="submit">Save</button></form></details>{% endif %}{% endif %}
+    </section>
+    <section class="side-block"><h2>Branches</h2><p><code class="branch-chip">{{ h.head_ref }}</code><br>into<br><code class="branch-chip">{{ h.base_ref }}</code></p></section>
+  </aside>
+</div>
+{% endblock %}

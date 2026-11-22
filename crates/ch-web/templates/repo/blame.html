@@ -1,0 +1,16 @@
+{% extends "repo/layout.html" %}
+{% import "repo/macros.html" as m %}
+{% block repo_body %}
+<div class="toolbar">{% call m::crumbs("root", root_href, crumbs) %}</div>
+<section class="card blob">
+  <header class="blob-head">
+    <div class="blob-info"><strong>{{ file_name }}</strong><span class="muted">Blame</span></div>
+    <div class="blob-actions">
+      <a class="btn small" href="{{ blob_href }}">Normal view</a>
+      <a class="btn small" href="{{ history_href }}">History</a>
+      <a class="btn small" href="{{ raw_href }}">Raw</a>
+    </div>
+  </header>
+  <div class="blob-code">{{ table|safe }}</div>
+</section>
+{% endblock %}

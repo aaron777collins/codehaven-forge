@@ -1,0 +1,29 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "active": true,
+  "config": {
+    "content_type": "json",
+    "insecure_ssl": "0",
+    "secret": "s3cret",
+    "url": "https://example.test/hook"
+  },
+  "created_at": "2026-01-02T03:04:05Z",
+  "deliveries_url": "https://code.example.com/api/v3/hooks/77/deliveries",
+  "events": [
+    "push",
+    "pull_request"
+  ],
+  "id": 77,
+  "last_response": {
+    "code": 200,
+    "message": "delivered",
+    "status": "OK"
+  },
+  "name": "web",
+  "ping_url": "https://code.example.com/api/v3/hooks/77/pings",
+  "updated_at": "2026-01-02T03:04:05Z",
+  "url": "https://code.example.com/api/v3/hooks/77"
+}

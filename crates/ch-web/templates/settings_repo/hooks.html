@@ -1,0 +1,50 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% import "settings_repo/tabs.html" as st %}
+{% block repo_body %}
+{% call st::tabs(base, "hooks") %}
+<h2 class="page-h">Webhooks</h2>
+<form method="post" action="{{ base }}/settings/hooks" class="card pad stack">
+  {% call ui::csrf_field(c.csrf) %}
+  <h3>Add a webhook</h3>
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="field">
+    <label for="hook-url">Payload address</label>
+    <input id="hook-url" name="url" type="text" value="{{ url }}" maxlength="2048" placeholder="https://example.com/hook" autocapitalize="none" spellcheck="false">
+    <p class="hint">Must start with http:// or https://. Deliveries to private or loopback addresses are refused unless the server administrator allowed them.</p>
+    {% call ui::field_error(errors.get("url")) %}
+  </div>
+  <div class="field">
+    <label for="hook-secret">Secret <span class="muted">(optional)</span></label>
+    <input id="hook-secret" name="secret" type="password" autocomplete="new-password">
+    <p class="hint">Used to sign each delivery so the receiver can check it came from here. Leave blank for none.</p>
+  </div>
+  <fieldset class="check-grid">
+    <legend>Events</legend>
+    {% for e in events %}<label class="check"><input type="checkbox" name="events" value="{{ e.value }}"{% if e.checked %} checked{% endif %}> {{ e.label }}</label>{% endfor %}
+  </fieldset>
+  {% call ui::field_error(errors.get("events")) %}
+  <label class="check"><input type="checkbox" name="active" value="1"{% if active %} checked{% endif %}> Active. Send events for this webhook.</label>
+  <div class="row"><button class="btn btn-primary" type="submit">Add webhook</button></div>
+</form>
+{% if rows.is_empty() %}
+{% call ui::empty("No webhooks yet", "Add one to tell another service about pushes, pull requests and more.") %}
+{% else %}
+<ul class="hook-list">
+  {% for r in rows %}
+  <li class="hook-row card pad">
+    <div class="list-head">
+      <code class="hook-url">{{ r.url }}</code>
+      <span class="spacer"></span>
+      {% if r.active %}<span class="chip">Active</span>{% else %}<span class="chip chip-warn">Off</span>{% endif %}
+      <form method="post" action="{{ base }}/settings/hooks/{{ r.id }}/delete" class="inline" data-confirm="Delete this webhook?">
+        {% call ui::csrf_field(c.csrf) %}
+        <button class="btn small danger" type="submit">Delete</button>
+      </form>
+    </div>
+    <p class="hook-events">{% for e in r.events %}<span class="chip">{{ e }}</span> {% endfor %}</p>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

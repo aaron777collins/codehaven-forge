@@ -1,0 +1,43 @@
+{% extends "repo/layout.html" %}
+{% import "issues/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="list-head">
+  <div class="tabs" role="tablist">
+    <a class="tab{% if open %} current{% endif %}" href="{{ open_href }}"><svg class="icon" aria-hidden="true"><use href="#i-circle-dot"/></svg>Open <span class="count">{{ open_count }}</span></a>
+    <a class="tab{% if !open %} current{% endif %}" href="{{ closed_href }}"><svg class="icon" aria-hidden="true"><use href="#i-circle-check"/></svg>Closed <span class="count">{{ closed_count }}</span></a>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn" href="{{ labels_href }}"><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg>Labels</a>
+  <a class="btn" href="{{ milestones_href }}"><svg class="icon" aria-hidden="true"><use href="#i-milestone"/></svg>Milestones</a>
+  {% if can_create %}<a class="btn btn-primary" href="{{ base }}/issues/new">New issue</a>{% endif %}
+</div>
+<form class="filter-bar" method="get" action="{{ base }}/issues">
+  <input type="hidden" name="state" value="{% if open %}open{% else %}closed{% endif %}">
+  {% if !active_labels.is_empty() %}<input type="hidden" name="labels" value="{{ active_labels.join(",") }}">{% endif %}
+  <label class="sr-only" for="issue-q">Search issues</label>
+  <input id="issue-q" class="filter-search" type="search" name="q" value="{{ query }}" placeholder="Search issues">
+  <details class="menu" data-menu>
+    <summary class="btn">Labels{% if !active_labels.is_empty() %} ({{ active_labels.len() }}){% endif %}<svg class="icon icon-xs" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+    <div class="menu-panel">
+      {% for l in label_items %}<a class="pick{% if l.on %} current{% endif %}" href="{{ l.href }}"><span class="label {{ l.class }}">{{ l.name }}</span>{% if l.on %}<svg class="icon check" aria-hidden="true"><use href="#i-check"/></svg>{% endif %}</a>{% endfor %}
+      {% if label_items.is_empty() %}<p class="muted pad">No labels yet.</p>{% endif %}
+    </div>
+  </details>
+  <label class="sr-only" for="issue-sort">Sort</label>
+  <select id="issue-sort" name="sort" data-autosubmit>
+    <option value="newest"{% if sort == "newest" %} selected{% endif %}>Newest</option>
+    <option value="oldest"{% if sort == "oldest" %} selected{% endif %}>Oldest</option>
+    <option value="updated"{% if sort == "updated" %} selected{% endif %}>Recently updated</option>
+    <option value="comments"{% if sort == "comments" %} selected{% endif %}>Most commented</option>
+  </select>
+  <button class="btn" type="submit">Search</button>
+  {% if filtered %}<a class="btn btn-quiet" href="{{ clear_href }}">Clear filters</a>{% endif %}
+</form>
+{% if rows.is_empty() %}
+  {% if filtered %}{% call ui::empty("No issues match", "Try fewer filters.") %}{% else %}{% call ui::empty("No issues yet", "Open one to track a bug, a task or an idea.") %}{% endif %}
+{% else %}
+<ul class="issue-list card">{% for r in rows %}{% call m::issue_row(r) %}{% endfor %}</ul>
+{% call ui::pager(pager) %}
+{% endif %}
+{% endblock %}

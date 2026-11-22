@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+{% if let Some(r) = c.repo %}
+<div class="repo-shell">
+  <div class="repo-head">
+    <h1 class="repo-title">
+      <svg class="icon" aria-hidden="true"><use href="#i-book-open"/></svg>
+      <a href="/{{ r.owner }}">{{ r.owner }}</a><span class="sep" aria-hidden="true">/</span><a class="repo-name" href="{{ r.base }}">{{ r.name }}</a>
+      {% if r.private %}<span class="chip" title="Only people you give access to can see this repository.">Private</span>{% else %}<span class="chip" title="Public means every account on this server can read it. Nobody else can.">Public</span>{% endif %}
+      {% if r.archived %}<span class="chip chip-warn">Archived</span>{% endif %}
+    </h1>
+  </div>
+  <div class="repo-cols">
+    <nav class="repo-side" aria-label="Repository sections">
+      <a class="side-link{% if r.section == "code" %} current{% endif %}" href="{{ r.base }}"><svg class="icon" aria-hidden="true"><use href="#i-code"/></svg><span>Code</span></a>
+      <a class="side-link{% if r.section == "issues" %} current{% endif %}" href="{{ r.base }}/issues"><svg class="icon" aria-hidden="true"><use href="#i-circle-dot"/></svg><span>Issues</span></a>
+      <a class="side-link{% if r.section == "pulls" %} current{% endif %}" href="{{ r.base }}/pulls"><svg class="icon" aria-hidden="true"><use href="#i-git-pull-request"/></svg><span>Pull requests</span></a>
+      <a class="side-link{% if r.section == "actions" %} current{% endif %}" href="{{ r.base }}/actions"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg><span>Actions</span></a>
+      <a class="side-link{% if r.section == "releases" %} current{% endif %}" href="{{ r.base }}/releases"><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg><span>Releases</span></a>
+      {% if r.can_maintain %}<a class="side-link{% if r.section == "settings" %} current{% endif %}" href="{{ r.base }}/settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>Settings</span></a>{% endif %}
+    </nav>
+    <div class="repo-main" id="main">
+      {% block repo_body %}{% endblock %}
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

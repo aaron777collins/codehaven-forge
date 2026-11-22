@@ -1,0 +1,36 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="list-head">
+  <div class="tabs"><a class="tab{% if show_open %} current{% endif %}" href="{{ open_href }}">Open</a><a class="tab{% if !show_open %} current{% endif %}" href="{{ closed_href }}">Closed</a></div>
+  <div class="spacer"></div><a class="btn" href="{{ base }}/issues">Back to issues</a>
+</div>
+{% if can_manage %}{% if show_open %}
+<form method="post" action="{{ base }}/milestones" class="card pad stack">
+  {% call ui::csrf_field(c.csrf) %}
+  <h3>New milestone</h3>
+  <div class="grid-2">
+    <div class="field"><label for="ms-title">Title</label><input id="ms-title" name="title" type="text" value="{{ title }}" maxlength="100" required>{% call ui::field_error(errors.get("title")) %}</div>
+    <div class="field"><label for="ms-due">Due date <span class="muted">(optional)</span></label><input id="ms-due" name="due" type="date">{% call ui::field_error(errors.get("due")) %}</div>
+  </div>
+  <div class="field"><label for="ms-desc">Description</label><textarea id="ms-desc" name="description" rows="3">{{ description }}</textarea></div>
+  <div class="row"><button class="btn btn-primary" type="submit">Create milestone</button></div>
+</form>
+{% endif %}{% endif %}
+{% if rows.is_empty() %}{% call ui::empty("No milestones", "A milestone groups issues toward a goal or a date.") %}{% else %}
+<ul class="milestone-list card">
+{% for r in rows %}
+  <li class="milestone-row">
+    <div class="milestone-main">
+      <a class="milestone-title" href="{{ r.href }}">{{ r.title }}</a>
+      {% if let Some(d) = r.due %}<span class="muted{% if r.overdue %} overdue{% endif %}">Due {% call ui::time(d) %}</span>{% endif %}
+      {% if !r.description_html.is_empty() %}<div class="markdown small">{{ r.description_html|safe }}</div>{% endif %}
+      <progress class="meter" value="{{ r.percent }}" max="100" aria-label="{{ r.percent }}% complete"></progress>
+      <p class="muted small">{{ r.percent }}% complete, {{ r.open_issues }} open, {{ r.closed_issues }} closed</p>
+    </div>
+    {% if can_manage %}<form method="post" action="{{ base }}/milestones/{{ r.id }}/state" class="inline">{% call ui::csrf_field(c.csrf) %}<input type="hidden" name="state" value="{% if r.open %}closed{% else %}open{% endif %}"><button class="btn small" type="submit">{% if r.open %}Close{% else %}Reopen{% endif %}</button></form>{% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

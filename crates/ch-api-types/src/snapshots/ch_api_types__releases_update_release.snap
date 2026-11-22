@@ -1,0 +1,8 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "name": "First public release",
+  "tag_name": "v0.1.0"
+}

@@ -1,0 +1,19 @@
+/target/
+.worktrees/
+*.swp
+.DS_Store
+/data/
+# Instance settings: never committed. .env.example is the template.
+.env
+*.env
+!.env.example
+/dist/
+__pycache__/
+*.pyc
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*

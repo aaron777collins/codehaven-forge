@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block content %}
+<main id="main" class="auth-wrap">
+  <section class="auth-card">
+    <h1>Join {{ c.instance }}</h1>
+    {% if !invited_by.is_empty() %}<p class="muted">{{ invited_by }} invited you. Pick a username and a password to make your account.</p>{% else %}<p class="muted">You have been invited. Pick a username and a password to make your account.</p>{% endif %}
+    <form method="post" action="{{ action }}" class="stack">
+      {% call ui::csrf_field(csrf) %}
+      {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" value="{{ username }}" autocomplete="username" autocapitalize="none" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]*" maxlength="39" required autofocus>
+        <p class="hint">Letters, numbers, dashes, dots and underscores. It becomes part of your repository addresses.</p>
+        {% call ui::field_error(errors.get("username")) %}
+      </div>
+      <div class="field">
+        <label for="display_name">Name <span class="muted">(optional)</span></label>
+        <input id="display_name" name="display_name" type="text" value="{{ display_name }}" autocomplete="name" maxlength="80">
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" value="{{ email }}" autocomplete="email" required{% if email_locked %} readonly{% endif %}>
+        {% if email_locked %}<p class="hint">This invite is for this address.</p>{% endif %}
+        {% call ui::field_error(errors.get("email")) %}
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+        <p class="hint">At least 12 characters. A few random words works well.</p>
+        {% call ui::field_error(errors.get("password")) %}
+      </div>
+      <div class="field">
+        <label for="password_confirm">Type it again</label>
+        <input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" minlength="12" required>
+        {% call ui::field_error(errors.get("password_confirm")) %}
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Create account</button>
+    </form>
+  </section>
+</main>
+{% endblock %}

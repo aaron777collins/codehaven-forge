@@ -1,0 +1,13 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "body": "What changed, in brief.",
+  "draft": false,
+  "generate_release_notes": true,
+  "name": "First public release",
+  "prerelease": false,
+  "tag_name": "v0.1.0",
+  "target_commitish": "main"
+}

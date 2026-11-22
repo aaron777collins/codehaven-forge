@@ -1,0 +1,7 @@
+# Added by deploy/compose.sh when CODEHAVEN_NO_MIGRATE=1. Starts the server without applying
+# migrations. Needed to roll back to an older version after a newer one changed the database: the
+# older server cannot apply, or even accept, a migration it does not know, but it runs fine on the
+# newer schema when it is not asked to migrate. See docs/operations.md, "Rolling back".
+services:
+  server:
+    command: ["codehaven", "serve"]

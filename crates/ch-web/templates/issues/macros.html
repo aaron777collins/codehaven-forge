@@ -1,0 +1,34 @@
+{% macro editor(id, name, value, rows, owner, repo) %}
+<div class="field editor-tabs" data-tabs>
+  <div class="tabs small" role="tablist"><button type="button" class="tab current" role="tab" data-tab="write">Write</button><button type="button" class="tab" role="tab" data-tab="preview" data-preview-url="/preview" data-preview-owner="{{ owner }}" data-preview-repo="{{ repo }}">Preview</button></div>
+  <label class="sr-only" for="{{ id }}">Text</label>
+  <textarea id="{{ id }}" name="{{ name }}" rows="{{ rows }}" data-tab-pane="write" data-md-input>{{ value }}</textarea>
+  <div class="markdown preview-pane" data-tab-pane="preview" hidden></div>
+  <p class="hint">Markdown works. Type # to mention an issue and @ to mention a person.</p>
+</div>
+{% endmacro %}
+
+{% macro comment(cv) %}
+<article class="timeline-item comment" id="comment-{{ cv.id }}">
+  <img class="avatar av-32" src="/avatar/{{ cv.author.username }}.svg" alt="" width="32" height="32" loading="lazy">
+  <div class="comment-box">
+    <header class="comment-head"><a href="/{{ cv.author.username }}"><strong>{{ cv.author.display }}</strong></a>{% if cv.is_issue_author %} <span class="chip">Author</span>{% endif %} <span class="muted">commented <time datetime="{{ cv.when.iso }}" title="{{ cv.when.title }}">{{ cv.when.ago }}</time></span></header>
+    <div class="markdown comment-body">{{ cv.html|safe }}</div>
+  </div>
+</article>
+{% endmacro %}
+
+{% macro issue_row(r) %}
+<li class="issue-row">
+  <span class="state-icon state-{{ r.state_class }}"><svg class="icon" aria-hidden="true"><use href="#i-{{ r.icon }}"/></svg><span class="sr-only">{% if r.open %}Open{% else %}Closed{% endif %}</span></span>
+  <div class="issue-main">
+    <a class="issue-title" href="{{ r.href }}">{{ r.title }}</a>
+    {% for l in r.labels %}<a class="label {{ l.class }}" href="{{ l.href }}">{{ l.name }}</a>{% endfor %}
+    <p class="issue-meta">#{{ r.number }} opened <time datetime="{{ r.when.iso }}" title="{{ r.when.title }}">{{ r.when.ago }}</time> by {{ r.author.display }}</p>
+  </div>
+  <div class="issue-side">
+    {% for a in r.assignees %}<img class="avatar av-20" src="/avatar/{{ a.username }}.svg" alt="Assigned to {{ a.display }}" title="{{ a.display }}" width="20" height="20">{% endfor %}
+    {% if r.comments > 0 %}<a class="comment-count" href="{{ r.href }}#comments" title="{{ r.comments }} comments"><svg class="icon" aria-hidden="true"><use href="#i-message-square"/></svg>{{ r.comments }}</a>{% endif %}
+  </div>
+</li>
+{% endmacro %}

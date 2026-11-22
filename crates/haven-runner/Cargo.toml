@@ -1,0 +1,65 @@
+[package]
+name = "haven-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "haven_runner"
+path = "src/lib.rs"
+
+[[bin]]
+name = "haven-runner"
+path = "src/main.rs"
+
+[features]
+# In-process fakes (a protocol server and a host-shell backend) used by the integration tests.
+# Never enabled in a release build.
+testing = ["dep:axum"]
+
+[dependencies]
+ch-api-types.workspace = true
+ch-workflow.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+bytes.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+rand.workspace = true
+chrono.workspace = true
+tempfile.workspace = true
+bollard.workspace = true
+zip.workspace = true
+tar.workspace = true
+flate2.workspace = true
+globset.workspace = true
+walkdir.workspace = true
+toml.workspace = true
+shell-words.workspace = true
+rustix.workspace = true
+url.workspace = true
+axum = { workspace = true, optional = true }
+
+[dev-dependencies]
+haven-runner = { path = ".", features = ["testing"] }
+axum.workspace = true
+proptest.workspace = true
+sha2.workspace = true
+hex.workspace = true
+insta.workspace = true

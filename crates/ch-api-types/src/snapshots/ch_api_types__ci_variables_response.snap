@@ -1,0 +1,15 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "total_count": 1,
+  "variables": [
+    {
+      "created_at": "2026-01-02T03:04:05Z",
+      "name": "RUST_VERSION",
+      "updated_at": "2026-01-02T03:04:05Z",
+      "value": "1.100.0"
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{% extends "settings/layout.html" %}
+{% import "components.html" as ui %}
+{% block settings_body %}
+<h1>Access tokens</h1>
+{% if let Some(s) = new_secret %}
+<div class="settings-card stack">
+  <h2>{{ s.name }} is ready</h2>
+  <p><strong>Copy it now. You will not see it again.</strong> The server keeps only a hash of it.</p>
+  <div class="token-box"><code>{{ s.secret }}</code><button type="button" class="btn small" data-copy="{{ s.secret }}">Copy</button></div>
+  <p class="hint">Use this token as the password when you push over HTTPS. Your username stays the same.</p>
+</div>
+{% endif %}
+{% if rows.is_empty() %}
+{% call ui::empty("No tokens", "Create one to push over HTTPS or talk to the server from a script.") %}
+{% else %}
+<table class="data-table">
+  <thead><tr><th>Name</th><th>Token</th><th>Scopes</th><th>Expires</th><th>Last used</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td data-label="Name">{{ r.name }}</td>
+      <td data-label="Token"><code>{{ r.prefix }}</code></td>
+      <td data-label="Scopes">{% for s in r.scopes %}<span class="chip">{{ s }}</span> {% endfor %}</td>
+      <td data-label="Expires">{% if r.expires_soon %}<span class="chip chip-fail">{% call ui::time(r.expires) %}</span>{% else %}{% call ui::time(r.expires) %}{% endif %}</td>
+      <td data-label="Last used">{% if let Some(t) = r.last_used %}{% call ui::time(t) %}{% else %}<span class="muted">Never used</span>{% endif %}</td>
+      <td data-label="">
+        <form method="post" action="/settings/tokens/{{ r.id }}/delete" class="inline" data-confirm="Delete this token? Anything using it stops working at once.">
+          {% call ui::csrf_field(c.csrf) %}
+          <button class="btn small btn-danger" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<form method="post" action="/settings/tokens" class="settings-card stack">
+  <h2>New token</h2>
+  {% call ui::csrf_field(c.csrf) %}
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="field">
+    <label for="name">Name</label>
+    <input id="name" name="name" type="text" value="{{ name }}" maxlength="100">
+    <p class="hint">What this token is for, such as the laptop or script that uses it.</p>
+    {% call ui::field_error(errors.get("name")) %}
+  </div>
+  <fieldset class="field">
+    <legend>Scopes</legend>
+    {% for o in scopes %}
+    <label class="choice"><input type="checkbox" name="scopes" value="{{ o.value }}"{% if o.checked %} checked{% endif %}><span class="choice-text"><strong>{{ o.label }}</strong><span class="muted">{{ o.help }}</span></span></label>
+    {% endfor %}
+    {% call ui::field_error(errors.get("scopes")) %}
+  </fieldset>
+  <div class="field">
+    <label for="expires_in_days">Expires after</label>
+    <select id="expires_in_days" name="expires_in_days">
+      {% for o in options %}<option value="{{ o.days }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+    </select>
+    {% call ui::field_error(errors.get("expires_in_days")) %}
+  </div>
+  <div class="row"><button class="btn btn-primary" type="submit">Create token</button></div>
+  <p class="hint">A token never carries site admin powers, whatever its scopes.</p>
+</form>
+{% endblock %}

@@ -1,0 +1,65 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "author": {
+    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "html_url": "https://code.example.com/alice",
+    "id": 1,
+    "login": "alice",
+    "site_admin": false,
+    "type": "User",
+    "url": "https://code.example.com/api/v3/users/alice"
+  },
+  "commit": {
+    "author": {
+      "date": "2026-01-02T03:04:05Z",
+      "email": "alice@example.com",
+      "name": "Alice"
+    },
+    "comment_count": 1,
+    "committer": {
+      "date": "2026-01-02T03:04:05Z",
+      "email": "alice@example.com",
+      "name": "Alice"
+    },
+    "message": "add branch protection",
+    "tree": {
+      "sha": "0d1a5e5f"
+    }
+  },
+  "committer": {
+    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "html_url": "https://code.example.com/alice",
+    "id": 1,
+    "login": "alice",
+    "site_admin": false,
+    "type": "User",
+    "url": "https://code.example.com/api/v3/users/alice"
+  },
+  "files": [
+    {
+      "additions": 10,
+      "changes": 12,
+      "deletions": 2,
+      "filename": "src/lib.rs",
+      "patch": "@@ -1,2 +1,4 @@\n pub mod repos;",
+      "sha": "b10b1234",
+      "status": "modified"
+    }
+  ],
+  "html_url": "https://code.example.com/alice/codehaven/commit/c0ffee01",
+  "parents": [
+    {
+      "sha": "a11ce000"
+    }
+  ],
+  "sha": "c0ffee01",
+  "stats": {
+    "additions": 10,
+    "deletions": 2,
+    "total": 12
+  },
+  "url": "https://code.example.com/api/v3/repos/alice/codehaven/commits/c0ffee01"
+}

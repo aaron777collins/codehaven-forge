@@ -1,0 +1,34 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<h2 class="page-h">{{ heading }}</h2>
+<form method="post" action="{{ action }}" class="editor stack">
+  {% call ui::csrf_field(c.csrf) %}
+  <input type="hidden" name="expected_sha" value="{{ expected_sha }}">
+  {% if !error.is_empty() %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  {% if mode == "new" %}
+  <div class="field"><label for="path">File name</label><input id="path" name="path" type="text" value="{{ path }}" placeholder="docs/notes.md" autocapitalize="none" spellcheck="false" required><p class="hint">Use slashes to put it in a folder.</p></div>
+  {% else %}
+  <p class="muted">On branch <code>{{ branch }}</code>{% if mode == "edit" %}, file <code>{{ path }}</code>{% endif %}</p>
+  {% endif %}
+  {% if mode != "delete" %}
+  <div class="field editor-tabs" data-tabs>
+    <div class="tabs small" role="tablist"><button type="button" class="tab current" role="tab" data-tab="write">Write</button><button type="button" class="tab" role="tab" data-tab="preview" data-preview-url="/preview">Preview</button></div>
+    <label class="sr-only" for="content">File content</label>
+    <textarea id="content" name="content" class="mono code-input" rows="22" spellcheck="false" wrap="off" data-tab-pane="write">{{ content }}</textarea>
+    <div class="markdown preview-pane" data-tab-pane="preview" hidden></div>
+  </div>
+  {% else %}
+  <p class="note">This removes the file in a new commit. The history keeps it.</p>
+  {% endif %}
+  <fieldset class="commit-box">
+    <legend>Commit changes</legend>
+    <div class="field"><label for="message">Commit message</label><input id="message" name="message" type="text" value="{{ message }}" maxlength="200"></div>
+    <div class="radio"><label><input type="radio" name="target" value="direct"{% if direct %} checked{% endif %}> Commit directly to <code>{{ branch }}</code></label></div>
+    <div class="radio"><label><input type="radio" name="target" value="branch"{% if !direct %} checked{% endif %}> Make a new branch and open a pull request</label>
+      <input class="inline-input" name="new_branch" type="text" value="{{ new_branch }}" placeholder="my-change" aria-label="New branch name" autocapitalize="none" spellcheck="false"></div>
+    {% if protected_note %}<p class="hint">If <code>{{ branch }}</code> is protected, pick the new branch option.</p>{% endif %}
+  </fieldset>
+  <div class="row"><button class="btn btn-primary" type="submit">{% if mode == "delete" %}Delete file{% else %}Commit changes{% endif %}</button><a class="btn" href="{{ cancel_href }}">Cancel</a></div>
+</form>
+{% endblock %}

@@ -1,0 +1,45 @@
+# Lint with RuboCop and test with RSpec on every push and pull request.
+name: ruby-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: RSpec
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Ruby and bundler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby-full ruby-dev build-essential libyaml-dev
+          gem install bundler --no-document
+          ruby --version
+          bundle --version
+
+      - name: Restore gem cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/bundle
+          key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
+          restore-keys: |
+            gems-${{ runner.os }}-
+
+      - name: Bundle install
+        run: |
+          bundle config set --local path vendor/bundle
+          bundle install --jobs 4 --retry 3
+
+      - name: RuboCop
+        run: bundle exec rubocop --format progress
+
+      - name: RSpec
+        env:
+          CI: true
+        run: bundle exec rspec --format documentation --color

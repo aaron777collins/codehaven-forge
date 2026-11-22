@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO blobs (sha256, size, refcount) VALUES ($1, $2, 1)\n         ON CONFLICT (sha256) DO UPDATE SET refcount = blobs.refcount + 1, unreferenced_since = NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "12cbfdc87fbd25d597171c527d5d42a98c92f1c4b1aa07618119801e2d549176"
+}

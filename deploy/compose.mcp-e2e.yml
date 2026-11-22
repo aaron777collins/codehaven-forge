@@ -1,0 +1,56 @@
+# A throwaway server with the Claude connector turned on, for deploy/tests/connector-e2e.sh. The
+# server believes it is at https://code.example.com; the script reaches it over this project's own
+# network and speaks for a proxy there (X-Forwarded-Proto, Host), the way a real proxy would. It
+# needs outbound DNS and https from the server, because the connector fetches the real Claude client
+# document. No published ports. Every service carries the throwaway label the scripts check.
+name: e2e-mcp-default
+
+services:
+  postgres:
+    labels: {org.codehaven.throwaway: "true"}
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: codehaven
+      POSTGRES_PASSWORD: e2e-only-not-a-secret
+      POSTGRES_DB: codehaven
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codehaven -d codehaven"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    mem_limit: 1g
+    networks: [e2e]
+
+  server:
+    labels: {org.codehaven.throwaway: "true"}
+    image: codehaven-server:${CODEHAVEN_TAG:?a throwaway tag, set by deploy/tests/connector-e2e.sh}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["codehaven", "serve", "--migrate"]
+    environment:
+      CODEHAVEN__SERVER__EXTERNAL_URL: https://code.example.com
+      CODEHAVEN__MCP__ENABLED: "true"
+      CODEHAVEN__HTTP__TRUSTED_PROXIES: '["${CODEHAVEN_E2E_SUBNET:?set CODEHAVEN_E2E_SUBNET to a free /20}"]'
+      CODEHAVEN__DATABASE__URL: postgres://codehaven:e2e-only-not-a-secret@postgres:5432/codehaven
+      CODEHAVEN__STORAGE__DATA_DIR: /data
+      CODEHAVEN__LOG__FORMAT: pretty
+    tmpfs:
+      - /data:exec,uid=10001,gid=10001,mode=0755
+    healthcheck:
+      test: ["CMD", "codehaven", "healthcheck"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    mem_limit: 1g
+    networks: [e2e]
+
+networks:
+  e2e:
+    labels: {org.codehaven.throwaway: "true"}
+    ipam:
+      config:
+        - subnet: ${CODEHAVEN_E2E_SUBNET:?set CODEHAVEN_E2E_SUBNET to a free /20}

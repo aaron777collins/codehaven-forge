@@ -1,0 +1,8 @@
+{% extends "settings/layout.html" %}
+{% block settings_body %}
+<h1>{{ title }}</h1>
+<div class="settings-card stack">
+  <p class="form-error" role="alert">{{ message }}</p>
+  {% if two_factor %}<p><a class="btn btn-primary" href="/settings/security">Open two-factor settings</a></p>{% else %}<p class="hint">Nothing was changed. Start again from the app if you want to connect it.</p>{% endif %}
+</div>
+{% endblock %}

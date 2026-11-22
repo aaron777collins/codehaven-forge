@@ -1,0 +1,15 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "arch": "x64",
+  "labels": [
+    "ubuntu-latest",
+    "linux"
+  ],
+  "name": "runner-1",
+  "os": "linux",
+  "token": "tok",
+  "version": "0.1.0"
+}

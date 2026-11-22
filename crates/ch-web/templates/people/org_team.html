@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% import "people/macros.html" as m %}
+{% block content %}
+<main id="main" class="page">
+  <div class="profile-head">
+    {% call ui::avatar(org_login, 32) %}
+    <div>
+      <h1>{{ name }}</h1>
+      <p class="muted"><a href="{{ org_href }}">{{ org_login }}</a> <span class="dot" aria-hidden="true">&middot;</span> <span class="chip">{{ permission }}</span> {{ members_text }}</p>
+      {% if !description.is_empty() %}<p class="muted small">{{ description }}</p>{% endif %}
+    </div>
+  </div>
+  {% call m::org_tabs(org_login_enc, org_href, "teams", is_owner) %}
+  {% if is_owner %}
+  <form method="post" action="{{ team_href }}/permission" class="card pad stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <h3>Team permission</h3>
+    <div class="field">
+      <label for="team-permission">Permission</label>
+      <select id="team-permission" name="permission">
+        {% for o in perm_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+      </select>
+      <p class="hint">The access members get on the repositories given to this team.</p>
+    </div>
+    <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+  </form>
+  {% endif %}
+
+  <div class="card-head section-head"><h2>Members</h2></div>
+  {% if is_owner %}
+  <form method="post" action="{{ team_href }}/members/add" class="card pad stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <div class="field">
+      <label for="member-username">Username</label>
+      <input id="member-username" name="username" type="text" maxlength="39" autocapitalize="none" spellcheck="false">
+      <p class="hint">Only people who are already in the organization can join a team.</p>
+    </div>
+    <div class="row"><button class="btn btn-primary" type="submit">Add member</button></div>
+  </form>
+  {% endif %}
+  {% if rows.is_empty() %}
+  {% call ui::empty("No members", "Nobody is in this team yet.") %}
+  {% else %}
+  <ul class="collab-list card">
+    {% for r in rows %}
+    <li class="collab-row">
+      {% call ui::avatar(r.username, 28) %}
+      <a href="{{ r.href }}">{{ r.display }}</a>
+      <span class="spacer"></span>
+      {% if is_owner %}
+      <form method="post" action="{{ team_href }}/members/{{ r.username }}/remove" class="inline" data-confirm="Remove {{ r.username }} from this team?">
+        {% call ui::csrf_field(c.csrf) %}
+        <button class="btn small danger" type="submit">Remove</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <div class="card-head section-head"><h2>Repositories</h2></div>
+  {% if repo_rows.is_empty() %}
+  {% call ui::empty("No repositories", "This team has access to none yet.") %}
+  {% else %}
+  <ul class="collab-list card">
+    {% for r in repo_rows %}
+    <li class="collab-row">
+      <a href="{{ r.href }}">{{ r.name }}</a>
+      <span class="chip">{{ r.permission }}</span>
+      <span class="spacer"></span>
+      {% if is_owner %}
+      <form method="post" action="{{ team_href }}/repos/{{ r.repo_id }}/remove" class="inline" data-confirm="Take this repository away from the team?">
+        {% call ui::csrf_field(c.csrf) %}
+        <button class="btn small danger" type="submit">Remove</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if is_owner && !repo_choices.is_empty() %}
+  <form method="post" action="{{ team_href }}/repos/add" class="card pad stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <h3>Add a repository</h3>
+    <div class="field">
+      <label for="repo-choice">Repository</label>
+      <select id="repo-choice" name="repo_id">
+        {% for r in repo_choices %}<option value="{{ r.repo_id }}">{{ r.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="repo-permission">Permission</label>
+      <select id="repo-permission" name="permission">
+        {% for o in perm_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="row"><button class="btn btn-primary" type="submit">Add repository</button></div>
+  </form>
+  {% endif %}
+
+  {% if is_owner %}
+  <div class="danger-zone card pad stack">
+    <h3>Danger zone</h3>
+    <div class="danger-row">
+      <form method="post" action="{{ team_href }}/delete" class="stack danger-form">
+        {% call ui::csrf_field(c.csrf) %}
+        <h4>Delete this team</h4>
+        <p class="muted">Members lose the access this team gave them. The repositories themselves are not touched.</p>
+        <div class="field">
+          <label for="team-confirm"><input id="team-confirm" name="confirm" type="checkbox" value="1"> I am sure, delete this team</label>
+        </div>
+        <div class="row"><button class="btn danger" type="submit">Delete team</button></div>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

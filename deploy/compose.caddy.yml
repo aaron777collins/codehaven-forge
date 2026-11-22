@@ -1,0 +1,40 @@
+# CODEHAVEN_PROXY=caddy: a Caddy in this project that gets the TLS certificate for
+# CODEHAVEN_SITE_HOST and sends to the server (Caddyfile.example). It publishes ports 80 and 443
+# on the host, so the name must already point at this machine and both ports must be free.
+#
+# Set CODEHAVEN_TRUSTED_PROXIES to a JSON list holding CODEHAVEN_EDGE_SUBNET: Caddy reaches the
+# server from that network.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      CODEHAVEN_SITE_HOST: ${CODEHAVEN_SITE_HOST:?set CODEHAVEN_SITE_HOST in .env to the host name people open}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      edge: {}
+
+  server:
+    networks:
+      edge:
+        aliases: [server]
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: ${CODEHAVEN_EDGE_SUBNET:?set CODEHAVEN_EDGE_SUBNET in .env to a free subnet, for example 10.20.16.0/24}
+
+volumes:
+  caddy-data: {}
+  caddy-config: {}

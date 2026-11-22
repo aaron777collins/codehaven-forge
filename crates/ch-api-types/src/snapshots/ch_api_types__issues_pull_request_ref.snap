@@ -1,0 +1,9 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "html_url": "https://code.example.com/octo/haven/pull/9",
+  "merged_at": "2026-01-02T03:04:05Z",
+  "url": "https://code.example.com/api/v3/repos/octo/haven/pulls/9"
+}

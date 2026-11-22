@@ -1,0 +1,21 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "avatar_url": "https://code.example.com/avatars/1.svg",
+  "bio": "builds the forge",
+  "company": "Haven",
+  "created_at": "2026-01-02T03:04:05Z",
+  "email": "alice@example.com",
+  "html_url": "https://code.example.com/alice",
+  "id": 1,
+  "location": "NZ",
+  "login": "alice",
+  "name": "Alice",
+  "site_admin": true,
+  "two_factor_authentication": true,
+  "type": "User",
+  "updated_at": "2026-01-02T03:04:05Z",
+  "url": "https://code.example.com/api/v3/users/alice"
+}

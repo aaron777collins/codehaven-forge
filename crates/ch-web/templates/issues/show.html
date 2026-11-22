@@ -1,0 +1,57 @@
+{% extends "repo/layout.html" %}
+{% import "issues/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<header class="issue-head">
+  <h2 class="issue-h1">{{ title }} <span class="muted">#{{ number }}</span></h2>
+  <p class="issue-sub"><span class="state state-{% if open %}open{% else %}closed{% endif %}"><svg class="icon" aria-hidden="true"><use href="#i-{% if open %}circle-dot{% else %}circle-check{% endif %}"/></svg>{{ state_label }}</span>
+    <a href="/{{ author.username }}"><strong>{{ author.display }}</strong></a> opened this {% call ui::time(when) %}</p>
+  {% if can_edit %}
+  <details class="edit-title"><summary class="btn small">Edit</summary>
+    <form method="post" action="{{ base }}/issues/{{ number }}/edit" class="stack">
+      {% call ui::csrf_field(c.csrf) %}
+      <div class="field"><label for="edit-title">Title</label><input id="edit-title" name="title" type="text" value="{{ raw_title }}" maxlength="256" required></div>
+      {% call m::editor("edit-body", "body", raw_body, 8, owner, repo) %}
+      <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+    </form>
+  </details>
+  {% endif %}
+</header>
+<div class="two-col">
+  <div class="timeline" id="comments">
+    <article class="timeline-item comment">
+      <img class="avatar av-32" src="/avatar/{{ author.username }}.svg" alt="" width="32" height="32">
+      <div class="comment-box"><header class="comment-head"><strong>{{ author.display }}</strong> <span class="chip">Author</span> <span class="muted">opened {% call ui::time(when) %}</span></header>
+        <div class="markdown comment-body">{% if body_html.is_empty() %}<p class="muted">No description given.</p>{% else %}{{ body_html|safe }}{% endif %}</div></div>
+    </article>
+    {% for cv in comments %}{% call m::comment(cv) %}{% endfor %}
+    {% if let Some(cn) = closed_note %}<div class="timeline-event"><svg class="icon" aria-hidden="true"><use href="#i-circle-check"/></svg>Closed as {{ cn.0 }} {% call ui::time(cn.1) %}</div>{% endif %}
+    {% if can_comment %}
+    <form method="post" action="{{ base }}/issues/{{ number }}/comment" class="comment-form stack">
+      {% call ui::csrf_field(c.csrf) %}
+      {% call m::editor("new-comment", "body", "", 5, owner, repo) %}
+      <div class="row">
+        {% if can_edit %}{% if open %}<button class="btn" type="submit" name="action" value="close">Close issue</button>{% else %}<button class="btn" type="submit" name="action" value="reopen">Reopen issue</button>{% endif %}{% endif %}
+        <button class="btn btn-primary" type="submit">Comment</button>
+      </div>
+    </form>
+    {% else %}<p class="muted">Comments are closed on this issue.</p>{% endif %}
+  </div>
+  <aside class="issue-side-col" aria-label="Details">
+    <section class="side-block"><h2>Assignees</h2>
+      {% if assignees.is_empty() %}<p class="muted">Nobody yet</p>{% endif %}
+      {% for a in assignees %}<p class="person"><img class="avatar av-20" src="/avatar/{{ a.username }}.svg" alt="" width="20" height="20"> <a href="/{{ a.username }}">{{ a.display }}</a></p>{% endfor %}
+      {% if can_triage %}{% if !assignee_choices.is_empty() %}<details class="menu" data-menu><summary class="btn small">Change</summary><form class="menu-panel pad" method="post" action="{{ base }}/issues/{{ number }}/assignees">{% call ui::csrf_field(c.csrf) %}{% for a in assignee_choices %}<label class="choice"><input type="checkbox" name="assignees" value="{{ a.value }}"{% if a.on %} checked{% endif %}>{{ a.text }}</label>{% endfor %}<button class="btn btn-primary small" type="submit">Save</button></form></details>{% endif %}{% endif %}
+    </section>
+    <section class="side-block"><h2>Labels</h2>
+      {% if labels.is_empty() %}<p class="muted">None yet</p>{% endif %}
+      <p>{% for l in labels %}{% call ui::label(l) %} {% endfor %}</p>
+      {% if can_triage %}{% if !label_choices.is_empty() %}<details class="menu" data-menu><summary class="btn small">Change</summary><form class="menu-panel pad" method="post" action="{{ base }}/issues/{{ number }}/labels">{% call ui::csrf_field(c.csrf) %}{% for l in label_choices %}<label class="choice"><input type="checkbox" name="labels" value="{{ l.value }}"{% if l.on %} checked{% endif %}><span class="label {{ l.class }}">{{ l.text }}</span></label>{% endfor %}<button class="btn btn-primary small" type="submit">Save</button></form></details>{% endif %}{% endif %}
+    </section>
+    <section class="side-block"><h2>Milestone</h2>
+      {% if let Some(ms) = milestone %}<p><a href="{{ ms.1 }}">{{ ms.0 }}</a></p>{% else %}<p class="muted">No milestone</p>{% endif %}
+      {% if can_triage %}{% if !milestone_choices.is_empty() %}<details class="menu" data-menu><summary class="btn small">Change</summary><form class="menu-panel pad" method="post" action="{{ base }}/issues/{{ number }}/milestone">{% call ui::csrf_field(c.csrf) %}<select name="milestone"><option value="">None</option>{% for ms in milestone_choices %}<option value="{{ ms.value }}"{% if ms.on %} selected{% endif %}>{{ ms.text }}</option>{% endfor %}</select><button class="btn btn-primary small" type="submit">Save</button></form></details>{% endif %}{% endif %}
+    </section>
+  </aside>
+</div>
+{% endblock %}

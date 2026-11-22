@@ -1,0 +1,74 @@
+{% extends "settings/layout.html" %}
+{% import "components.html" as ui %}
+{% block settings_body %}
+<h1><strong>{{ v.client_host }}</strong> wants to connect to {{ c.instance }}</h1>
+<form method="post" action="/oauth/consent" class="stack">
+  {% call ui::csrf_field(c.csrf) %}
+  <input type="hidden" name="request_id" value="{{ v.request_id }}">
+  <div class="settings-card stack">
+    <h2>Who is asking</h2>
+    <dl class="kv">
+      <dt>App</dt><dd>{{ v.client_host }}</dd>
+      <dt>Its own name for itself</dt><dd>{% if v.client_name.is_empty() %}<span class="muted">none given</span>{% else %}{{ v.client_name }} <span class="muted">(the app's own claim)</span>{% endif %}</dd>
+      <dt>Client id</dt><dd><code>{{ v.client_id }}</code></dd>
+      <dt>Sends you back to</dt><dd><code>{{ v.redirect_host }}</code></dd>
+      <dt>Signed in as</dt><dd>{{ v.username }} <span class="muted">Not you?</span></dd>
+    </dl>
+    {% if v.loopback %}<p class="notice" role="note">This returns to a program on this computer. Continue only if you just started this from Claude Code.</p>{% endif %}
+    <p class="muted">It asked for: {% if asked.is_empty() %}read{% else %}{{ asked }}{% endif %}. What you tick below is what it gets, nothing more.</p>
+  </div>
+
+  <fieldset class="settings-card stack">
+    <legend>Read</legend>
+    <p class="muted">The app can always read what you allow here: files, history, issues, pull requests and CI logs.</p>
+    <label class="choice"><input type="radio" name="read" value="all" required><span class="choice-text"><strong>All repositories I can access, including future ones</strong></span></label>
+    <label class="choice"><input type="radio" name="read" value="selected" required><span class="choice-text"><strong>Only the repositories I select</strong></span></label>
+    <div class="stack" id="read-repos">
+      {% for r in repos %}
+      <label class="choice"><input type="checkbox" name="read_repos" value="{{ r.id }}"><span class="choice-text">{{ r.name }}{% if r.private %} <span class="chip">private</span>{% endif %}</span></label>
+      {% endfor %}
+      {% if repos.is_empty() %}<p class="muted">You cannot read any repository yet.</p>{% endif %}
+    </div>
+  </fieldset>
+
+  <fieldset class="settings-card stack">
+    <legend>Write</legend>
+    <p class="muted">Create branches and commits, open and change issues and pull requests, and merge. It cannot approve a pull request, delete a branch or change settings.</p>
+    <label class="choice"><input type="radio" name="write" value="none" checked><span class="choice-text"><strong>None</strong></span></label>
+    <label class="choice"><input type="radio" name="write" value="selected"><span class="choice-text"><strong>Only the repositories I select</strong></span></label>
+    <label class="choice"><input type="radio" name="write" value="all"><span class="choice-text"><strong>All repositories</strong> <span class="muted">(only with read on all)</span></span></label>
+    <div class="stack">
+      {% for r in writable %}
+      <label class="choice"><input type="checkbox" name="write_repos" value="{{ r.id }}"><span class="choice-text">{{ r.name }}{% if r.private %} <span class="chip">private</span>{% endif %}</span></label>
+      {% endfor %}
+      {% if writable.is_empty() %}<p class="muted">You cannot write to any repository.</p>{% endif %}
+    </div>
+  </fieldset>
+
+  <fieldset class="settings-card stack">
+    <legend>Change workflows and run CI</legend>
+    <p class="muted">This runs code on your runner, with access to that repository's CI secrets. Only for repositories you gave write access.</p>
+    <label class="choice"><input type="radio" name="workflows" value="none" checked><span class="choice-text"><strong>None</strong></span></label>
+    <label class="choice"><input type="radio" name="workflows" value="selected"><span class="choice-text"><strong>Only the repositories I select</strong></span></label>
+    <label class="choice"><input type="radio" name="workflows" value="all"><span class="choice-text"><strong>All repositories</strong> <span class="muted">(only with write on all)</span></span></label>
+    <div class="stack">
+      {% for r in writable %}
+      <label class="choice"><input type="checkbox" name="workflow_repos" value="{{ r.id }}"><span class="choice-text">{{ r.name }}</span></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+
+  <div class="settings-card stack">
+    <div class="field">
+      <label for="expires_days">Lasts</label>
+      <select id="expires_days" name="expires_days"><option value="90" selected>90 days</option><option value="180">180 days</option></select>
+    </div>
+    <p class="hint">Repository text, issues and logs can contain instructions aimed at Claude. Give write access only where you need it.</p>
+    <p class="hint">You can disconnect it any time in Settings, Connected apps.</p>
+    <div class="row">
+      <button class="btn btn-primary" type="submit" name="decision" value="approve">Allow</button>
+      <button class="btn" type="submit" name="decision" value="deny" formnovalidate>Cancel</button>
+    </div>
+  </div>
+</form>
+{% endblock %}

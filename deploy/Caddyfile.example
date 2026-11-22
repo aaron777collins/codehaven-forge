@@ -1,0 +1,15 @@
+# Used by compose.caddy.yml. Caddy gets and renews the certificate for this host on its own.
+{$CODEHAVEN_SITE_HOST} {
+	# A client must never be able to say who it is: Codehaven ignores these headers, and removing
+	# them here keeps it that way if another service ever sits behind the same proxy.
+	request_header -Remote-User
+	request_header -Remote-Groups
+	request_header -Remote-Email
+	request_header -Remote-Name
+
+	# Everything goes to the server, including /.well-known/ and /oauth/. Do not put a matcher in
+	# front of those paths. flush_interval -1 keeps live CI logs streaming.
+	reverse_proxy server:3200 {
+		flush_interval -1
+	}
+}

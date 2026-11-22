@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% import "people/macros.html" as m %}
+{% block content %}
+<main id="main" class="page">
+  <div class="profile-head">
+    {% call ui::avatar(login, 32) %}
+    <div>
+      <h1>{{ display }}</h1>
+      <p class="muted">@{{ login }}{% if is_org %} <span class="chip">Organization</span>{% endif %}</p>
+      <p class="muted small">{% if is_org %}Created{% else %}Joined{% endif %} {% call ui::time(joined) %}</p>
+    </div>
+  </div>
+  {% if is_org %}
+  {% if org_owner %}
+  <div class="row">
+    <a class="btn btn-primary" href="/new?owner={{ org_id }}">New repository</a>
+  </div>
+  {% endif %}
+  {% call m::org_tabs(login_enc, base, "repos", org_owner) %}
+  {% endif %}
+  <div class="dash">
+    <section class="dash-main">
+      <div class="card-head"><h2>Repositories</h2></div>
+      {% if repos.is_empty() %}
+      {% call ui::empty("No repositories", "There is nothing here you can see.") %}
+      {% else %}
+      <ul class="card">
+        {% for r in repos %}
+        <li class="repo-item">
+          <p class="repo-item-title"><a href="{{ r.href }}">{{ r.name }}</a>{% if r.private %}<span class="chip" title="Only people with access can see this repository.">Private</span>{% else %}<span class="chip" title="Every account on this server can read it. Nobody else can.">Public</span>{% endif %}</p>
+          {% if !r.description.is_empty() %}<p>{{ r.description }}</p>{% endif %}
+          <p class="muted small">{% if let Some(t) = r.updated %}Updated {% call ui::time(t) %}{% else %}No pushes yet{% endif %}</p>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% if !is_org %}
+    <aside class="dash-side">
+      <section class="card">
+        <div class="card-head"><h2>Organizations</h2></div>
+        {% if orgs.is_empty() %}
+        <p class="muted pad">No organizations.</p>
+        {% else %}
+        <ul>
+          {% for o in orgs %}{% call m::person_row(o) %}{% endfor %}
+        </ul>
+        {% endif %}
+      </section>
+    </aside>
+    {% endif %}
+  </div>
+</main>
+{% endblock %}

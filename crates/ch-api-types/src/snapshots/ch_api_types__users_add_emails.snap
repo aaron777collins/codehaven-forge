@@ -1,0 +1,10 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "emails": [
+    "alice@example.com",
+    "alice@example.org"
+  ]
+}

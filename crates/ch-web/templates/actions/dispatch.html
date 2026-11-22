@@ -1,0 +1,44 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<h2 class="page-h">Run a workflow</h2>
+{% if !notice.is_empty() %}<p class="notice notice-warn" role="status">{{ notice }}</p>{% endif %}
+
+{% if !has_workflows %}
+{% call ui::empty("Nothing to run by hand", "No workflow in this repository has a manual trigger.") %}
+{% else %}
+<form method="get" action="{{ pick_action }}" class="card pad stack">
+  <div class="field">
+    <label for="wf">Workflow</label>
+    <select id="wf" name="workflow" data-autosubmit>
+      {% for w in workflows %}<option value="{{ w.path }}"{% if w.current %} selected{% endif %}>{{ w.name }}</option>{% endfor %}
+    </select>
+    <p class="hint">Picking a workflow reloads the page with its inputs.</p>
+  </div>
+</form>
+<form method="post" action="{{ action }}" class="card pad stack">
+  {% call ui::csrf_field(c.csrf) %}
+  <input type="hidden" name="workflow_path" value="{{ selected_path }}">
+  {% if !error.is_empty() %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <div class="field">
+    <label for="ref">Branch</label>
+    <select id="ref" name="ref">
+      {% for b in branches %}<option value="{{ b.name }}"{% if b.current %} selected{% endif %}>{{ b.name }}</option>{% endfor %}
+    </select>
+  </div>
+  {% if !inputs.is_empty() %}
+  <fieldset>
+    <legend>Inputs</legend>
+    {% for i in inputs %}
+    <div class="field">
+      <label for="wf-input-{{ loop.index }}">{{ i.label }}{% if i.required %} (required){% endif %}</label>
+      <input id="wf-input-{{ loop.index }}" name="input_{{ i.label }}" type="text" value="{{ i.default }}"{% if i.required %} required{% endif %}>
+      {% if !i.description.is_empty() %}<p class="hint">{{ i.description }}</p>{% endif %}
+    </div>
+    {% endfor %}
+  </fieldset>
+  {% endif %}
+  <div class="row"><button class="btn btn-primary" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>Run workflow</button></div>
+</form>
+{% endif %}
+{% endblock %}

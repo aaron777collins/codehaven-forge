@@ -1,0 +1,59 @@
+{% extends "admin/layout.html" %}
+{% import "components.html" as ui %}
+{% block admin_body %}
+<h1>Invites</h1>
+{% if rows.is_empty() %}
+{% call ui::empty("No invites yet", "Create an invite link below to let the next person in.") %}
+{% else %}
+<table class="data-table card">
+  <thead><tr><th>Who</th><th>Note</th><th>Status</th><th>Expires</th><th>Created</th><th>Used by</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td data-label="Who">{{ r.who }}</td>
+      <td data-label="Note">{% if r.note.is_empty() %}-{% else %}{{ r.note }}{% endif %}</td>
+      <td data-label="Status"><span class="chip {{ r.chip_class }}">{{ r.chip_label }}</span></td>
+      <td data-label="Expires"><time datetime="{{ r.expires.iso }}" title="{{ r.expires.title }}">{{ r.expires.title }}</time></td>
+      <td data-label="Created">{% call ui::time(r.created) %}</td>
+      <td data-label="Used by">{% if let Some(who) = r.used_by %}{{ who }}{% else %}-{% endif %}</td>
+      <td data-label="">
+      {% if r.pending %}
+        <form method="post" action="/admin/invites/{{ r.id }}/revoke" class="inline" data-confirm="Revoke this invite? The link stops working.">
+          {% call ui::csrf_field(c.csrf) %}
+          <button class="btn small danger" type="submit">Revoke</button>
+        </form>
+      {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<section class="card stack">
+  <h2>Create an invite</h2>
+  <form method="post" action="/admin/invites" class="stack">
+    {% call ui::csrf_field(c.csrf) %}
+    {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+    <div class="field">
+      <label for="invite-email">Email (optional)</label>
+      <input id="invite-email" name="email" type="text" value="{{ form.email }}" autocomplete="off">
+      {% call ui::field_error(errors.get("email")) %}
+    </div>
+    <div class="field">
+      <label for="invite-note">Note (optional)</label>
+      <input id="invite-note" name="note" type="text" value="{{ form.note }}">
+      {% call ui::field_error(errors.get("note")) %}
+    </div>
+    <label class="choice"><input type="checkbox" name="grants_admin" value="1"{% if form.grants_admin %} checked{% endif %}> They can manage the whole server</label>
+    <label class="choice"><input type="checkbox" name="grants_ci" value="1"{% if form.grants_ci %} checked{% endif %}> Their pushes may run workflows on this server's runners</label>
+    <div class="field">
+      <label for="invite-expires">Link works for</label>
+      <select id="invite-expires" name="expires_in_hours">
+        {% for o in options %}<option value="{{ o.hours }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+      </select>
+      {% call ui::field_error(errors.get("expires_in_hours")) %}
+    </div>
+    <div class="inline"><button class="btn btn-primary" type="submit">Create invite</button></div>
+  </form>
+</section>
+{% endblock %}

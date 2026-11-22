@@ -1,0 +1,15 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "additions": 3,
+  "blob_url": "https://code.example.com/octo/haven/blob/aaa111/src/main.rs",
+  "changes": 4,
+  "deletions": 1,
+  "filename": "src/main.rs",
+  "patch": "@@ -1,3 +1,5 @@",
+  "raw_url": "https://code.example.com/octo/haven/raw/aaa111/src/main.rs",
+  "sha": "def456",
+  "status": "modified"
+}

@@ -1,0 +1,16 @@
+---
+source: crates/ch-api-types/src/lib.rs
+expression: json
+---
+{
+  "content": "IyBDb2RlaGF2ZW4K",
+  "download_url": "https://code.example.com/raw/alice/codehaven/main/docs/README.md",
+  "encoding": "base64",
+  "html_url": "https://code.example.com/alice/codehaven/blob/main/docs/README.md",
+  "name": "README.md",
+  "path": "docs/README.md",
+  "sha": "b10b1234",
+  "size": 12,
+  "type": "file",
+  "url": "https://code.example.com/api/v3/repos/alice/codehaven/contents/docs/README.md"
+}

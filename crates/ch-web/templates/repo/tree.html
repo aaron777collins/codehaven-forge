@@ -1,0 +1,67 @@
+{% extends "repo/layout.html" %}
+{% import "repo/macros.html" as m %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="tree-layout{% if is_home %} with-about{% endif %}">
+<div class="tree-main">
+  <div class="toolbar">
+    {% call m::picker(picker) %}
+    <a class="btn" href="{{ find_href }}"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>Go to file</a>
+    <div class="spacer"></div>
+    {% if can_write %}<a class="btn" href="{{ new_file_href }}"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Add file</a>{% endif %}
+    {% if !is_default %}<a class="btn" href="{{ compare_href }}"><svg class="icon" aria-hidden="true"><use href="#i-git-compare"/></svg>Compare</a>{% endif %}
+    <details class="menu menu-right" data-menu>
+      <summary class="btn btn-primary"><svg class="icon" aria-hidden="true"><use href="#i-code"/></svg>Code<svg class="icon icon-xs" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+      <div class="menu-panel clone-panel">
+        <p class="menu-head">Clone</p>
+        <div class="clone-row"><label class="small muted" for="clone-https">HTTPS</label><div class="copyfield"><input id="clone-https" type="text" readonly value="{{ clone.https }}"><button type="button" class="icon-btn" data-copy="{{ clone.https }}" aria-label="Copy HTTPS address"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div></div>
+        {% if let Some(s) = clone.ssh %}<div class="clone-row"><label class="small muted" for="clone-ssh">SSH</label><div class="copyfield"><input id="clone-ssh" type="text" readonly value="{{ s }}"><button type="button" class="icon-btn" data-copy="{{ s }}" aria-label="Copy SSH address"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div></div>{% endif %}
+        <p class="menu-sub">Download</p>
+        <a class="pick" href="{{ archive_zip }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download ZIP</a>
+        <a class="pick" href="{{ archive_tgz }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download tar.gz</a>
+      </div>
+    </details>
+  </div>
+
+  {% if !path.is_empty() %}{% call m::crumbs(picker.short, root_href, crumbs) %}{% endif %}
+
+  {% if let Some(l) = last %}
+  <div class="last-commit">
+    <img class="avatar av-24" src="/avatar/{{ l.row.author_seed }}.svg" alt="" width="24" height="24">
+    <strong>{{ l.row.author }}</strong>
+    <a class="commit-title" href="{{ l.row.href }}">{{ l.row.title }}</a>
+    {% if let Some(s) = l.row.status %}{% call ui::status(s) %}{% endif %}
+    <span class="spacer"></span>
+    <a class="sha-chip" href="{{ l.row.href }}"><code>{{ l.row.short }}</code></a>
+    <span class="muted">{% call ui::time(l.row.when) %}</span>
+    <a class="btn small" href="{{ l.count_href }}"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg>History</a>
+  </div>
+  {% endif %}
+
+  <table class="files" aria-label="Files">
+    <thead class="sr-only"><tr><th>Name</th><th>Size</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+      <tr><td class="file-name"><svg class="icon {% if e.is_dir %}dir{% endif %}" aria-hidden="true"><use href="#i-{{ e.icon }}"/></svg><a href="{{ e.href }}">{{ e.name }}</a></td><td class="file-size muted">{{ e.size }}</td></tr>
+    {% endfor %}
+    {% if entries.is_empty() %}<tr><td colspan="2" class="muted">This folder is empty.</td></tr>{% endif %}
+    </tbody>
+  </table>
+
+  {% if let Some(r) = readme %}
+  <section class="readme card">
+    <header class="card-head"><svg class="icon" aria-hidden="true"><use href="#i-book-open"/></svg><h2>{{ r.name }}</h2></header>
+    <div class="markdown">{{ r.html|safe }}</div>
+  </section>
+  {% endif %}
+</div>
+{% if is_home %}
+<aside class="about" aria-label="About">
+  <h2>About</h2>
+  {% if description.is_empty() %}<p class="muted">No description yet.</p>{% else %}<p>{{ description }}</p>{% endif %}
+  {% if !topics.is_empty() %}<p class="topics">{% for t in topics %}<span class="chip">{{ t }}</span>{% endfor %}</p>{% endif %}
+  {% if let Some(r) = release %}<h3>Latest release</h3><p><a href="{{ r.href }}"><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg> {{ r.name }}</a></p>{% endif %}
+</aside>
+{% endif %}
+</div>
+{% endblock %}
