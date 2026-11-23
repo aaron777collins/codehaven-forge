@@ -21,7 +21,8 @@ What it checks, in file contents and in file names:
   addresses     Every IP literal must sit in a documentation range, be loopback, or be one of the
                 well-known test values in KNOWN_TEST_ADDRESSES. Hashing an address would be pointless
                 (there are only 2^32), so addresses are checked by rule instead.
-  emails        The domain must be example.* , .test, .invalid or .localhost.
+  emails        The domain must be example.* , .test, .invalid or .localhost. LICENSE and
+                THIRD_PARTY_NOTICES files are exempt: their copyright lines name the authors.
   paths         No home-directory path of a particular machine, and not the live install path.
 
 A finding names the file, the line and the kind. It never prints the text it matched.
@@ -71,13 +72,14 @@ MAX_BYTES = 4_000_000
 V4 = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{1,3}){3})(?:/\d{1,2})?(?![\w])")
 V6 = re.compile(r"(?<![\w:])((?:[0-9A-Fa-f]{0,4}:){2,7}(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f]{0,4}))(?:/\d{1,3})?(?![\w:.])")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
-PATHS = re.compile(r"(/Users/[A-Za-z0-9._-]+|/home/(?!codehaven\b|runner\b)[A-Za-z0-9._-]+|/opt/" r"codehaven\b)")
+# /home/user is the placeholder home of the browser terminal's shell, not anyone's machine.
+PATHS = re.compile(r"(/Users/[A-Za-z0-9._-]+|/home/(?!codehaven\b|runner\b|user\b)[A-Za-z0-9._-]+|/opt/" r"codehaven\b)")
 ALNUM = re.compile(r"[A-Za-z0-9]+")
 CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 OK_DOMAIN = re.compile(r"(^|\.)(example\.(com|org|net)|example|test|invalid|localhost)$", re.I)
-# Short made-up domains used as examples of an address that should (or should not) validate, and
-# the one that ssh key comments carry.
-OK_EMAIL_DOMAINS = frozenset("b.c b.co c.co d.co x.io b.com openssh.com anthropic.com".split())
+# Short made-up domains used as examples of an address that should (or should not) validate, the
+# one that ssh key comments carry, and the security contact inside the vendored just-bash.
+OK_EMAIL_DOMAINS = frozenset("b.c b.co c.co d.co x.io b.com openssh.com anthropic.com vercel.com".split())
 
 
 def sha(word):
@@ -156,7 +158,10 @@ def check_tree(root, hashes=OWNER_WORD_HASHES, patterns=(), emails=True):
                 continue
             if b"\0" in data[:8000]:
                 continue
-            scan_text(rel, data.decode("utf-8", "replace"), hashes, patterns, findings, emails)
+            # A licence or a notices file keeps its authors' copyright lines whole, emails and all:
+            # they are people, not details of a server.
+            notice = name.startswith("LICENSE") or name == "THIRD_PARTY_NOTICES"
+            scan_text(rel, data.decode("utf-8", "replace"), hashes, patterns, findings, emails and not notice)
     return findings
 
 

@@ -1,0 +1,604 @@
+/* The workspace shell (spec section 10). Calm flat surfaces, one-pixel lines between panes,
+   teal for what is active. Every colour comes from the page tokens except plain transparent. */
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+body.ws-body {
+  margin: 0;
+  height: 100dvh;
+  overflow: hidden;
+  font-family: var(--font);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.ws-app [hidden], .ws-dialog [hidden] { display: none !important; }
+
+.ws-app :focus-visible, .ws-dialog :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- shared pieces */
+
+.ws-icon { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.ws-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ws-btn:hover:not([disabled]) { border-color: var(--border-strong); }
+.ws-btn[disabled] { opacity: 0.5; cursor: default; }
+.ws-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.ws-btn-primary:hover:not([disabled]) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.ws-btn-danger { color: var(--danger); }
+.ws-icon-only { width: 32px; padding: 0; justify-content: center; }
+.ws-x { font-size: 15px; line-height: 1; }
+
+.ws-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.ws-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ws-path { unicode-bidi: isolate; overflow-wrap: anywhere; }
+
+.ws-hint { margin: 4px 0; color: var(--muted); font-size: 12px; }
+.ws-error { margin: 4px 0; color: var(--danger); font-size: 12px; }
+/* The warning colour on its soft background is 4.3:1 in the light theme. Text on it takes a
+   little of the text colour, which keeps the hue and passes 4.5:1 in both themes. */
+.ws-app, .ws-dialog { --ws-warn-text: color-mix(in srgb, var(--warn) 80%, var(--text)); }
+.ws-note {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: var(--warn-soft);
+  color: var(--ws-warn-text);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.ws-list { display: flex; flex-direction: column; gap: 2px; }
+.ws-list-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-list-item:hover, .ws-list-item.ws-on { background: var(--accent-soft); }
+
+.ws-badge {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.ws-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+/* ---------------------------------------------------------------- dialogs */
+
+.ws-dialog {
+  width: 100%;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-menu);
+}
+.ws-dialog::backdrop { background: rgb(0 0 0 / 35%); }
+.ws-dialog[open] { display: flex; flex-direction: column; gap: 12px; }
+.ws-dialog-title { margin: 0; font-size: 15px; }
+.ws-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.ws-dialog-body { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow: auto; }
+.ws-dialog-path { margin: 0; overflow-wrap: anywhere; }
+.ws-quick-list { min-height: 120px; }
+
+/* ---------------------------------------------------------------- the frame */
+
+.ws-app { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+
+.ws-top {
+  flex: none;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.ws-repo { min-width: 0; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+a.ws-repo { color: var(--text); text-decoration: none; }
+a.ws-repo:hover { text-decoration: underline; }
+.ws-branch { max-width: 220px; }
+.ws-branch .ws-path { overflow: hidden; text-overflow: ellipsis; }
+.ws-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 2px 8px;
+  background: var(--warn-soft);
+  color: var(--ws-warn-text);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.ws-chip .ws-chip-text, .ws-chip .ws-icon { overflow: hidden; }
+.ws-chip-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-chip .ws-icon { width: 14px; height: 14px; }
+.ws-count { color: var(--muted); white-space: nowrap; }
+.ws-status { max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.ws-top-spacer { flex: 1; }
+.ws-runs-toggle { display: none; }
+
+.ws-main { flex: 1; display: flex; min-height: 0; }
+
+.ws-rail {
+  flex: none;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.ws-rail-btn {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+.ws-rail-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+
+.ws-side {
+  position: relative;
+  flex: none;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.ws-side-head { flex: none; display: flex; align-items: center; justify-content: space-between; min-height: 36px; padding: 2px 12px; }
+.ws-side-title { font-size: 12px; color: var(--muted); }
+.ws-drawer-close { display: none; }
+.ws-view { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
+
+.ws-side-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 6px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+}
+.ws-side-grip:hover { background: transparent; }
+.ws-panel-grip { right: auto; left: -3px; }
+
+.ws-center { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.ws-tabs {
+  flex: none;
+  display: flex;
+  min-height: 36px;
+  overflow-x: auto;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.ws-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px 0 12px;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ws-tab:hover { color: var(--text); }
+.ws-tab.ws-on { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.ws-tab-main { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ws-tab-main .ws-path { overflow: hidden; text-overflow: ellipsis; }
+.ws-tab-close { width: 24px; height: 24px; border: 0; background: transparent; color: var(--muted); border-radius: var(--radius-sm); }
+
+.ws-banner {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12px;
+}
+.ws-banner:empty { display: none; }
+
+.ws-editor { position: relative; flex: 1; min-height: 0; }
+.ws-edit-box, .ws-diff-box { position: absolute; inset: 0; }
+.ws-editor-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 16px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none;
+}
+.ws-textarea {
+  width: 100%;
+  height: 100%;
+  padding: 10px;
+  border: 0;
+  resize: none;
+  background: var(--surface);
+  color: var(--text);
+  font: 13px/1.5 var(--mono);
+}
+.ws-textarea:focus-visible { outline: none; }
+
+.ws-diff-box { display: flex; flex-direction: column; }
+.ws-diff-top {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12px;
+}
+.ws-diff-top:empty { display: none; }
+.ws-diff-hold { flex: 1; min-height: 0; }
+
+.ws-panel {
+  position: relative;
+  flex: none;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+.ws-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 2px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ws-panel-title { margin: 0; font-size: 13px; }
+.ws-runs { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
+
+.ws-sheet { display: none; }
+.ws-phone-tabs { display: none; }
+
+/* ---------------------------------------------------------------- tree and search */
+
+.ws-tree-head { display: flex; gap: 8px; margin-bottom: 8px; }
+.ws-tree { display: flex; flex-direction: column; }
+.ws-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  padding-right: 4px;
+  border-radius: var(--radius-sm);
+}
+.ws-row:hover { background: var(--bg); }
+.ws-row:focus, .ws-row:focus-within { background: var(--accent-soft); }
+.ws-row-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-row.ws-changed .ws-row-name { color: var(--accent); }
+.ws-row.ws-dir .ws-row-main { font-weight: 500; }
+.ws-twist { flex: none; width: 10px; color: var(--muted); transition: transform 0.12s ease; }
+.ws-twist-open { transform: rotate(90deg); }
+.ws-twist-spacer { flex: none; width: 10px; }
+.ws-row-more { visibility: hidden; width: 24px; height: 24px; border: 0; font-weight: 700; }
+.ws-row:hover .ws-row-more, .ws-row:focus-within .ws-row-more { visibility: visible; }
+
+.ws-search-head { position: sticky; top: 0; background: var(--surface); padding-bottom: 8px; }
+.ws-search-file { padding: 4px 6px; color: var(--muted); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.ws-search-group { margin-bottom: 10px; }
+.ws-hit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.ws-hit:hover { background: var(--accent-soft); }
+.ws-hit-line { flex: none; min-width: 3ch; color: var(--muted); text-align: right; font-size: 11px; }
+.ws-hit-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+
+/* ---------------------------------------------------------------- the phone diff */
+
+.ws-udiff { height: 100%; overflow: auto; padding: 8px; font: 12px/1.6 var(--mono); }
+.ws-udiff div { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 8px; }
+.ws-del { background: var(--danger-soft); }
+.ws-add { background: var(--ok-soft); }
+.ws-udiff-head { margin: 12px 0 4px; font-size: 13px; font-family: var(--font); }
+
+/* ---------------------------------------------------------------- full-page states */
+
+.ws-cover {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg);
+}
+.ws-fatal { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px; text-align: center; }
+.ws-fatal-text { max-width: 46ch; }
+.ws-lock { max-width: 460px; margin: 16vh auto 0; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+.ws-lock-title { margin: 0; font-size: 18px; }
+.ws-lock-text { margin: 0; color: var(--muted); }
+.ws-start { display: block; padding: 24px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- 1024 to 1279: runs over the editor */
+
+@media (max-width: 1279.98px) {
+  .ws-runs-toggle { display: inline-flex; }
+}
+
+@media (min-width: 1280px) {
+  .ws-app:not(.ws-panel-open) .ws-panel { display: none; }
+}
+
+@media (min-width: 1024px) and (max-width: 1279.98px) {
+  .ws-panel:not(.ws-sheet .ws-panel) {
+    position: fixed;
+    top: 56px;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    display: none;
+    box-shadow: var(--shadow-menu);
+  }
+  .ws-app.ws-panel-open .ws-panel { display: flex; }
+  .ws-panel-grip { display: none; }
+}
+
+/* ---------------------------------------------------------------- 640 to 1023: drawer and sheet */
+
+@media (min-width: 640px) and (max-width: 1023.98px) {
+  .ws-side {
+    position: fixed;
+    top: 56px;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    width: 300px;
+    max-width: 85vw;
+    transform: translateX(-102%);
+    transition: transform 0.18s ease;
+    box-shadow: var(--shadow-menu);
+  }
+  .ws-app.ws-drawer-open .ws-side { transform: none; }
+  .ws-drawer-close { display: inline-flex; }
+  .ws-side-grip { display: none; }
+
+  .ws-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 45;
+    height: 40dvh;
+    display: none;
+    flex-direction: column;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: var(--shadow-menu);
+  }
+  .ws-app.ws-panel-open .ws-sheet { display: flex; }
+  .ws-sheet-handle {
+    flex: none;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    cursor: row-resize;
+    touch-action: none;
+  }
+  .ws-sheet-handle::before { content: ""; width: 40px; height: 4px; border-radius: 2px; background: var(--border-strong); }
+  .ws-sheet-body { flex: 1; min-height: 0; display: flex; }
+  .ws-sheet-body .ws-panel {
+    position: static;
+    flex: 1;
+    width: auto;
+    display: flex;
+    border-left: 0;
+    box-shadow: none;
+  }
+}
+
+/* ---------------------------------------------------------------- under 640: phone tabs */
+
+@media (max-width: 639.98px) {
+  .ws-rail { display: none; }
+  .ws-runs-toggle { display: none; }
+  .ws-status { display: none; }
+  .ws-wide { display: none; }
+  /* The repository name keeps its width; the branch shortens first, down to its icon. */
+  .ws-top { gap: 6px; }
+  .ws-repo { flex: 0 0 auto; max-width: 50%; }
+  .ws-branch { flex: 0 1 auto; min-width: 44px; max-width: 160px; }
+  .ws-branch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* The bottom tabs are fixed on top of the page, so the editor ends where they start. */
+  .ws-main { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
+  body.ws-kb .ws-main { padding-bottom: 0; }
+  .ws-side-grip { display: none; }
+
+  .ws-side {
+    position: fixed;
+    inset: 0;
+    /* Below the 56px top bar, so the repo, branch and Commit stay in view on every pane. */
+    top: 56px;
+    bottom: calc(56px + env(safe-area-inset-bottom));
+    z-index: 20;
+    width: auto;
+    display: none;
+    transform: none;
+    border-right: 0;
+  }
+  .ws-side-head { display: none; }
+  .ws-app[data-pane="files"] .ws-side, .ws-app[data-pane="changes"] .ws-side { display: flex; }
+
+  .ws-center { display: none; }
+  .ws-app[data-pane="edit"] .ws-center { display: flex; }
+
+  .ws-panel {
+    position: fixed;
+    inset: 0;
+    /* Below the 56px top bar, so the repo, branch and Commit stay in view on every pane. */
+    top: 56px;
+    bottom: calc(56px + env(safe-area-inset-bottom));
+    z-index: 20;
+    width: auto;
+    display: none;
+    border-left: 0;
+  }
+  .ws-app[data-pane="runs"] .ws-panel { display: flex; }
+  .ws-panel-grip { display: none; }
+
+  .ws-phone-tabs {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    display: flex;
+    height: calc(56px + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+  .ws-phone-tab {
+    flex: 1;
+    min-height: 44px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .ws-phone-tab[aria-pressed="true"] { color: var(--accent); }
+  body.ws-kb .ws-phone-tabs { display: none; }
+
+  .ws-btn { height: 44px; }
+  .ws-icon-only { width: 44px; }
+  .ws-input { height: 44px; }
+  .ws-list-item, .ws-hit { min-height: 44px; }
+  .ws-tab { min-height: 44px; }
+  .ws-row { padding-top: 0; padding-bottom: 0; }
+  .ws-row-main { min-height: 44px; }
+  .ws-tab-close, .ws-row-more { width: 44px; height: 44px; }
+}
+
+/* ---------------------------------------------------------------- motion */
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-app, .ws-app *, .ws-dialog, .ws-dialog * { transition: none !important; animation: none !important; }
+}
+
+/* Phones: the top bar keeps the repository and branch; the paused-CI chip shows its icon only
+   (its full text is in the Runs tab and in its title). */
+@media (max-width: 639px) {
+  .ws-chip .ws-chip-text { display: none; }
+  .ws-top .ws-repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}

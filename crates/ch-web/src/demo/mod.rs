@@ -14,6 +14,7 @@ use axum::extract::{ConnectInfo, Request};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
+use base64::Engine;
 use bytes::Bytes;
 use ch_core::actor::{Actor, AuthVia, Permission};
 use ch_core::audit::{AuditEvent, AuditFilter, Outcome, StoredAudit, action};
@@ -48,7 +49,7 @@ fn find_repo(id: RepoId) -> Result<Repo> {
 
 fn visible(actor: &Actor, r: &Repo) -> bool {
     match actor {
-        Actor::User { id, .. } => r.visibility == Visibility::Public || *id == r.owner_id || *id == ADA,
+        Actor::User { id, .. } => r.visibility != Visibility::Private || *id == r.owner_id || *id == ADA,
         _ => false,
     }
 }
@@ -78,6 +79,15 @@ impl Authn for Demo {
         Err(Error::unauthorized())
     }
     async fn from_ssh_key(&self, _f: &str) -> Result<Option<SshIdentity>> {
+        Ok(None)
+    }
+    async fn recheck(&self, credential: &ch_core::live::Credential) -> Result<Option<Actor>> {
+        let ch_core::live::Credential::Session { hash } = credential else { return Ok(None) };
+        for c in [ADA_COOKIE, BOB_COOKIE, ADMIN_NO_2FA_COOKIE] {
+            if ch_db::tokens::hash_token(c) == *hash {
+                return self.from_session(c, &ClientInfo::local()).await.map(Some);
+            }
+        }
         Ok(None)
     }
 }
@@ -157,7 +167,7 @@ impl Authz for Demo {
             Permission::Admin
         } else if me == BOB && is_lh(repo) {
             Permission::Write
-        } else if r.visibility == Visibility::Public {
+        } else if r.visibility != Visibility::Private {
             Permission::Read
         } else {
             Permission::None
@@ -325,6 +335,34 @@ impl Repos for Demo {
     async fn delete(&self, _a: &Actor, _id: RepoId, _c: &ClientInfo) -> Result<()> {
         Ok(())
     }
+    async fn public_repos_allowed(&self) -> Result<bool> {
+        Ok(true)
+    }
+    async fn workspace_settings(&self) -> Result<WorkspaceSettings> {
+        Ok(WorkspaceSettings { editor: true, terminal: false })
+    }
+    async fn set_workspace_settings(&self, _a: &Actor, _s: WorkspaceSettings, _c: &ClientInfo) -> Result<()> {
+        Ok(())
+    }
+    async fn publish_summary(&self, _a: &Actor, id: RepoId) -> Result<PublishSummary> {
+        find_repo(id)?;
+        Ok(PublishSummary {
+            branches: 3,
+            tags: 1,
+            pull_refs: 2,
+            size_kb: 120,
+            issues: 4,
+            pulls: 2,
+            comments: 9,
+            comments_by_others: 5,
+            releases: 1,
+            release_files: 2,
+            forks: 1,
+            pulls_from_private_forks: 0,
+            linked_packages: vec!["lighthouse".into()],
+            snapshot: "demo-snapshot".into(),
+        })
+    }
     async fn collaborators(&self, _a: &Actor, _id: RepoId) -> Result<Vec<Collaborator>> {
         Ok(collaborators())
     }
@@ -367,6 +405,19 @@ fn entries_at(path: &str) -> Vec<TreeEntry> {
         });
     }
     seen
+}
+
+/// The whole tree of the other demo repository: one README.
+fn readme_entry() -> WorkspaceEntry {
+    let content = b"# Notes\n\nNothing secret here.\n";
+    WorkspaceEntry {
+        path_b64: base64::engine::general_purpose::STANDARD.encode("README.md"),
+        path: Some("README.md".into()),
+        mode: "100644".into(),
+        kind: "blob".into(),
+        sha: sha(78),
+        size: Some(content.len() as u64),
+    }
 }
 
 fn resolve_rev(repo: RepoId, rev: &str) -> Result<String> {
@@ -528,6 +579,92 @@ impl GitService for Demo {
     }
     async fn merge(&self, _a: &Actor, _r: MergeRequest, _c: &ClientInfo) -> Result<MergeOutcome> {
         Ok(MergeOutcome::Merged { sha: sha(40) })
+    }
+    async fn workspace_branch_head(&self, repo: RepoId, branch: &str) -> Result<Option<String>> {
+        Ok(resolve_rev(repo, branch).ok())
+    }
+    async fn workspace_is_ancestor(&self, _r: RepoId, sha: &str, head: &str) -> Result<bool> {
+        Ok(sha == head)
+    }
+    async fn workspace_tree(&self, repo: RepoId, _rev: &str, _limits: WorkspaceTreeLimits) -> Result<WorkspaceTree> {
+        if !is_lh(repo) {
+            return Ok(WorkspaceTree { entries: vec![readme_entry()], cut: false });
+        }
+        let mut entries = Vec::new();
+        let mut folders: Vec<&str> = Vec::new();
+        for (p, content) in files() {
+            // Every distinct folder on the path, `.codehaven/workflows` as well as `src`.
+            let mut dir = p;
+            while let Some((parent, _)) = dir.rsplit_once('/') {
+                if !folders.contains(&parent) {
+                    folders.push(parent);
+                }
+                dir = parent;
+            }
+            entries.push(WorkspaceEntry {
+                path_b64: base64::engine::general_purpose::STANDARD.encode(p),
+                path: Some(p.to_string()),
+                mode: "100644".into(),
+                kind: "blob".into(),
+                sha: sha(78),
+                size: Some(content.len() as u64),
+            });
+        }
+        for f in folders {
+            entries.push(WorkspaceEntry {
+                path_b64: base64::engine::general_purpose::STANDARD.encode(f),
+                path: Some(f.to_string()),
+                mode: "040000".into(),
+                kind: "tree".into(),
+                sha: sha(77),
+                size: None,
+            });
+        }
+        Ok(WorkspaceTree { entries, cut: false })
+    }
+    async fn workspace_blob(&self, repo: RepoId, _rev: &str, path: &[u8], max_bytes: u64) -> Result<WorkspaceBlob> {
+        let content = if is_lh(repo) {
+            let p = std::str::from_utf8(path).map_err(|_| Error::NotFound)?;
+            files().into_iter().find(|(f, _)| *f == p).map(|(_, c)| c).ok_or(Error::NotFound)?
+        } else {
+            b"# Notes\n\nNothing secret here.\n".to_vec()
+        };
+        let size = content.len() as u64;
+        if size > max_bytes {
+            return Ok(WorkspaceBlob { bytes: vec![], size, mode: "100644".into(), too_large: true });
+        }
+        Ok(WorkspaceBlob { bytes: content, size, mode: "100644".into(), too_large: false })
+    }
+    async fn workspace_search(&self, repo: RepoId, _rev: &str, text: &str, limits: WorkspaceSearchLimits) -> Result<WorkspaceSearch> {
+        let needle = text.trim().to_lowercase();
+        // The other repository has the one README the `blob` method serves.
+        let contents: Vec<(&str, Vec<u8>)> =
+            if is_lh(repo) { files() } else { vec![("README.md", b"# Notes\n\nNothing secret here.\n".to_vec())] };
+        let mut hits = Vec::new();
+        let mut cut = false;
+        for (p, content) in &contents {
+            for (i, line) in String::from_utf8_lossy(content).lines().enumerate() {
+                if line.to_lowercase().contains(&needle) {
+                    hits.push(WorkspaceHit {
+                        path_b64: base64::engine::general_purpose::STANDARD.encode(p),
+                        path: Some(p.to_string()),
+                        line: i as u64 + 1,
+                        text: line.chars().take(300).collect(),
+                    });
+                    if hits.len() >= limits.max_hits {
+                        cut = true;
+                        break;
+                    }
+                }
+            }
+            if cut {
+                break;
+            }
+        }
+        Ok(WorkspaceSearch { hits, cut, timed_out: false })
+    }
+    async fn workspace_direct_commit_allowed(&self, _a: &Actor, _r: RepoId, _b: &str) -> Result<bool> {
+        Ok(true)
     }
 }
 
@@ -1292,8 +1429,8 @@ async fn demo_gate(axum::extract::State(state): axum::extract::State<AppState>, 
         .filter_map(|p| p.trim().split_once('='))
         .find(|(k, _)| *k == ch_core::access::session_cookie_name(false))
         .map(|(_, v)| v.to_string());
-    let actor = match cookie {
-        Some(c) => state.authn.from_session(&c, &ClientInfo::local()).await.unwrap_or(Actor::Anonymous),
+    let actor = match &cookie {
+        Some(c) => state.authn.from_session(c, &ClientInfo::local()).await.unwrap_or(Actor::Anonymous),
         None => Actor::Anonymous,
     };
     let public = ch_core::access::is_public(req.method(), req.uri().path());
@@ -1304,6 +1441,9 @@ async fn demo_gate(axum::extract::State(state): axum::extract::State<AppState>, 
             r.headers_mut().insert(header::LOCATION, v);
         }
         return r;
+    }
+    if let (false, Some(c)) = (actor.is_anonymous(), cookie.as_deref()) {
+        req.extensions_mut().insert(ch_core::live::Credential::Session { hash: ch_db::tokens::hash_token(c) });
     }
     req.extensions_mut().insert(actor);
     req.extensions_mut().insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 40000))));

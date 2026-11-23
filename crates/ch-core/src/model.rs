@@ -209,12 +209,71 @@ pub enum SshIdentity {
 
 // ---------------------------------------------------------------- repos
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Who can read a repository (epic ch-4pn). Stored in `repositories.access_tier`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Visibility {
-    /// Visible to every signed-in account on this instance. Never to anonymous callers.
-    Public,
+    /// Only people granted access.
     Private,
+    /// Also every signed-in, active account on this instance. Never anyone signed out.
+    Internal,
+    /// Also anyone on the internet, with no account, while the instance allows public
+    /// repositories. Signed out is read only.
+    Public,
+}
+
+impl Visibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Visibility::Private => "private",
+            Visibility::Internal => "internal",
+            Visibility::Public => "public",
+        }
+    }
+
+    /// The stored and wire spelling, exactly. Anything else is `None`, never a default.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "private" => Some(Visibility::Private),
+            "internal" => Some(Visibility::Internal),
+            "public" => Some(Visibility::Public),
+            _ => None,
+        }
+    }
+
+    /// The legacy REST flag: true unless the repository is public.
+    pub fn is_private_flag(self) -> bool {
+        self != Visibility::Public
+    }
+}
+
+/// Who may open issues, comment, react, review and send pull requests without a grant, on an
+/// internal or public repository. Stored in `repositories.contribution_policy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContributionPolicy {
+    /// Every signed-in account that can read the repository.
+    #[default]
+    Everyone,
+    /// Only people with a grant on the repository.
+    Grants,
+}
+
+impl ContributionPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ContributionPolicy::Everyone => "everyone",
+            ContributionPolicy::Grants => "grants",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "everyone" => Some(ContributionPolicy::Everyone),
+            "grants" => Some(ContributionPolicy::Grants),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +291,8 @@ pub struct Repo {
     pub topics: Vec<String>,
     pub pushed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub contribution_policy: ContributionPolicy,
 }
 
 impl Repo {
@@ -780,6 +841,22 @@ pub struct WorkflowFile {
     pub errors: Vec<String>,
     /// Inputs a manual run asks for. Empty unless `workflow_dispatch` declares some.
     pub dispatch_inputs: Vec<DispatchInputInfo>,
+    /// The `push` trigger's filters, or `None` when the workflow does not listen to pushes. The
+    /// workspace applies them to say which workflows a commit will start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push: Option<PushFilters>,
+}
+
+/// A `push` trigger's branch, tag and path filters, as written. `None` means the key was not
+/// written, which is not the same as an empty list.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PushFilters {
+    pub branches: Option<Vec<String>>,
+    pub branches_ignore: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
+    pub tags_ignore: Option<Vec<String>>,
+    pub paths: Option<Vec<String>>,
+    pub paths_ignore: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -855,4 +932,193 @@ pub enum CiAvailability {
     OwnerNotAllowed,
     /// Actions is switched off in the repository settings.
     TurnedOff,
+}
+
+/// What making a repository public would expose, shown on the confirm page (spec section 6).
+/// `snapshot` is a hash of the refs and the totals: the page sends it back, and a change in
+/// between shows the page again.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PublishSummary {
+    pub branches: i64,
+    pub tags: i64,
+    pub pull_refs: i64,
+    pub size_kb: i64,
+    pub issues: i64,
+    pub pulls: i64,
+    pub comments: i64,
+    pub comments_by_others: i64,
+    pub releases: i64,
+    pub release_files: i64,
+    pub forks: i64,
+    pub pulls_from_private_forks: i64,
+    pub linked_packages: Vec<String>,
+    pub snapshot: String,
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+
+    #[test]
+    fn three_tiers_round_trip_and_nothing_else_parses() {
+        for v in [Visibility::Private, Visibility::Internal, Visibility::Public] {
+            assert_eq!(Visibility::parse(v.as_str()), Some(v));
+            assert_eq!(serde_json::to_string(&v).unwrap_or_default(), format!("\"{}\"", v.as_str()));
+        }
+        for bad in ["Public", "PRIVATE", "", "secret", " public", "public "] {
+            assert_eq!(Visibility::parse(bad), None, "{bad:?}");
+        }
+        assert!(Visibility::Private < Visibility::Internal && Visibility::Internal < Visibility::Public);
+        assert!(Visibility::Internal.is_private_flag(), "the REST flag is true unless public");
+        assert!(!Visibility::Public.is_private_flag());
+    }
+
+    #[test]
+    fn contribution_policy_round_trips() {
+        assert_eq!(ContributionPolicy::default(), ContributionPolicy::Everyone);
+        for p in [ContributionPolicy::Everyone, ContributionPolicy::Grants] {
+            assert_eq!(ContributionPolicy::parse(p.as_str()), Some(p));
+        }
+        assert_eq!(ContributionPolicy::parse("Everyone"), None);
+        assert_eq!(ContributionPolicy::parse(""), None);
+    }
+}
+
+// ---------------------------------------------------------------- browser workspace
+
+/// Caps on one workspace tree listing. Past either, the listing stops and is marked cut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceTreeLimits {
+    pub max_entries: usize,
+    /// Bytes of `ls-tree` output.
+    pub max_bytes: usize,
+}
+
+impl Default for WorkspaceTreeLimits {
+    fn default() -> Self {
+        Self { max_entries: 100_000, max_bytes: 16 * 1024 * 1024 }
+    }
+}
+
+/// One entry of a recursive workspace tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceEntry {
+    /// The path's raw bytes, standard base64. The only safe way to name a non-UTF-8 path.
+    pub path_b64: String,
+    /// The path as text, when its bytes are valid UTF-8.
+    pub path: Option<String>,
+    /// `100644`, `100755`, `120000` (symlink), `160000` (submodule) or `040000` (folder).
+    pub mode: String,
+    /// `blob`, `tree` or `commit`.
+    pub kind: String,
+    pub sha: String,
+    /// Blob size in bytes. `None` for folders and submodules.
+    pub size: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceTree {
+    pub entries: Vec<WorkspaceEntry>,
+    /// The listing hit a cap and is incomplete. A cut tree is read only.
+    pub cut: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceSnapshotLimits {
+    pub max_files: usize,
+    pub max_bytes: u64,
+}
+
+impl Default for WorkspaceSnapshotLimits {
+    fn default() -> Self {
+        Self { max_files: 2000, max_bytes: 25 * 1024 * 1024 }
+    }
+}
+
+/// One regular file of a snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSnapshotFile {
+    /// UTF-8 path from the repository root.
+    pub path: String,
+    pub executable: bool,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSnapshot {
+    pub files: Vec<WorkspaceSnapshotFile>,
+    /// Over `max_files` or `max_bytes`: `files` is empty and the two totals say how much there was.
+    pub too_large: bool,
+    pub total_files: usize,
+    pub total_bytes: u64,
+    /// Paths left out: symlinks, submodules and names that are not UTF-8. Count only.
+    pub skipped: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceBlob {
+    pub bytes: Vec<u8>,
+    pub size: u64,
+    pub mode: String,
+    /// Bigger than the cap: `bytes` is empty.
+    pub too_large: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceSearchLimits {
+    pub max_hits: usize,
+    pub max_bytes: usize,
+    pub timeout_secs: u64,
+}
+
+impl Default for WorkspaceSearchLimits {
+    fn default() -> Self {
+        Self { max_hits: 200, max_bytes: 8 * 1024 * 1024, timeout_secs: 5 }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceHit {
+    /// Raw path bytes, standard base64.
+    pub path_b64: String,
+    pub path: Option<String>,
+    /// 1 based.
+    pub line: u64,
+    /// The matching line, at most 300 characters.
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceSearch {
+    pub hits: Vec<WorkspaceHit>,
+    /// A cap was hit (hits, bytes or time). The page says the results are cut.
+    pub cut: bool,
+    pub timed_out: bool,
+}
+
+/// The site admin's switches for the browser workspace, stored in `instance_settings` under
+/// the key `workspace`. The config file is the ceiling (`WorkspaceConfig`). Both start on now
+/// that each has been reviewed: the editor at spec step 15, the terminal at step 19.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspaceSettings {
+    pub editor: bool,
+    pub terminal: bool,
+}
+
+impl Default for WorkspaceSettings {
+    fn default() -> Self {
+        Self { editor: true, terminal: true }
+    }
+}
+
+impl WorkspaceSettings {
+    /// The editor is on: allowed by the config file and switched on by an admin.
+    pub fn editor_on(&self, cfg: &crate::config::Config) -> bool {
+        cfg.workspace.enabled && self.editor
+    }
+    /// The terminal is on: the editor is on, and the terminal is allowed and switched on.
+    pub fn terminal_on(&self, cfg: &crate::config::Config) -> bool {
+        self.editor_on(cfg) && cfg.workspace.terminal && self.terminal
+    }
 }

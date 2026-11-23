@@ -407,3 +407,128 @@ async fn an_empty_repository_reads_as_empty_not_as_an_error_page(pool: PgPool) {
     let missing = git.refs(RepoId(999_999), None).await;
     assert!(missing.is_err(), "a repository with no files on disk is an error, not an empty list");
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_tag_never_hides_a_branch_with_a_hex_name(pool: PgPool) {
+    let (f, alice, repo) = setup(pool).await;
+    let c1 = f.branch_sha(&repo, "main").await;
+    let git = &f.state.git;
+    git.create_ref(&f.actor(alice), repo.id, "refs/heads/beef", &c1, &f.client()).await.unwrap();
+    let c2 = f.commit(&repo, alice, "beef", "b.txt", "branch\n", "On beef").await;
+    git.create_ref(&f.actor(alice), repo.id, "refs/tags/beef", &c1, &f.client()).await.unwrap();
+    assert_eq!(git.resolve(repo.id, "beef").await.unwrap(), c2, "the branch wins over the tag");
+    assert_eq!(git.resolve(repo.id, "refs/tags/beef").await.unwrap(), c1);
+    // A full commit id still resolves as itself.
+    assert_eq!(git.resolve(repo.id, &c1).await.unwrap(), c1);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn grep_keeps_colons_in_paths_and_text(pool: PgPool) {
+    let (f, alice, repo) = setup(pool).await;
+    change(&f, &repo, alice, "main", vec![put("a:b.txt", "key: needle: value\n")], "Colons").await;
+    let hits = f.state.git.grep(repo.id, "main", "needle", 50).await.unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].title, "a:b.txt");
+    assert_eq!(hits[0].id, 1);
+    assert_eq!(hits[0].snippet, "key: needle: value");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn workspace_reads_are_pinned_exact_and_capped(pool: PgPool) {
+    let (f, alice, repo) = setup(pool).await;
+    change(
+        &f,
+        &repo,
+        alice,
+        "main",
+        vec![put("src/a:b.rs", "fn x() {} // needle\n"), put("bin.dat", "a\0b"), put("big.txt", &"y".repeat(5000))],
+        "Files",
+    )
+    .await;
+    let git = &f.state.git;
+    let head = git.workspace_branch_head(repo.id, "main").await.unwrap().unwrap();
+    assert_eq!(head, f.branch_sha(&repo, "main").await);
+    assert_eq!(git.workspace_branch_head(repo.id, "nope").await.unwrap(), None);
+    // A tag never answers for a branch name.
+    git.create_ref(&f.actor(alice), repo.id, "refs/tags/release", &head, &f.client()).await.unwrap();
+    assert_eq!(git.workspace_branch_head(repo.id, "release").await.unwrap(), None);
+    // Ancestry: the head and its parent are in, a made-up id and a short id are out.
+    let parent = git.commit(repo.id, &head).await.unwrap().parents[0].clone();
+    assert!(git.workspace_is_ancestor(repo.id, &head, &head).await.unwrap());
+    assert!(git.workspace_is_ancestor(repo.id, &parent, &head).await.unwrap());
+    assert!(!git.workspace_is_ancestor(repo.id, &"a".repeat(40), &head).await.unwrap());
+    assert!(!git.workspace_is_ancestor(repo.id, &head[..12], &head).await.unwrap());
+    assert!(!git.workspace_is_ancestor(repo.id, &head.to_uppercase(), &head).await.unwrap());
+    // The tree lists everything, folders too, and a cap cuts it.
+    let t = git.workspace_tree(repo.id, &head, Default::default()).await.unwrap();
+    assert!(!t.cut);
+    let paths: Vec<String> = t.entries.iter().filter_map(|e| e.path.clone()).collect();
+    assert!(paths.contains(&"src".to_string()) && paths.contains(&"src/a:b.rs".to_string()), "{paths:?}");
+    let small =
+        git.workspace_tree(repo.id, &head, ch_core::model::WorkspaceTreeLimits { max_entries: 2, max_bytes: 1 << 20 }).await.unwrap();
+    assert!(small.cut);
+    assert_eq!(small.entries.len(), 2);
+    // Blobs by raw path, size checked first.
+    let b = git.workspace_blob(repo.id, &head, b"src/a:b.rs", 1000).await.unwrap();
+    assert_eq!(b.bytes, b"fn x() {} // needle\n");
+    assert_eq!(b.mode, "100644");
+    let big = git.workspace_blob(repo.id, &head, b"big.txt", 100).await.unwrap();
+    assert!(big.too_large && big.bytes.is_empty() && big.size == 5000);
+    assert!(git.workspace_blob(repo.id, &head, b"src", 100).await.is_err(), "a folder is not a file");
+    assert!(git.workspace_blob(repo.id, &head, b"*.rs", 100).await.is_err(), "no pathspec magic");
+    // Search keeps colons, skips binary files and says when it is cut.
+    let s = git.workspace_search(repo.id, &head, "NEEDLE", Default::default()).await.unwrap();
+    assert_eq!(s.hits.len(), 1);
+    assert_eq!(s.hits[0].path.as_deref(), Some("src/a:b.rs"));
+    assert_eq!(s.hits[0].line, 1);
+    assert!(!s.cut && !s.timed_out);
+    let one = git
+        .workspace_search(repo.id, &head, "y", ch_core::model::WorkspaceSearchLimits { max_hits: 1, ..Default::default() })
+        .await
+        .unwrap();
+    assert!(one.hits.len() <= 1);
+    assert!(git.workspace_search(repo.id, &head, "", Default::default()).await.is_err());
+    // Direct commits follow branch protection.
+    assert!(git.workspace_direct_commit_allowed(&f.actor(alice), repo.id, "main").await.unwrap());
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn workspace_snapshot_reads_every_file_once_and_is_capped(pool: PgPool) {
+    let (f, alice, repo) = setup(pool).await;
+    change(
+        &f,
+        &repo,
+        alice,
+        "main",
+        vec![put("src/a:b.rs", "fn a() {}\n"), put("src/deep/c.txt", "c\n"), put("bin.dat", "a\0b"), put("docs/x.md", "x\n")],
+        "Files",
+    )
+    .await;
+    let git = &f.state.git;
+    let head = git.workspace_branch_head(repo.id, "main").await.unwrap().unwrap();
+    let all = git.workspace_snapshot(repo.id, &head, b"", Default::default()).await.unwrap();
+    assert!(!all.too_large);
+    let mut paths: Vec<&str> = all.files.iter().map(|x| x.path.as_str()).collect();
+    paths.sort();
+    // README.md comes from the repository's first commit (auto_init).
+    assert_eq!(paths, vec!["README.md", "bin.dat", "docs/x.md", "src/a:b.rs", "src/deep/c.txt"]);
+    let bin = all.files.iter().find(|x| x.path == "bin.dat").unwrap();
+    assert_eq!(bin.bytes, b"a\0b");
+    assert!(!bin.executable);
+    assert_eq!(all.total_files, 5);
+    // A folder: only what is inside it, and "sr" is not a prefix of "src".
+    let src = git.workspace_snapshot(repo.id, &head, b"src", Default::default()).await.unwrap();
+    let mut sp: Vec<&str> = src.files.iter().map(|x| x.path.as_str()).collect();
+    sp.sort();
+    assert_eq!(sp, vec!["src/a:b.rs", "src/deep/c.txt"]);
+    assert!(git.workspace_snapshot(repo.id, &head, b"sr", Default::default()).await.unwrap().files.is_empty());
+    // Over a cap nothing is read and the totals say why.
+    let capped = git.workspace_snapshot(repo.id, &head, b"", WorkspaceSnapshotLimits { max_files: 2, max_bytes: 1 << 20 }).await.unwrap();
+    assert!(capped.too_large && capped.files.is_empty() && capped.total_files == 5);
+    let small = git.workspace_snapshot(repo.id, &head, b"", WorkspaceSnapshotLimits { max_files: 100, max_bytes: 5 }).await.unwrap();
+    assert!(small.too_large && small.files.is_empty());
+    // A short id or a bad folder is refused.
+    assert!(git.workspace_snapshot(repo.id, &head[..12], b"", Default::default()).await.is_err());
+    assert!(git.workspace_snapshot(repo.id, &head, b"/src", Default::default()).await.is_err());
+    assert!(git.workspace_snapshot(repo.id, &head, b"src/", Default::default()).await.is_err());
+}

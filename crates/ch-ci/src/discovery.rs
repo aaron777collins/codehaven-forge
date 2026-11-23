@@ -172,7 +172,7 @@ pub fn to_files(found: &[Discovered], rows: &BTreeMap<String, WorkflowRow>) -> V
         .iter()
         .map(|d| {
             let row = rows.get(&d.path);
-            let (events, errors, inputs) = match &d.workflow {
+            let (events, errors, inputs, push) = match &d.workflow {
                 Ok(w) => (
                     w.triggers.event_names().into_iter().map(String::from).collect(),
                     Vec::new(),
@@ -199,8 +199,16 @@ pub fn to_files(found: &[Discovered], rows: &BTreeMap<String, WorkflowRow>) -> V
                                 .collect()
                         })
                         .unwrap_or_default(),
+                    w.triggers.push.as_ref().map(|p| ch_core::model::PushFilters {
+                        branches: p.branches.clone(),
+                        branches_ignore: p.branches_ignore.clone(),
+                        tags: p.tags.clone(),
+                        tags_ignore: p.tags_ignore.clone(),
+                        paths: p.paths.clone(),
+                        paths_ignore: p.paths_ignore.clone(),
+                    }),
                 ),
-                Err(diags) => (Vec::new(), diags.iter().map(Diagnostic::to_string).collect(), Vec::new()),
+                Err(diags) => (Vec::new(), diags.iter().map(Diagnostic::to_string).collect(), Vec::new(), None),
             };
             WorkflowFile {
                 id: row.map(|r| r.id),
@@ -210,6 +218,7 @@ pub fn to_files(found: &[Discovered], rows: &BTreeMap<String, WorkflowRow>) -> V
                 events,
                 errors,
                 dispatch_inputs: inputs,
+                push,
             }
         })
         .collect()

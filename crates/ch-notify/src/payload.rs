@@ -52,6 +52,7 @@ struct RepoRow {
     name: String,
     description: String,
     visibility: String,
+    contribution_policy: String,
     default_branch: String,
     archived: bool,
     is_empty: bool,
@@ -74,7 +75,7 @@ struct RepoRow {
 
 pub async fn repo_json(pool: &PgPool, base: &str, ssh: &str, repo: i64) -> Result<Repository> {
     let r: RepoRow = sqlx::query_as(
-        "SELECT r.id, r.owner_id, o.username::text AS owner, r.name::text AS name, r.description, r.visibility, r.default_branch, r.archived, r.is_empty,
+        "SELECT r.id, r.owner_id, o.username::text AS owner, r.name::text AS name, r.description, r.access_tier AS visibility, r.contribution_policy, r.default_branch, r.archived, r.is_empty,
                 (r.fork_parent_id IS NOT NULL) AS fork, r.topics, r.has_issues, r.size_kb, r.created_at, r.updated_at, r.pushed_at,
                 r.allow_squash_merge, r.allow_merge_commit, r.allow_rebase_merge, r.delete_branch_on_merge,
                 (SELECT count(*) FROM stars s WHERE s.repo_id = r.id) AS stars,
@@ -102,6 +103,7 @@ pub async fn repo_json(pool: &PgPool, base: &str, ssh: &str, repo: i64) -> Resul
         ssh_url: format!("ssh://git@{ssh}/{full}.git"),
         default_branch: r.default_branch,
         visibility: r.visibility,
+        contribution_policy: r.contribution_policy,
         archived: r.archived,
         disabled: false,
         topics: r.topics,

@@ -63,6 +63,28 @@ API ref change reaches them through `GitCore::apply_ref_change`, which wraps a c
 - The first branch pushed to an empty repository becomes the default branch when the configured
   one was not pushed (`main`, then `master`, then the first by name).
 
+## Tiers, forks and the rebuild before widening
+
+A repository's tier is `repositories.access_tier`: `private` (only people granted access),
+`internal` (also every signed-in, active account) or `public` (also anyone on the internet,
+while the site admin allows public repositories). The legacy `visibility` column is kept in
+step by a trigger, so older binaries still see the right value.
+
+Git serves any object in a repository's store to anyone who may clone it, deleted history
+included. So before any widening of the tier the store is rebuilt from its refs alone: a
+fresh bare repository fetches every ref, passes `git fsck --connectivity-only`, must list the
+same refs as the old one, and only then replaces it. The old store is parked, unreachable,
+for 7 days under `data/git/_prepublish` and swept away after; a startup check puts back a
+store whose swap was interrupted.
+
+Only the account owner, an owner of the owning organization, or a site admin with two-factor
+in a browser session can make a repository public, on `/{owner}/{repo}/settings/visibility`,
+after typing the repository's name and ticking that the history was checked for secrets.
+
+Forks: a new bare repository fetches every branch and tag of its source, so the fork copies
+its objects and borrows nothing through `alternates`. A fork starts private and can never be
+more visible than its source. A repository that still has forks cannot be deleted.
+
 ## Notes for the other streams
 
 - **collab.** `GitService::merge` returns `Merged`, `Conflict { paths }` or `BaseMoved`.

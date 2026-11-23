@@ -44,7 +44,8 @@ impl GitTransport for GitCore {
         let writing = wire == GitWire::ReceivePack;
         let (actor, deploy_write) = match &caller {
             GitCaller::Actor(actor) => {
-                let needed = if writing { Permission::Write } else { Permission::Read };
+                // Reading takes `View`, which a signed-out visitor has on a public repository.
+                let needed = if writing { Permission::Write } else { Permission::View };
                 if !actor.is_system() {
                     self.authz.require(actor, repo.id, needed).await?;
                 }
@@ -84,6 +85,12 @@ impl GitTransport for GitCore {
             cmd = cmd.args(["-c".to_string(), format!("{k}={v}")]);
         }
         cmd = cmd.args(["-c", "receive.maxInputSize=2147483648"]);
+        // A signed-out clone of a public repository gets a smaller share of the server: one pack
+        // thread, bounded delta memory and a shorter deadline (spec section 7).
+        let stranger = matches!(&caller, GitCaller::Actor(a) if a.is_anonymous());
+        if stranger {
+            cmd = cmd.args(["-c", "pack.threads=1", "-c", "pack.windowMemory=64m", "-c", "core.deltaBaseCacheLimit=64m"]);
+        }
         cmd = cmd.arg(subcommand(wire));
         match mode {
             GitMode::Interactive => {}
@@ -98,13 +105,17 @@ impl GitTransport for GitCore {
         // Only a push that can change refs needs the hook plumbing, and only the part of an
         // HTTP push that carries the pack (the advertisement runs no hooks).
         let mut guard: Option<PushGuard> = None;
+        let mut ticket = None;
         if writing && mode != GitMode::AdvertiseRefs {
+            // A store rebuild waits for this push to end, and a push waits for a rebuild.
+            ticket = Some(self.writes.write(repo.id).await?);
             let g = self.pushes.register(PushCtx { actor, repo: repo.id, client: client.clone(), origin: Origin::Push, deploy_write });
             cmd = cmd.env(ENV_PUSH_ID, g.id()).env(ENV_REPO_ID, repo.id.0.to_string()).env(ENV_SOCKET, self.hook_socket.to_string_lossy());
             guard = Some(g);
         }
 
-        let mut child = cmd.timeout(std::time::Duration::from_secs(3600)).spawn()?;
+        let deadline = if stranger { self.cfg.public_access.git_timeout_secs.max(1) } else { 3600 };
+        let mut child = cmd.timeout(std::time::Duration::from_secs(deadline)).spawn()?;
         let stdin = child.stdin.take().ok_or_else(|| Error::internal(anyhow::anyhow!("git has no stdin")))?;
         let stdout = child.stdout.take().ok_or_else(|| Error::internal(anyhow::anyhow!("git has no stdout")))?;
         let stderr = child.stderr.take().ok_or_else(|| Error::internal(anyhow::anyhow!("git has no stderr")))?;
@@ -112,8 +123,16 @@ impl GitTransport for GitCore {
         let done = Box::pin(async move {
             // Holding the guard to the end keeps the push id valid until git has exited.
             let _guard = guard;
-            let status = child.wait().await;
-            let code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
+            let _ticket = ticket;
+            // `spawn` does not apply the command's timeout, so the deadline is enforced here.
+            let code = match tokio::time::timeout(std::time::Duration::from_secs(deadline), child.wait()).await {
+                Ok(status) => status.ok().and_then(|s| s.code()).unwrap_or(-1),
+                Err(_) => {
+                    tracing::warn!(repo = repo_id.0, deadline, "git transport ran past its deadline and was stopped");
+                    let _ = child.kill().await;
+                    -1
+                }
+            };
             tracing::debug!(repo = repo_id.0, code, "git transport finished");
             code
         });

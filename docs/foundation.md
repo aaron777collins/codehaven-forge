@@ -95,6 +95,10 @@ Basic challenge, registry: 401 with a Bearer challenge). It also limits which cr
 which door: a session opens pages and the API, Basic and tokens open the API, git and registry,
 a job token opens the runner API and git, a runner credential opens the runner API only.
 
+Reads on public repositories are the one exception, in `ch_core::access::PUBLIC_REPO_ROUTES`:
+the gate admits those only while the site admin allows public repositories and the repository
+the request names is public, and `Authz` must still say `View`.
+
 You do not write any auth plumbing for "signed out". Your handler gets the caller with
 `CurrentActor(actor): CurrentActor` and calls `Authz`. To make a route public you edit
 `PUBLIC_ROUTES`, which only Claude reviews, and delete its line from `PUBLIC_NOT_BUILT_YET` in
@@ -165,7 +169,8 @@ accounts at all, and it never deletes one; every account after the first comes f
 
 ## What is deliberately not here
 
-- No sign-up route, no setup page, no proxy-header login, no anonymous read. Ever.
+- No sign-up route, no setup page, no proxy-header login, no anonymous read outside public
+  repositories, and no anonymous write. Ever.
 - Rate limits, lockout, CSRF and the Origin check are built (see `docs/identity.md`). Handlers get the
   caller's address with the `ch_core::access::Client` extractor.
 - `codehaven hook` is the git stream's push pipeline client (`ch_git::hooks::client`); see `docs/git.md`.

@@ -55,7 +55,7 @@ fn repo(id: RepoId, owner: &User, name: &str, desc: &str, private: bool, empty: 
         owner_name: owner.username.clone(),
         name: name.into(),
         description: desc.into(),
-        visibility: if private { Visibility::Private } else { Visibility::Public },
+        visibility: if private { Visibility::Private } else { Visibility::Internal },
         default_branch: "main".into(),
         archived: false,
         is_empty: empty,
@@ -63,6 +63,7 @@ fn repo(id: RepoId, owner: &User, name: &str, desc: &str, private: bool, empty: 
         topics: topics.iter().map(|s| s.to_string()).collect(),
         pushed_at: if empty { None } else { Some(ago(0, 3)) },
         created_at: ago(90, 0),
+        contribution_policy: Default::default(),
     }
 }
 

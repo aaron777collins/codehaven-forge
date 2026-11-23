@@ -1,3 +1,6 @@
 # Keep the private tracker out of any git archive (public export).
 .beads export-ignore
 .beads/** export-ignore
+
+# Vendored, prebuilt and gzipped: never diffed, never re-encoded.
+crates/ch-web/workspace/vendor/** binary

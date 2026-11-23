@@ -197,6 +197,9 @@ time { white-space: nowrap; }
 /* ---------- pages ---------- */
 .page { max-width: var(--content-w); margin: 0 auto; padding: var(--s5); width: 100%; }
 .page-h { margin-bottom: var(--s4); }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s4); margin: 0; }
+.facts dt { color: var(--muted); font-weight: 550; }
+.facts dd { margin: 0; }
 .page-sub { color: var(--muted); margin-top: calc(-1 * var(--s2)); }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); }
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s4); }
@@ -219,6 +222,7 @@ time { white-space: nowrap; }
 .chip-ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
 .chip-fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
 .chip-info, .chip-queued, .chip-skip { color: var(--muted); }
+.chip-accent { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .count { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--surface-3); font-size: 0.78rem; text-align: center; color: var(--muted); }
 .branch-chip { background: var(--accent-soft); color: var(--link); padding: 1px 7px; border-radius: 6px; font-size: 0.82rem; }
 .sha-chip code { color: var(--link); background: var(--surface-2); border: 1px solid var(--border); }
@@ -312,7 +316,9 @@ body.bare { align-items: center; justify-content: center; padding: var(--s5); }
 
 /* ---------- repository shell ---------- */
 .repo-shell { max-width: var(--content-w); margin: 0 auto; padding: var(--s4) var(--s5) 0; width: 100%; }
-.repo-head { padding: var(--s2) 0 var(--s4); }
+.repo-head { padding: var(--s2) 0 var(--s4); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s2) var(--s3); }
+.repo-head > .btn { flex-shrink: 0; }
+.repo-head > p { flex-basis: 100%; }
 .repo-title { margin: 0; font-weight: 400; display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; font-size: 1.3rem; }
 .repo-title .sep { color: var(--muted); }
 .repo-name { font-weight: 700; }

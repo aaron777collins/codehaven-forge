@@ -213,6 +213,10 @@ impl Actor {
 pub enum Permission {
     #[default]
     None,
+    /// Reading that came from the repository's tier, not from a grant: a signed-out visitor on a
+    /// public repository. Below `Read`, so any check written for `Read` refuses it. It is never
+    /// stored and never parsed.
+    View,
     Read,
     Triage,
     Write,
@@ -224,6 +228,7 @@ impl Permission {
     pub fn as_str(self) -> &'static str {
         match self {
             Permission::None => "none",
+            Permission::View => "view",
             Permission::Read => "read",
             Permission::Triage => "triage",
             Permission::Write => "write",

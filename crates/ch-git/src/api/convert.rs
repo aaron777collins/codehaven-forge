@@ -57,7 +57,8 @@ pub async fn user_by_name(api: &Api, name: &str) -> Result<UserRef> {
     u.ok_or(ch_core::Error::NotFound)
 }
 
-/// Accounts by commit email, so authors link to their profiles.
+/// Accounts by commit email, so authors link to their profiles. An email links to an account
+/// only when it is verified, or when it is that account's noreply address.
 pub async fn users_by_email(api: &Api, emails: &[String]) -> Result<HashMap<String, UserRef>> {
     if emails.is_empty() {
         return Ok(HashMap::new());
@@ -73,12 +74,33 @@ pub async fn users_by_email(api: &Api, emails: &[String]) -> Result<HashMap<Stri
     let lowered: Vec<String> = emails.iter().map(|e| e.to_lowercase()).collect();
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT lower(e.email::text) AS email, u.id, u.username::text AS login, u.kind, u.is_admin \
-         FROM user_emails e JOIN users u ON u.id = e.user_id WHERE lower(e.email::text) = ANY($1)",
+         FROM user_emails e JOIN users u ON u.id = e.user_id WHERE lower(e.email::text) = ANY($1) AND e.verified_at IS NOT NULL",
     )
     .bind(&lowered)
     .fetch_all(&api.state.db)
     .await?;
-    Ok(rows.into_iter().map(|r| (r.email, UserRef { id: r.id, login: r.login, kind: r.kind, is_admin: r.is_admin })).collect())
+    let mut out: HashMap<String, UserRef> =
+        rows.into_iter().map(|r| (r.email, UserRef { id: r.id, login: r.login, kind: r.kind, is_admin: r.is_admin })).collect();
+    #[derive(FromRow)]
+    struct ById {
+        id: i64,
+        login: String,
+        kind: String,
+        is_admin: bool,
+    }
+    for email in &lowered {
+        let Some((id, name)) = ch_core::noreply::parse_noreply(email, &api.state.config.server.external_url) else { continue };
+        let u: Option<ById> = sqlx::query_as("SELECT u.id, u.username::text AS login, u.kind, u.is_admin FROM users u WHERE u.id = $1")
+            .bind(id)
+            .fetch_optional(&api.state.db)
+            .await?;
+        if let Some(u) = u
+            && u.login.to_lowercase() == name
+        {
+            out.insert(email.clone(), UserRef { id: u.id, login: u.login, kind: u.kind, is_admin: u.is_admin });
+        }
+    }
+    Ok(out)
 }
 
 pub fn permissions(p: Permission) -> Permissions {
@@ -87,7 +109,7 @@ pub fn permissions(p: Permission) -> Permissions {
         maintain: p >= Permission::Maintain,
         push: p >= Permission::Write,
         triage: p >= Permission::Triage,
-        pull: p >= Permission::Read,
+        pull: p >= Permission::View,
     }
 }
 
@@ -127,18 +149,24 @@ async fn repository_inner(api: &Api, repo: &Repo) -> Result<Repository> {
          r.size_kb, r.updated_at, u.kind AS owner_kind, \
          (SELECT count(*) FROM stars s WHERE s.repo_id = r.id) AS stars, \
          (SELECT count(*) FROM watches w WHERE w.repo_id = r.id AND w.level <> 'ignore') AS watchers, \
-         (SELECT count(*) FROM repositories f WHERE f.fork_parent_id = r.id) AS forks, \
+         (SELECT count(*) FROM repositories f WHERE f.fork_parent_id = r.id \
+            AND (f.access_tier = 'public' OR (NOT $2 AND (f.access_tier = 'internal' OR f.owner_id = $3)))) AS forks, \
          (SELECT count(*) FROM issues i WHERE i.repo_id = r.id AND i.open AND NOT i.is_pull) AS open_issues \
          FROM repositories r JOIN users u ON u.id = r.owner_id WHERE r.id = $1",
     )
     .bind(repo.id.0)
+    // Counts only forks the caller could see: public ones signed out, and internal or their own
+    // signed in.
+    .bind(api.actor.is_anonymous())
+    .bind(api.actor.author_id().map(|u| u.0).unwrap_or(0))
     .fetch_one(&api.state.db)
     .await?;
     let base = api.base();
     let owner = simple_user(base, &UserRef { id: repo.owner_id.0, login: repo.owner_name.clone(), kind: e.owner_kind, is_admin: false });
     let perm = api.state.authz.repo_permission(&api.actor, repo.id).await.unwrap_or(Permission::None);
     let full = repo_path(repo);
-    let private = repo.visibility == Visibility::Private;
+    // GitHub's flag: true unless anyone may read it. Internal is private to the internet.
+    let private = repo.visibility.is_private_flag();
     Ok(Repository {
         id: repo.id.0,
         name: repo.name.clone(),
@@ -152,7 +180,8 @@ async fn repository_inner(api: &Api, repo: &Repo) -> Result<Repository> {
         clone_url: format!("{base}/{full}.git"),
         ssh_url: format!("ssh://git@{}/{full}.git", api.state.config.ssh.external),
         default_branch: repo.default_branch.clone(),
-        visibility: if private { "private" } else { "public" }.into(),
+        visibility: repo.visibility.as_str().into(),
+        contribution_policy: repo.contribution_policy.as_str().into(),
         archived: repo.archived,
         disabled: false,
         topics: repo.topics.clone(),

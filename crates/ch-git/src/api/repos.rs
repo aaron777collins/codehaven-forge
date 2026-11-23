@@ -66,13 +66,49 @@ async fn list_org(api: Api, Path(org): Path<String>, q: Query<PageQuery>) -> Res
     list_user(api, Path(org), q).await
 }
 
-fn new_repo(owner: UserId, body: dto::CreateRepo) -> NewRepo {
+/// The tier a request asks for, from `visibility` (which decides when present) or the legacy
+/// `private` flag. `current` is the repository's tier now, or `None` when creating.
+/// `Ok(None)` means leave it as it is.
+async fn requested_tier(
+    api: &Api,
+    private: Option<bool>,
+    visibility: Option<&str>,
+    current: Option<Visibility>,
+) -> Result<Option<Visibility>> {
+    if let Some(s) = visibility {
+        let v = Visibility::parse(s).ok_or_else(|| Error::invalid("Repository", "visibility", "use private, internal or public"))?;
+        if (private == Some(false) && v != Visibility::Public) || (private == Some(true) && v == Visibility::Public) {
+            return Err(Error::invalid("Repository", "visibility", "private: false does not match that visibility"));
+        }
+        if v == Visibility::Public {
+            if current == Some(Visibility::Public) {
+                return Ok(None);
+            }
+            if !api.core.public_allowed().await? {
+                return Err(Error::forbidden(crate::tier::PUBLIC_OFF));
+            }
+            return Err(Error::forbidden(crate::tier::MAKE_PUBLIC_IN_BROWSER));
+        }
+        return Ok(if Some(v) == current { None } else { Some(v) });
+    }
+    if private == Some(true) {
+        return Ok(if current == Some(Visibility::Private) { None } else { Some(Visibility::Private) });
+    }
+    if private == Some(false) {
+        return Ok(match current {
+            None | Some(Visibility::Private) => Some(Visibility::Internal),
+            Some(Visibility::Internal | Visibility::Public) => None,
+        });
+    }
+    Ok(None)
+}
+
+fn new_repo(owner: UserId, body: dto::CreateRepo, visibility: Visibility) -> NewRepo {
     NewRepo {
         owner_id: owner,
         name: body.name,
         description: body.description.unwrap_or_default(),
-        // Private unless the caller says otherwise: a new repository is not shown to everyone by accident.
-        visibility: if body.private == Some(false) { Visibility::Public } else { Visibility::Private },
+        visibility,
         default_branch: body.default_branch,
         auto_init: body.auto_init.unwrap_or(false),
     }
@@ -80,13 +116,15 @@ fn new_repo(owner: UserId, body: dto::CreateRepo) -> NewRepo {
 
 async fn create_mine(api: Api, ApiJson(body): ApiJson<dto::CreateRepo>) -> Result<Response> {
     let owner = me(&api.actor)?;
-    let repo = api.core.do_create_repo(&api.actor, new_repo(owner, body), &api.client).await?;
+    let tier = requested_tier(&api, body.private, body.visibility.as_deref(), None).await?.unwrap_or(Visibility::Private);
+    let repo = api.core.do_create_repo(&api.actor, new_repo(owner, body, tier), &api.client).await?;
     Ok(created(repository(&api, &repo).await?))
 }
 
 async fn create_org(api: Api, Path(org): Path<String>, ApiJson(body): ApiJson<dto::CreateRepo>) -> Result<Response> {
     let owner = user_by_name(&api, &org).await?;
-    let repo = api.core.do_create_repo(&api.actor, new_repo(UserId(owner.id), body), &api.client).await?;
+    let tier = requested_tier(&api, body.private, body.visibility.as_deref(), None).await?.unwrap_or(Visibility::Private);
+    let repo = api.core.do_create_repo(&api.actor, new_repo(UserId(owner.id), body, tier), &api.client).await?;
     Ok(created(repository(&api, &repo).await?))
 }
 
@@ -97,6 +135,14 @@ async fn get_repo(api: Api, Path((owner, name)): Path<(String, String)>) -> Resu
 
 async fn patch_repo(api: Api, Path((owner, name)): Path<(String, String)>, ApiJson(body): ApiJson<dto::UpdateRepo>) -> Result<Response> {
     let mut repo = api.repo(&owner, &name).await?;
+    // Both settings are validated before anything changes.
+    let tier = requested_tier(&api, body.private, body.visibility.as_deref(), Some(repo.visibility)).await?;
+    let policy = match body.contribution_policy.as_deref() {
+        Some(s) => Some(
+            ContributionPolicy::parse(s).ok_or_else(|| Error::invalid("Repository", "contribution_policy", "use everyone or grants"))?,
+        ),
+        None => None,
+    };
     if let Some(new_name) = body.name.as_deref()
         && new_name != repo.name
     {
@@ -104,7 +150,7 @@ async fn patch_repo(api: Api, Path((owner, name)): Path<(String, String)>, ApiJs
     }
     let update = RepoSettingsUpdate {
         description: body.description,
-        visibility: body.private.map(|p| if p { Visibility::Private } else { Visibility::Public }),
+        visibility: tier,
         default_branch: body.default_branch,
         archived: body.archived,
         allow_merge_commit: body.allow_merge_commit,
@@ -123,6 +169,9 @@ async fn patch_repo(api: Api, Path((owner, name)): Path<(String, String)>, ApiJs
         || update.delete_branch_on_merge.is_some();
     if changed {
         repo = api.core.do_update_settings(&api.actor, repo.id, update, &api.client).await?;
+    }
+    if let Some(policy) = policy {
+        repo = api.core.do_set_contribution_policy(&api.actor, repo.id, policy, &api.client).await?;
     }
     Ok(Json(repository(&api, &repo).await?).into_response())
 }
@@ -186,12 +235,13 @@ async fn create_fork(
     ApiJsonOpt(body): ApiJsonOpt<dto::ForkRequest>,
 ) -> Result<Response> {
     let repo = api.repo(&owner, &name).await?;
-    let req = body.unwrap_or(dto::ForkRequest { organization: None, name: None });
+    let req = body.unwrap_or(dto::ForkRequest { organization: None, name: None, private: None, visibility: None });
     let into = match &req.organization {
         Some(org) => UserId(user_by_name(&api, org).await?.id),
         None => me(&api.actor)?,
     };
-    let fork = api.core.do_fork(&api.actor, repo.id, into, req.name.as_deref(), &api.client).await?;
+    let tier = requested_tier(&api, req.private, req.visibility.as_deref(), None).await?.unwrap_or(Visibility::Private);
+    let fork = api.core.do_fork_as(&api.actor, repo.id, into, req.name.as_deref(), tier, &api.client).await?;
     Ok((StatusCode::ACCEPTED, Json(repository(&api, &fork).await?)).into_response())
 }
 
@@ -219,6 +269,7 @@ async fn list_collaborators(api: Api, Path((owner, name)): Path<(String, String)
 fn role_name(p: Permission) -> &'static str {
     match p {
         Permission::None => "none",
+        Permission::View => "view",
         Permission::Read => "read",
         Permission::Triage => "triage",
         Permission::Write => "write",
@@ -274,7 +325,7 @@ async fn collaborator_permission(api: Api, Path((owner, name, user)): Path<(Stri
     let legacy = match perm {
         Permission::Admin | Permission::Maintain => "admin",
         Permission::Write | Permission::Triage => "write",
-        Permission::Read => "read",
+        Permission::Read | Permission::View => "read",
         Permission::None => "none",
     };
     Ok(Json(PermissionBody { permission: legacy, role_name: role_name(perm), user: simple_user(api.base(), &target) }).into_response())

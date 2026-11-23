@@ -31,7 +31,7 @@ impl Core {
 
     /// Opening something needs read access and a writable repository with the feature on.
     async fn open_checks(&self, actor: &Actor, repo: RepoId, pull: bool) -> Result<(RepoRow, Permission)> {
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_contribute(actor, repo).await?;
         let row = self.repo(repo).await?;
         Self::ensure_writable(&row)?;
         if pull && !row.has_pulls {
@@ -147,13 +147,13 @@ impl Core {
     // ------------------------------------------------------------ read
 
     pub async fn issue_view(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<IssueView> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let row = self.issue_row(repo, number).await?;
         self.hydrate_one(row).await
     }
 
     pub async fn issue_views(&self, actor: &Actor, repo: RepoId, filter: IssueFilter) -> Result<Vec<IssueView>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (offset, limit) = util::page(filter.page, filter.per_page);
         let spec = Spec { repo: Some(repo), filter, ..Default::default() };
         let rows = self.query_issue_rows(actor, &spec, offset, limit).await?;
@@ -276,7 +276,9 @@ impl Core {
         _client: &ClientInfo,
     ) -> Result<IssueView> {
         let user = writing_user(actor, repo)?;
-        let perm = self.need_read(actor, repo).await?;
+        // Reopening is contributing. Closing your own is withdrawing, which the contribution
+        // setting never stops.
+        let perm = if open { self.need_contribute(actor, repo).await? } else { self.need_read(actor, repo).await? };
         let rrow = self.repo(repo).await?;
         Self::ensure_writable(&rrow)?;
         let mut tx = self.db().begin().await?;
@@ -304,7 +306,7 @@ impl Core {
         _client: &ClientInfo,
     ) -> Result<IssueView> {
         let user = writing_user(actor, repo)?;
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_contribute(actor, repo).await?;
         let rrow = self.repo(repo).await?;
         Self::ensure_writable(&rrow)?;
         let mut tx = self.db().begin().await?;
@@ -382,7 +384,7 @@ impl Core {
         _client: &ClientInfo,
     ) -> Result<IssueView> {
         let user = writing_user(actor, repo)?;
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_contribute(actor, repo).await?;
         let rrow = self.repo(repo).await?;
         Self::ensure_writable(&rrow)?;
         let triage = perm >= Permission::Triage;

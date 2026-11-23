@@ -366,6 +366,16 @@ def step4():
     check(r.status == 401, f"a made-up token returned {r.status}")
 
 
+def until_not_limited(send, what):
+    """POST /login is limited per address (10 a minute, burst 5). Sends again until it is not 429."""
+    for _ in range(6):
+        r = send()
+        if r.status != 429:
+            return r
+        time.sleep(7)
+    check(False, f"the sign-in limit never let {what} through")
+
+
 def step5():
     # 11 sign-ins in a minute from one address: the 11th is 429.
     c = Client("10.9.6.1")
@@ -376,22 +386,30 @@ def step5():
         if r.status == 429:
             break
     check(429 in codes, f"no 429 after 12 sign-ins from one address: {codes}")
-    # Lock bob from rotating addresses.
+    # Lock bob from one address; wrong passwords count per account and address.
+    b = Client("10.9.7.1")
     for i in range(10):
-        b = Client(f"10.9.7.{i + 1}")
-        b.post_form("/login", {"username": "bob", "password": "wrong-password-" + str(i), "next": "/"})
-    b = Client("10.9.8.1")
+        until_not_limited(lambda i=i: b.post_form("/login", {"username": "bob", "password": "wrong-password-" + str(i), "next": "/"}),
+                          f"attempt {i}")
+    # The tenth failure locked bob at this address, so the right password is refused too. A locked
+    # sign-in answers 429 like the address limit does, so it is sent once, not retried, after a
+    # pause that lets the address limit allow one more.
+    time.sleep(7)
     b.post_form("/login", {"username": "bob", "password": PW, "next": "/"})
     check(not b.signed_in(), "bob signed in while locked")
-    page = b.get("/login")
+    # An outsider cannot lock the owner out.
+    o = Client("10.9.8.1")
+    o.login("bob", PW)
+    check(o.signed_in(), "bob is locked out everywhere by failures from one other address")
     # Alice is unaffected.
     a = Client("10.9.8.2")
     a.login("alice", PW)
     check(a.signed_in(), "alice blocked by bob's lockout")
     rc, out, err = cli("admin", "unlock", "bob")
     check(rc == 0, f"unlock: {out}{err}")
-    b = Client("10.9.8.3")
-    b.login("bob", PW)
+    # The unlock lets bob sign in again from the very address the failures came from.
+    b = Client("10.9.7.1")
+    until_not_limited(lambda: b.login("bob", PW), "bob in after unlock")
     check(b.signed_in(), "bob cannot sign in after unlock")
     S["bob"] = b
 
@@ -997,13 +1015,72 @@ def step21():
     check(r.json().get("conclusion") == "success", f"the live log job ended {r.json().get('conclusion')}")
 
 
+def step22():
+    """The browser workspace in a real browser: tests/e2e/workspace.mjs loads it at the public
+    origin and checks that five languages get syntax colours, that the phone top bar stays
+    visible on every pane, and that a phone can edit and commit a long file (tap areas, the
+    bottom tabs, the top bar, what the dialog and the run panel say will run, note contrast). Needs node, playwright-core and Chrome on this host (the screenshot run
+    uses the same), and the session file step 20 wrote."""
+    mjs = os.environ.get("E2E_WORKSPACE_MJS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace.mjs")
+    if not os.path.exists(mjs):
+        check(False, f"{mjs} is not here, so the workspace was not checked in a browser")
+    sess = os.environ.get("E2E_SHOTS")
+    check(sess and os.path.exists(sess), "step 20 has not left the session file")
+    wd = os.path.join(WORK, "verify")
+    # A branch of its own from main, so the five files never touch protected main.
+    git(["fetch", "-q", http_url("alice", S["alice_token"], "alice/demo"), "main"], wd, env=gitenv("10.9.2.4"))
+    git(["checkout", "-q", "-B", "ws-check", "FETCH_HEAD"], wd)
+    files = {
+        "a.ts": "interface Item {\n  id: number;\n  name: string;\n}\n\nfunction first(items: Item[]): string {\n  const found = items[0];\n  return found ? found.name : \"none\";\n}\n",
+        "b.js": "// the total of a basket, with the usual rate\nfunction total(prices) {\n  const rate = 1.2;\n  let sum = 0;\n  for (const p of prices) sum += p;\n  return \"total: \" + Math.round(sum * rate);\n}\n",
+        "c.css": "/* the shell every page sits in */\n.shell {\n  margin: 0 auto;\n  max-width: 960px;\n  color: #333;\n}\n\n.shell h1 {\n  font-weight: 600;\n}\n",
+        "d.py": "def greet(name):\n    \"\"\"Say hello.\"\"\"\n    greeting = \"hello\"\n    count = 3\n    # three bangs, no more\n    return f\"{greeting} {name}!\" + \"!\" * count\n",
+        "e.rs": "fn main() {\n    let name = \"codehaven\";\n    let count = 3;\n    // say it three times\n    for _ in 0..count {\n        println!(\"hello {}\", name);\n    }\n}\n",
+        # Sixty lines, for the phone check that the end of a long file is not under the tabs.
+        "long.txt": "".join(f"line {i}\n" for i in range(1, 60)) + "THE LAST LINE\n",
+    }
+    for name, body in files.items():
+        open(os.path.join(wd, name), "w").write(body)
+    git(["add", *files], wd)
+    git(["commit", "-q", "-m", "workspace check"], wd)
+    git(["push", http_url("alice", S["alice_token"], "alice/demo"), "HEAD:refs/heads/ws-check"], wd, env=gitenv("10.9.2.4"))
+    # The same commit under a long branch name, for the phone top bar.
+    git(["push", http_url("alice", S["alice_token"], "alice/demo"), "HEAD:refs/heads/ws-check-with-a-rather-long-name"], wd, env=gitenv("10.9.2.4"))
+    p = subprocess.run(["node", mjs, sess, BASE, PUBLIC, "alice/demo", "ws-check"], capture_output=True, text=True, timeout=150)
+    for line in p.stdout.strip().splitlines():
+        print("         " + line[:200], flush=True)
+    problems = "\n".join(line[:200] for line in p.stderr.strip().splitlines()[:25])
+    check(p.returncode == 0, f"the workspace failed in the browser:\n{problems}")
+
+
+def step23():
+    """The workspace terminal in a real browser: tests/e2e/terminal.mjs opens it on the ws-check
+    branch step 22 pushed and checks the prompt and its budget, the everyday commands, that an
+    unsaved edit reaches the shell, that shell changes reach the editor only through a review where
+    nothing is ticked, that committing them shows the CI warning, Stop and Ctrl+C, escape
+    sequences, that the frame and its Worker reach nothing on the server, and the phone layout.
+    E2E_TERMINAL_ENGINES picks engines (default chromium; the host has Chrome only)."""
+    mjs = os.environ.get("E2E_TERMINAL_MJS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "terminal.mjs")
+    if not os.path.exists(mjs):
+        check(False, f"{mjs} is not here, so the terminal was not checked in a browser")
+    sess = os.environ.get("E2E_SHOTS")
+    check(sess and os.path.exists(sess), "step 20 has not left the session file")
+    for engine in (os.environ.get("E2E_TERMINAL_ENGINES") or "chromium").split(","):
+        p = subprocess.run(["node", mjs, sess, BASE, PUBLIC, "alice/demo", "ws-check", engine], capture_output=True, text=True, timeout=400)
+        for line in p.stdout.strip().splitlines():
+            print("         " + line[:200], flush=True)
+        problems = "\n".join(line[:300] for line in p.stderr.strip().splitlines()[:25])
+        check(p.returncode == 0, f"the terminal failed in {engine}:\n{problems}")
+
+
 ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1), (2, "first admin and two-factor", step2),
        (3, "invites", step3), (4, "token and ssh key", step4), (5, "rate limit and lockout", step5), (6, "create repo", step6),
        (7, "push over HTTP", step7), (8, "push over SSH", step8), (9, "collaborator and clone", step9),
        (10, "branch protection", step10), (11, "issue and mention", step11), (12, "webhook ping", step12),
        (13, "open a pull request", step13), (14, "workflow run on the runner", step14), (15, "merge is blocked", step15),
        (16, "review", step16), (17, "squash merge", step17), (18, "push to main runs again, green; release file; org repository runs; job isolation", step18), (19, "audit log", step19),
-       (20, "leave data for the screenshots", step20), (21, "live job log in a browser", step21)]
+       (20, "leave data for the screenshots", step20), (21, "live job log in a browser", step21),
+       (22, "workspace in a browser", step22), (23, "terminal in a browser", step23)]
 
 
 THROWAWAY_PROJECT = re.compile(r"^(test|e2e|shots|tmp)-[a-z0-9][a-z0-9-]*$")

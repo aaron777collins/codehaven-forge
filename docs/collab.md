@@ -50,7 +50,7 @@ each, rather than the older ones that return bare ids.
 
 | From | What |
 | --- | --- |
-| git | `GitService::compare` (three dot, with commits and the diff), `test_merge`, `merge` with a compare-and-swap on `expected_base_sha`, `create_ref` and `delete_ref` with full ref names, `blob`, `tree`, `grep`, `commit_file_change`. For a fork pull request, `compare` on the fork must see the base's objects (alternates), and `create_ref` on the base repository for `refs/pull/<n>/head` needs the fork's head object, which only exists if git fetches it. Collab ignores a failure there. |
+| git | `GitService::compare` (three dot, with commits and the diff), `test_merge`, `merge` with a compare-and-swap on `expected_base_sha`, `create_ref` and `delete_ref` with full ref names, `blob`, `tree`, `grep`, `commit_file_change`. For a fork pull request, `compare` on the fork must see the base's objects (a fork copies its source's objects, so it holds them), and `create_ref` on the base repository for `refs/pull/<n>/head` needs the fork's head object, which only exists if git fetches it. Collab ignores a failure there. |
 | git | `Repos::protections` readable by `Actor::System`, `Repos::get` and `get_by_name` with read checks. |
 | identity | `Authz::repo_permission` (the only permission check collab makes), `Accounts::get_by_username` and `get_user`. |
 | notify | the new `DomainEvent::ReviewRequested` for the "review requested" reason. `PrClosed` with `merged: true` is followed by `PrMerged` for a merge. |

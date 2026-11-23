@@ -6,9 +6,11 @@
     <h1 class="repo-title">
       <svg class="icon" aria-hidden="true"><use href="#i-book-open"/></svg>
       <a href="/{{ r.owner }}">{{ r.owner }}</a><span class="sep" aria-hidden="true">/</span><a class="repo-name" href="{{ r.base }}">{{ r.name }}</a>
-      {% if r.private %}<span class="chip" title="Only people you give access to can see this repository.">Private</span>{% else %}<span class="chip" title="Public means every account on this server can read it. Nobody else can.">Public</span>{% endif %}
+      <span class="chip{% if r.tier == "Public" %} chip-accent{% endif %}" title="{{ r.tier_title }}"><svg class="icon" aria-hidden="true"><use href="#i-{% if r.tier == "Public" %}globe{% else if r.tier == "Internal" %}users{% else %}lock{% endif %}"/></svg> {{ r.tier }}<span class="sr-only">: {{ r.tier_title }}</span></span>
       {% if r.archived %}<span class="chip chip-warn">Archived</span>{% endif %}
     </h1>
+    {% if !r.workspace.is_empty() %}<a class="btn" href="{{ r.workspace }}" data-workspace-link title="Open this repository in the editor (press .)"><svg class="icon" aria-hidden="true"><use href="#i-code"/></svg><span>Open workspace</span></a>{% endif %}
+    {% if c.signed_out_reader %}<p class="muted small"><a href="/login">Sign in</a>. You can read this repository. Sign in to open an issue, comment or send a pull request.</p>{% endif %}
   </div>
   <div class="repo-cols">
     <nav class="repo-side" aria-label="Repository sections">

@@ -527,3 +527,107 @@ async fn a_pull_request_from_a_fork_merges_into_the_root(pool: PgPool) {
     assert_eq!(f.branch_sha(&public, "refs/pull/1/head").await, sha);
     let _ = root;
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn hostile_file_names_are_taken_literally_or_refused(pool: PgPool) {
+    let (f, alice, repo) = setup(pool).await;
+    let git = &f.state.git;
+    let a = f.actor(alice);
+    let c = f.client();
+    // A name with quote characters is its own file and never overwrites README.md.
+    git.commit_file_change(&a, req(&repo, "main", vec![put("\"README.md\"", "quoted\n")], "quoted"), &c).await.unwrap();
+    assert_eq!(git.blob(repo.id, "main", "README.md", 100).await.unwrap().content, b"# demo\n");
+    assert_eq!(git.blob(repo.id, "main", "\"README.md\"", 100).await.unwrap().content, b"quoted\n");
+    // A quoted escape stays a backslash and a letter, never a newline.
+    git.commit_file_change(&a, req(&repo, "main", vec![put("\"a\\nb\"", "esc\n")], "escape"), &c).await.unwrap();
+    assert_eq!(git.blob(repo.id, "main", "\"a\\nb\"", 100).await.unwrap().content, b"esc\n");
+    // Spellings that HFS+ or NTFS fold to .git are refused.
+    for path in [".g\u{200c}it/config", ".GIT\u{200d}/hooks/x", "x/.git::$INDEX_ALLOCATION/y", "git~1/config"] {
+        assert!(
+            matches!(git.commit_file_change(&a, req(&repo, "main", vec![put(path, "x")], "x"), &c).await, Err(Error::Validation(_))),
+            "{path:?}"
+        );
+    }
+    // A new file whose name has a space and a type word in it is not a clash.
+    git.commit_file_change(&a, req(&repo, "main", vec![put("absent tree", "ok\n"), put("x blob", "ok\n")], "spaces"), &c).await.unwrap();
+    // Deleting a file and adding a folder of that name in one commit works.
+    git.commit_file_change(&a, req(&repo, "main", vec![put("thing", "file\n")], "file"), &c).await.unwrap();
+    let swap = vec![FileChange { path: "thing".into(), content: None, renamed_from: None }, put("thing/inner.txt", "inside\n")];
+    git.commit_file_change(&a, req(&repo, "main", swap, "file to folder"), &c).await.unwrap();
+    assert_eq!(git.blob(repo.id, "main", "thing/inner.txt", 100).await.unwrap().content, b"inside\n");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_symlink_cannot_be_renamed_into_a_file_with_new_content(pool: PgPool) {
+    let (f, alice, repo) = setup(pool).await;
+    // A real symlink in the repository, pushed over HTTP like any client would.
+    let addr = f.serve_http().await;
+    let c = Client::new();
+    let work = c.path("work");
+    c.git(c.dir.path(), &["clone", "-q", &http_url(addr, "alice", "pw-alice", "alice", "demo"), work.to_str().unwrap()]).await;
+    std::os::unix::fs::symlink("/etc/passwd", work.join("link")).unwrap();
+    c.commit_all(&work, "Add a symlink").await;
+    c.git(&work, &["push", "-q", "origin", "HEAD:main"]).await;
+    let git = &f.state.git;
+    let a = f.actor(alice);
+    let info = f.client();
+    // The rename's source is a link, so its mode must not reach the new path as content.
+    let rename = FileChange { path: "notalink".into(), content: Some(b"x".to_vec()), renamed_from: Some("link".into()) };
+    assert!(
+        matches!(git.commit_file_change(&a, req(&repo, "main", vec![rename], "Rename the link"), &info).await, Err(Error::Validation(_))),
+        "a rename out of a symlink with new content is refused"
+    );
+    // A plain delete of the link still works.
+    let delete = FileChange { path: "link".into(), content: None, renamed_from: None };
+    git.commit_file_change(&a, req(&repo, "main", vec![delete], "Remove the link"), &info).await.unwrap();
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_refused_ref_name_copies_nothing_from_the_fork_network(pool: PgPool) {
+    let (f, alice, _) = setup(pool).await;
+    let bob = f.user("bob").await;
+    let public = f.public_repo(alice, "proj").await;
+    let fork = f.state.repos.fork(&f.actor(bob), public.id, bob, &f.client()).await.unwrap();
+    f.commit(&fork, bob, "main", "only-in-fork.txt", "x\n", "Fork only").await;
+    let sha = f.branch_sha(&fork, "main").await;
+    // Alice may read the fork, but `refs/pull/` is not hers to write: refused before any fetch.
+    for name in ["refs/pull/9/head", "refs/notes/x", "refs/remotes/o/main"] {
+        assert!(
+            matches!(f.state.git.create_ref(&f.actor(alice), public.id, name, &sha, &f.client()).await, Err(Error::Validation(_))),
+            "{name}"
+        );
+        assert!(f.state.git.update_ref(&f.actor(alice), public.id, name, &sha, true, &f.client()).await.is_err(), "{name}");
+    }
+    assert!(f.state.git.commit(public.id, &sha).await.is_err(), "the fork's commit was not copied in");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_cancelled_commit_never_moves_a_branch_without_its_event(pool: PgPool) {
+    let (f, alice, repo) = setup(pool).await;
+    let f = std::sync::Arc::new(f);
+    for (i, delay_ms) in (0..40u64).map(|d| d * 3).enumerate() {
+        let before = f.branch_sha(&repo, "main").await;
+        let pushes_before = f.events("push").await.len();
+        let (f2, r2) = (f.clone(), repo.clone());
+        let task = tokio::spawn(async move {
+            let msg = format!("Try {i}");
+            f2.state
+                .git
+                .commit_file_change(&f2.actor(alice), req(&r2, "main", vec![put("n.txt", &format!("{i}\n"))], &msg), &f2.client())
+                .await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        task.abort();
+        let _ = task.await;
+        // Whatever was started finishes on its own; give it a moment.
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let after = f.branch_sha(&repo, "main").await;
+        let pushes = f.events("push").await;
+        if after == before {
+            assert_eq!(pushes.len(), pushes_before, "try {i}: no ref change, no event");
+        } else {
+            assert_eq!(pushes.len(), pushes_before + 1, "try {i}: a ref change has its event");
+            assert_eq!(pushes.last().unwrap()["after"], after);
+        }
+    }
+}

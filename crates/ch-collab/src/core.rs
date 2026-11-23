@@ -12,6 +12,9 @@ use serde_json::{Value, json};
 use sqlx::{FromRow, PgPool};
 use std::collections::{HashMap, HashSet};
 
+/// What a signed-in account with no grant sees when the owner limits contribution.
+pub const LIMITED_CONTRIBUTION: &str = "The owner limits issues, comments and pull requests to people with access.";
+
 #[derive(Clone)]
 pub struct Core {
     pub d: Deps,
@@ -83,11 +86,33 @@ impl Core {
 
     // ------------------------------------------------------------ permissions
 
+    /// What `Authz` says. A signed-out visitor gets `View` on a public repository and nothing
+    /// anywhere else, so only the `need_view` reads below ever answer them.
     pub async fn permission(&self, actor: &Actor, repo: RepoId) -> Result<Permission> {
-        if actor.is_anonymous() {
-            return Ok(Permission::None);
-        }
         self.d.authz.repo_permission(actor, repo).await
+    }
+
+    /// Reading that may be public: issues, pull requests, comments, reviews, labels,
+    /// milestones, releases. `NotFound` below `View`.
+    pub async fn need_view(&self, actor: &Actor, repo: RepoId) -> Result<Permission> {
+        let p = self.permission(actor, repo).await?;
+        if p < Permission::View {
+            return Err(Error::NotFound);
+        }
+        Ok(p)
+    }
+
+    /// Opening an issue or pull request, commenting, reacting, reviewing and editing your own.
+    /// Needs an account that can read the repository and, when the owner limits contribution
+    /// to people with access, a grant. The write credential is `writing_user`'s job.
+    pub async fn need_contribute(&self, actor: &Actor, repo: RepoId) -> Result<Permission> {
+        let p = self.need_read(actor, repo).await?;
+        let policy: Option<String> =
+            sqlx::query_scalar("SELECT contribution_policy FROM repositories WHERE id = $1").bind(repo).fetch_optional(self.db()).await?;
+        if policy.as_deref() != Some("everyone") && !self.d.authz.has_grant(actor, repo).await? {
+            return Err(Error::forbidden(LIMITED_CONTRIBUTION));
+        }
+        Ok(p)
     }
 
     /// `NotFound` when the caller cannot see the repository at all.
@@ -102,8 +127,12 @@ impl Core {
     /// `NotFound` without read access, `Forbidden` with read but not `needed`.
     pub async fn need(&self, actor: &Actor, repo: RepoId, needed: Permission) -> Result<Permission> {
         let p = self.permission(actor, repo).await?;
-        if p < Permission::Read {
+        if p < Permission::View {
             return Err(Error::NotFound);
+        }
+        if p < Permission::Read {
+            // A signed-out visitor only reads.
+            return Err(Error::unauthorized());
         }
         if p < needed {
             return Err(Error::forbidden(match needed {
@@ -171,20 +200,18 @@ impl Core {
             .await?)
     }
 
-    /// Name, primary email and a fallback, for a commit signature.
+    /// Name and noreply address, for a commit signature. Account emails never go into history.
     pub async fn identity(&self, id: UserId) -> Result<(String, String)> {
-        let row: Option<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT u.username::text, u.display_name, (SELECT e.email::text FROM user_emails e WHERE e.user_id = u.id ORDER BY e.is_primary DESC, e.id LIMIT 1)
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT u.username::text, u.display_name
              FROM users u WHERE u.id = $1",
         )
         .bind(id)
         .fetch_optional(self.db())
         .await?;
-        let (username, display, email) = row.ok_or(Error::NotFound)?;
+        let (username, display) = row.ok_or(Error::NotFound)?;
         let name = if display.trim().is_empty() { username.clone() } else { display };
-        let host = self.d.config.server.external_url.trim_start_matches("https://").trim_start_matches("http://");
-        let host = host.split('/').next().unwrap_or("localhost").split(':').next().unwrap_or("localhost");
-        Ok((name, email.unwrap_or_else(|| format!("{username}@users.noreply.{host}"))))
+        Ok((name, ch_core::noreply::noreply_email(id.0, &username, &self.d.config.server.external_url)))
     }
 
     // ------------------------------------------------------------ hydration
@@ -460,10 +487,15 @@ impl Core {
 
     /// The repositories among `ids` that the actor may read.
     pub async fn readable(&self, actor: &Actor, ids: Vec<RepoId>) -> Result<HashSet<RepoId>> {
+        self.readable_at(actor, ids, Permission::Read).await
+    }
+
+    /// The ids the actor has at least `min` on.
+    pub async fn readable_at(&self, actor: &Actor, ids: Vec<RepoId>, min: Permission) -> Result<HashSet<RepoId>> {
         let mut seen: HashMap<RepoId, bool> = HashMap::new();
         for id in ids {
             if let std::collections::hash_map::Entry::Vacant(v) = seen.entry(id) {
-                v.insert(self.permission(actor, id).await? >= Permission::Read);
+                v.insert(self.permission(actor, id).await? >= min);
             }
         }
         Ok(seen.into_iter().filter(|(_, ok)| *ok).map(|(id, _)| id).collect())

@@ -1,0 +1,49 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% import "settings_repo/tabs.html" as st %}
+{% block repo_body %}
+{% call st::tabs(base, "general") %}
+<h2 class="page-h">Make {{ full_name }} public</h2>
+{% if tier == "public" %}
+<p>This repository is public already.</p>
+<p><a href="{{ base }}/settings">Back to settings</a></p>
+{% else if !switch_on %}
+<p>Public repositories are off on this server.</p>
+<p><a href="{{ base }}/settings">Back to settings</a></p>
+{% else if !is_owner %}
+<p>Only the owner can make this public.</p>
+<p><a href="{{ base }}/settings">Back to settings</a></p>
+{% else %}
+{% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+<p>{{ warning }}</p>
+<dl class="facts">
+  <dt>Branches</dt><dd>{{ summary.branches }}</dd>
+  <dt>Tags</dt><dd>{{ summary.tags }}</dd>
+  <dt>Pull request refs</dt><dd>{{ summary.pull_refs }}</dd>
+  <dt>Size</dt><dd>{{ summary.size_kb }} KB</dd>
+  <dt>Issues</dt><dd>{{ summary.issues }}</dd>
+  <dt>Pull requests</dt><dd>{{ summary.pulls }}</dd>
+  <dt>Comments</dt><dd>{{ summary.comments }}, {{ summary.comments_by_others }} from other people</dd>
+  <dt>Releases</dt><dd>{{ summary.releases }}, with {{ summary.release_files }} files</dd>
+  <dt>Forks</dt><dd>{{ summary.forks }}</dd>
+  <dt>Pull requests from private forks</dt><dd>{{ summary.pulls_from_private_forks }}</dd>
+  <dt>Packages</dt>
+  <dd>{% if summary.linked_packages.is_empty() %}None{% else %}{% for p in summary.linked_packages %}<span class="chip">{{ p }}</span> {% endfor %}{% endif %}</dd>
+</dl>
+<p class="muted">The page does not scan for secrets. You do that check.</p>
+<form method="post" action="{{ base }}/settings/visibility" class="stack">
+  {% call ui::csrf_field(c.csrf) %}
+  <input type="hidden" name="value" value="public">
+  <input type="hidden" name="snapshot" value="{{ summary.snapshot }}">
+  <div class="field">
+    <label for="confirm">Type {{ full_name }} to confirm</label>
+    <input id="confirm" name="confirm" type="text" value="{{ confirm }}" autocomplete="off" autocapitalize="none" spellcheck="false">
+    {% call ui::field_error(errors.get("confirm")) %}
+  </div>
+  <label class="choice"><input type="checkbox" name="checked_history" value="1"> {{ checked_text }}</label>
+  {% call ui::field_error(errors.get("checked_history")) %}
+  <button class="btn danger" type="submit">Make {{ full_name }} public</button>
+</form>
+<p class="muted">The repository is prepared first: its storage is rebuilt from its branches and tags, so nothing deleted can be fetched. The old storage is kept, unreachable, for 7 days.</p>
+{% endif %}
+{% endblock %}

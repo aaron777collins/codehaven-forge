@@ -311,6 +311,29 @@ async fn anonymous_traffic_is_capped_but_static_files_are_not() {
 }
 
 #[tokio::test]
+async fn forms_up_to_four_megabytes_pass_the_guard() {
+    let app = make_app(&config(ORIGIN), Actor::Anonymous, "203.0.113.7");
+    let page = send(&app, get_req("/login", None)).await;
+    let cookie = format!("__Host-ch_csrf={}", set_cookie_value(&page, "__Host-ch_csrf").unwrap());
+    let token = page.body.clone();
+    let form = |value: usize| format!("value={}&_csrf={token}", "a".repeat(value));
+    let post = |body: String| {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/settings")
+            .header(header::ORIGIN, ORIGIN)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::COOKIE, cookie.clone())
+            .body(Body::from(body))
+            .unwrap()
+    };
+    // One megabyte of value passes: the guard's cap matches the form reader's.
+    assert_eq!(send(&app, post(form(1024 * 1024))).await.status, StatusCode::OK);
+    // Five megabytes is over the cap.
+    assert_eq!(send(&app, post(form(5 * 1024 * 1024))).await.status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
 async fn api_calls_report_the_rate_limit() {
     let token_actor = Actor::Token { user_id: UserId(1), token_id: TokenId(9), scopes: ch_core::Scopes::new(["repo"]) };
     let app = make_app(&config(ORIGIN), token_actor, "203.0.113.70");

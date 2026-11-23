@@ -5,7 +5,7 @@
 mod common;
 
 use ch_core::model::*;
-use ch_core::{Actor, Error, Permission};
+use ch_core::{Actor, AuthVia, Error, Permission};
 use common::*;
 use sqlx::PgPool;
 
@@ -217,7 +217,7 @@ async fn delete_removes_the_row_the_files_and_says_so(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
-async fn forks_share_the_root_objects_and_block_deleting_the_root(pool: PgPool) {
+async fn forks_copy_their_objects_borrow_nothing_and_block_deleting_their_parent(pool: PgPool) {
     let f = Fixture::new(pool).await;
     let (alice, bob, carol) = (f.user("alice").await, f.user("bob").await, f.user("carol").await);
     let root = f.public_repo(alice, "proj").await;
@@ -227,26 +227,28 @@ async fn forks_share_the_root_objects_and_block_deleting_the_root(pool: PgPool) 
     let fork = f.state.repos.fork(&f.actor(bob), root.id, bob, &f.client()).await.unwrap();
     assert_eq!(fork.full_name(), "bob/proj");
     assert_eq!(fork.fork_parent_id, Some(root.id));
+    assert_eq!(fork.visibility, Visibility::Private, "a new fork is private");
     assert_eq!(f.branch_sha(&fork, "main").await, f.branch_sha(&root, "main").await, "refs are copied");
     assert_eq!(f.state.git.refs(fork.id, Some("refs/tags/")).await.unwrap().len(), 1);
-    let alternates = std::fs::read_to_string(f.core.store.repo_path(fork.id).join("objects/info/alternates")).unwrap();
-    assert!(alternates.trim().ends_with(&format!("{}.git/objects", root.id)), "{alternates}");
-    // The fork has almost no objects of its own: they come from the root.
-    let own =
-        std::fs::read_dir(f.core.store.repo_path(fork.id).join("objects")).unwrap().flatten().filter(|e| e.file_name().len() == 2).count();
-    assert_eq!(own, 0, "no loose objects were copied");
+    // A fork borrows nothing: what its readers can fetch is only what its own refs reach.
+    assert!(!f.core.store.repo_path(fork.id).join("objects/info/alternates").exists(), "no alternates");
+    let fsck = f.core.store.cmd(fork.id).args(["fsck", "--connectivity-only"]).run().await;
+    assert!(fsck.is_ok(), "the fork is complete on its own: {fsck:?}");
+    // Commits the root gains later are not in the fork.
+    let later = f.commit(&root, alice, "main", "later.txt", "later\n", "Later").await;
+    let has = f.core.store.cmd(fork.id).args(["cat-file", "-e", &format!("{later}^{{commit}}")]).run_any().await.unwrap();
+    assert_ne!(has.code, 0, "the fork does not see the root's later commits");
 
-    // A fork of a fork still points at the root and carries the intermediate fork's commits.
+    // A fork of a fork carries the intermediate fork's commits.
     f.commit(&fork, bob, "main", "bob.txt", "bob was here\n", "Bob's change").await;
+    f.env.collaborator(fork.id, carol, "read").await;
     let grand = f.state.repos.fork(&f.actor(carol), fork.id, carol, &f.client()).await.unwrap();
     assert_eq!(f.branch_sha(&grand, "main").await, f.branch_sha(&fork, "main").await);
     assert_eq!(f.state.git.blob(grand.id, "main", "bob.txt", 100).await.unwrap().content, b"bob was here\n");
-    let fsck = f.core.store.cmd(grand.id).args(["fsck", "--connectivity-only"]).run().await.unwrap();
-    let _ = fsck;
 
-    // Deleting the root would break every fork's storage.
+    // A repository with forks below it cannot be deleted, middle of a chain included.
     assert!(matches!(f.state.repos.delete(&f.actor(alice), root.id, &f.client()).await, Err(Error::Conflict(_))));
-    // A fork can go; then the root can too once no fork remains.
+    assert!(matches!(f.state.repos.delete(&f.actor(bob), fork.id, &f.client()).await, Err(Error::Conflict(_))));
     f.state.repos.delete(&f.actor(carol), grand.id, &f.client()).await.unwrap();
     f.state.repos.delete(&f.actor(bob), fork.id, &f.client()).await.unwrap();
     f.state.repos.delete(&f.actor(alice), root.id, &f.client()).await.unwrap();
@@ -437,7 +439,7 @@ async fn settings_topics_default_branch_and_archive(pool: PgPool) {
             .update_settings(
                 &f.actor(bob),
                 repo.id,
-                RepoSettingsUpdate { visibility: Some(Visibility::Public), ..Default::default() },
+                RepoSettingsUpdate { visibility: Some(Visibility::Internal), ..Default::default() },
                 &f.client()
             )
             .await,
@@ -492,7 +494,7 @@ async fn settings_topics_default_branch_and_archive(pool: PgPool) {
         .update_settings(
             &f.actor(alice),
             repo.id,
-            RepoSettingsUpdate { visibility: Some(Visibility::Public), ..Default::default() },
+            RepoSettingsUpdate { visibility: Some(Visibility::Internal), ..Default::default() },
             &f.client(),
         )
         .await
@@ -526,4 +528,38 @@ async fn listing_what_a_person_can_see(pool: PgPool) {
     assert!(f.state.repos.list_accessible(&Actor::Anonymous, 1, 30).await.unwrap().is_empty());
     // Per owner, filtered the same way.
     assert_eq!(names(f.state.repos.list_for_owner(&f.actor(bob), alice).await.unwrap()), vec!["alice/alice-public", "alice/alice-shared"]);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn workspace_switches_are_admin_only_and_audited(pool: PgPool) {
+    let f = Fixture::new(pool).await;
+    let alice = f.user("alice").await;
+    // Never set: the editor and the terminal are both on.
+    assert_eq!(
+        f.state.repos.workspace_settings().await.unwrap(),
+        WorkspaceSettings { editor: true, terminal: true },
+        "the editor and the terminal start on"
+    );
+    let settings = WorkspaceSettings { editor: false, terminal: false };
+    // A plain user is refused.
+    assert!(matches!(f.state.repos.set_workspace_settings(&f.actor(alice), settings, &f.client()).await, Err(Error::NotFound)));
+    // An admin without two-factor is refused too.
+    let no_2fa = Actor::User { id: alice, is_admin: true, has_2fa: false, via: AuthVia::Session };
+    assert!(matches!(f.state.repos.set_workspace_settings(&no_2fa, settings, &f.client()).await, Err(Error::NotFound)));
+    // An admin with two-factor can switch the editor off, and it is audited.
+    let admin = Actor::User { id: alice, is_admin: true, has_2fa: true, via: AuthVia::Session };
+    f.state.repos.set_workspace_settings(&admin, settings, &f.client()).await.unwrap();
+    assert_eq!(f.state.repos.workspace_settings().await.unwrap(), settings);
+    assert!(f.audit_actions().await.contains(&"instance.workspace_changed".to_string()));
+    // The config file is the ceiling. No switch reads as on past it.
+    let on = WorkspaceSettings { editor: true, terminal: true };
+    let mut cfg = ch_core::Config::for_tests();
+    cfg.workspace.enabled = false;
+    assert!(!on.editor_on(&cfg));
+    cfg.workspace.enabled = true;
+    assert!(on.editor_on(&cfg));
+    cfg.workspace.terminal = false;
+    assert!(!on.terminal_on(&cfg));
+    cfg.workspace.terminal = true;
+    assert!(on.terminal_on(&cfg));
 }

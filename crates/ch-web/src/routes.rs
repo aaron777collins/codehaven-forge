@@ -1,7 +1,9 @@
 //! The route table. Built through a small registry so tests can see every method and path.
 
 use crate::assets;
-use crate::views::{self, actions, admin, apps, auth, issues, people, pulls, releases, repo, repo_settings as rs, settings};
+use crate::views::{
+    self, actions, admin, apps, auth, issues, people, pulls, releases, repo, repo_settings as rs, settings, visibility, workspace as ws,
+};
 use axum::Router;
 use axum::handler::Handler;
 use axum::http::{HeaderValue, StatusCode, header};
@@ -83,6 +85,10 @@ pub fn build_for(mcp: bool) -> Registry {
         .post("/admin/runners/{id}/revoke", admin::runner_revoke)
         .post("/admin/runners/token", admin::runner_token)
         .get("/admin/audit", admin::audit_get)
+        .get("/admin/settings", visibility::admin_settings_get)
+        .post("/admin/settings", visibility::admin_settings_post)
+        .get("/admin/workspace", visibility::admin_workspace_get)
+        .post("/admin/workspace", visibility::admin_workspace_post)
         .get("/settings", settings::index)
         .form("/settings/profile", settings::profile_get, settings::profile_post)
         .form("/settings/password", settings::password_get, settings::password_post)
@@ -124,6 +130,25 @@ pub fn build_for(mcp: bool) -> Registry {
         .get("/avatar/{name}", avatar)
         .post("/preview", repo::preview)
         .get("/{owner}/{repo}", repo::home)
+        // The browser workspace. Keep in step with `views::workspace::ROUTES`.
+        .get("/{owner}/{repo}/workspace", ws::page::shell)
+        .get("/{owner}/{repo}/workspace/assets/{build}/{*file}", ws::assets::get)
+        .get("/{owner}/{repo}/workspace/terminal", ws::terminal::frame)
+        .get("/{owner}/{repo}/workspace/terminal/source.tar", ws::terminal::source)
+        .get("/{owner}/{repo}/workspace/boot", ws::files::boot)
+        .get("/{owner}/{repo}/workspace/tree", ws::files::tree)
+        .get("/{owner}/{repo}/workspace/file", ws::files::file)
+        .post("/{owner}/{repo}/workspace/search", ws::files::search)
+        .get("/{owner}/{repo}/workspace/snapshot", ws::files::snapshot)
+        .post("/{owner}/{repo}/workspace/commit", ws::commit::commit)
+        .post("/{owner}/{repo}/workspace/branches", ws::commit::branches)
+        .get("/{owner}/{repo}/workspace/runs", ws::runs::runs)
+        .get("/{owner}/{repo}/workspace/runs/{run}", ws::runs::run)
+        .get("/{owner}/{repo}/workspace/runs/{run}/jobs/{job}/log/stream", ws::runs::log_stream)
+        .get("/{owner}/{repo}/workspace/workflows", ws::runs::workflows)
+        .post("/{owner}/{repo}/workspace/dispatch", ws::runs::dispatch)
+        .post("/{owner}/{repo}/workspace/runs/{run}/rerun", ws::runs::rerun)
+        .post("/{owner}/{repo}/workspace/runs/{run}/cancel", ws::runs::cancel)
         .get("/{owner}/{repo}/tree/{*rest}", repo::tree)
         .get("/{owner}/{repo}/blob/{*rest}", repo::blob)
         .get("/{owner}/{repo}/find/{*rest}", repo::find)
@@ -176,7 +201,9 @@ pub fn build_for(mcp: bool) -> Registry {
         .form("/{owner}/{repo}/releases/new", releases::new_get, releases::new_post)
         .post("/{owner}/{repo}/releases/{id}/delete", releases::delete)
         .form("/{owner}/{repo}/settings", rs::general_get, rs::general_post)
-        .post("/{owner}/{repo}/settings/visibility", rs::visibility_post)
+        .get("/{owner}/{repo}/settings/visibility", visibility::visibility_get)
+        .post("/{owner}/{repo}/settings/visibility", visibility::visibility_post)
+        .post("/{owner}/{repo}/settings/contributions", visibility::contributions_post)
         .post("/{owner}/{repo}/settings/archive", rs::archive_post)
         .post("/{owner}/{repo}/settings/rename", rs::rename_post)
         .post("/{owner}/{repo}/settings/transfer", rs::transfer_post)

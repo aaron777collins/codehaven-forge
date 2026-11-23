@@ -12,6 +12,7 @@ expression: json
     "allow_squash_merge": true,
     "archived": false,
     "clone_url": "https://code.example.com/alice/codehaven.git",
+    "contribution_policy": "everyone",
     "created_at": "2026-01-02T03:04:05Z",
     "default_branch": "main",
     "delete_branch_on_merge": false,

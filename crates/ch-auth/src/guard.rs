@@ -32,7 +32,8 @@ use sha2::{Digest, Sha256};
 use std::net::IpAddr;
 use std::time::Duration;
 
-const MAX_FORM_BYTES: usize = 256 * 1024;
+/// The same cap as ch-web's form reader (FormData), so an edit the page allows is not refused here first.
+const MAX_FORM_BYTES: usize = 4 * 1024 * 1024;
 const CSRF_COOKIE_MAX_AGE: i64 = 7 * 24 * 3600;
 
 pub struct Guard {
@@ -43,7 +44,8 @@ pub struct Guard {
     mcp: bool,
     /// Sign-in, two-factor, invite and password link pages: 10 a minute, burst 5, per address.
     auth_pages: Limiter,
-    /// Everything else a signed-out visitor can reach: 120 a minute per address.
+    /// Everything else a signed-out visitor can reach: `public_access.requests_per_minute` per
+    /// address, with a burst of `public_access.burst`.
     anonymous: Limiter,
     /// Signed-in API calls: 5,000 an hour per token or account.
     api: Quota,
@@ -73,7 +75,8 @@ impl Guard {
             origin,
             mcp: config.mcp.enabled,
             auth_pages: Limiter::new(10, 5),
-            anonymous: Limiter::new(120, 120),
+            // Every signed-out request, rejections and public reads alike (epic ch-4pn).
+            anonymous: Limiter::new(config.public_access.requests_per_minute, config.public_access.burst),
             api: Quota::new(5000, Duration::from_secs(3600)),
         }
     }
@@ -129,15 +132,16 @@ impl Guard {
         // ---- rate limits
         let mut quota_state = None;
         // The machine routes have their own, larger buckets: everyone using Claude arrives from a
-        // few addresses, and they must not share the 120 a minute of the signed-out pages.
+        // few addresses, and they must not share the signed-out budget of the pages.
         if actor.is_anonymous() && !matches!(kind, RouteKind::OAuth | RouteKind::Mcp) {
             if is_auth_page(&method, &path)
                 && let Err(wait) = self.auth_pages.hit(&ip.to_string())
             {
                 return too_many(wait, kind);
             }
+            // An IPv6 host counts by its /64, so it cannot take a fresh budget per address.
             if !path.starts_with("/static/")
-                && let Err(wait) = self.anonymous.hit(&ip.to_string())
+                && let Err(wait) = self.anonymous.hit(&access::address_key(ip))
             {
                 return too_many(wait, kind);
             }

@@ -958,8 +958,9 @@ pub async fn cancel_run(ctx: &Ctx, run_id: i64) -> Result<()> {
 }
 
 /// Starts a new attempt of a finished run from the jobs as they were planned. With
-/// `failed_only`, jobs that succeeded (or were skipped) are copied across as they are.
-pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool) -> Result<RunId> {
+/// `failed_only`, jobs that succeeded (or were skipped) are copied across as they are. `by` is
+/// recorded as whoever started the attempt; the original run's actor is kept when there is none.
+pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool, by: Option<UserId>) -> Result<RunId> {
     let old = fetch_run(ctx, run_id).await?;
     if old.status != "completed" {
         return Err(Error::conflict("This workflow run is still in progress."));
@@ -967,6 +968,13 @@ pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool) -> Result<RunId> {
     let info = repo_ci(ctx, RepoId(old.repo_id)).await?;
     if info.availability() != ch_core::model::CiAvailability::Enabled {
         return Err(Error::forbidden("Workflows are not enabled for this repository."));
+    }
+    // A saved run keeps its ref and commit, so starting it again needs the same check as dispatch.
+    if old.event == "workflow_dispatch" {
+        let full = old.git_ref.as_deref().unwrap_or_default();
+        if crate::source::branch_or_tag(ctx.source.as_ref(), RepoId(old.repo_id), full).await?.is_none() {
+            return Err(Error::invalid("Dispatch", "ref", crate::source::CHOOSE_REF));
+        }
     }
     let old_jobs = fetch_jobs(ctx, old.id).await?;
     let (event, mut meta) = split_payload(&old.event_payload);
@@ -993,7 +1001,7 @@ pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool) -> Result<RunId> {
     .bind(&old.head_branch)
     .bind(&old.git_ref)
     .bind(&old.title)
-    .bind(old.actor_id)
+    .bind(by.map(|u| u.0).or(old.actor_id))
     .bind(&old.concurrency_group)
     .bind(join_payload(&event, &meta))
     .fetch_one(&mut *tx)

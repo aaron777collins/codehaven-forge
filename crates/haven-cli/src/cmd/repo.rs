@@ -33,6 +33,9 @@ fn split_name(s: &str) -> (Option<&str>, &str) {
 }
 
 async fn create(ctx: &Ctx, a: RepoCreateArgs) -> Result<i32> {
+    if a.public {
+        bail!("Make a repository public in the browser. Create it with --internal or without a flag, then open its settings.");
+    }
     let api = ctx.api()?;
     let (owner, name) = split_name(&a.name);
     if name.is_empty() {
@@ -41,7 +44,8 @@ async fn create(ctx: &Ctx, a: RepoCreateArgs) -> Result<i32> {
     let req = CreateRepo {
         name: name.to_string(),
         description: a.description.clone(),
-        private: Some(!a.public),
+        private: None,
+        visibility: Some(if a.internal { "internal" } else { "private" }.to_string()),
         auto_init: Some(a.add_readme),
         default_branch: None,
     };
@@ -108,7 +112,7 @@ async fn view(ctx: &Ctx, a: RepoViewArgs) -> Result<i32> {
 
 async fn fork(ctx: &Ctx, a: RepoForkArgs) -> Result<i32> {
     let (owner, name) = ctx.repo_or(a.repo.as_deref())?;
-    let req = ForkRequest { organization: a.org.clone(), name: a.name.clone() };
+    let req = ForkRequest { organization: a.org.clone(), name: a.name.clone(), private: None, visibility: None };
     let r: Repository = ctx.api()?.post(&format!("/repos/{owner}/{name}/forks"), &req).await?;
     ctx.println(&r.html_url);
     if a.clone {

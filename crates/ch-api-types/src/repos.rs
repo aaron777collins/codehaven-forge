@@ -23,6 +23,9 @@ pub struct Repository {
     pub default_branch: String,
     /// `public`, `internal` or `private`.
     pub visibility: String,
+    /// `everyone` or `grants`.
+    #[serde(default = "default_everyone")]
+    pub contribution_policy: String,
     pub archived: bool,
     #[serde(default)]
     pub disabled: bool,
@@ -61,6 +64,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_everyone() -> String {
+    "everyone".into()
+}
+
 /// `POST /user/repos` and `POST /orgs/{org}/repos`: create a repository.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateRepo {
@@ -69,6 +76,9 @@ pub struct CreateRepo {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private: Option<bool>,
+    /// `private`, `internal` or `public`. When present it decides, whatever `private` says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_init: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -84,6 +94,12 @@ pub struct UpdateRepo {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private: Option<bool>,
+    /// `private`, `internal` or `public`. When present it decides, whatever `private` says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
+    /// `everyone` or `grants`: who may open issues, comment and send pull requests without access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contribution_policy: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -383,6 +399,10 @@ pub struct ForkRequest {
     pub organization: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
 }
 
 #[cfg(test)]
@@ -404,6 +424,7 @@ mod tests {
             ssh_url: format!("git@code.example.com:alice/{name}.git"),
             default_branch: "main".into(),
             visibility: "public".into(),
+            contribution_policy: "everyone".into(),
             archived: false,
             disabled: false,
             topics: vec!["rust".into(), "forge".into()],
@@ -473,6 +494,7 @@ mod tests {
             name: "codehaven".into(),
             description: Some("a self-hosted forge".into()),
             private: Some(false),
+            visibility: None,
             auto_init: Some(true),
             default_branch: Some("main".into()),
         };
@@ -485,6 +507,8 @@ mod tests {
             name: None,
             description: Some("a self-hosted forge".into()),
             private: Some(true),
+            visibility: None,
+            contribution_policy: None,
             default_branch: None,
             archived: Some(false),
             allow_squash_merge: None,
@@ -685,7 +709,7 @@ mod tests {
 
     #[test]
     fn fork_request_roundtrip() {
-        let value = ForkRequest { organization: Some("haven".into()), name: None };
+        let value = ForkRequest { organization: Some("haven".into()), name: None, private: None, visibility: None };
         crate::roundtrip("repos_fork_request", &value);
     }
 

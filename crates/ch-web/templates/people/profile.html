@@ -8,7 +8,7 @@
     <div>
       <h1>{{ display }}</h1>
       <p class="muted">@{{ login }}{% if is_org %} <span class="chip">Organization</span>{% endif %}</p>
-      <p class="muted small">{% if is_org %}Created{% else %}Joined{% endif %} {% call ui::time(joined) %}</p>
+      {% if !signed_out %}<p class="muted small">{% if is_org %}Created{% else %}Joined{% endif %} {% call ui::time(joined) %}</p>{% endif %}
     </div>
   </div>
   {% if is_org %}
@@ -28,7 +28,7 @@
       <ul class="card">
         {% for r in repos %}
         <li class="repo-item">
-          <p class="repo-item-title"><a href="{{ r.href }}">{{ r.name }}</a>{% if r.private %}<span class="chip" title="Only people with access can see this repository.">Private</span>{% else %}<span class="chip" title="Every account on this server can read it. Nobody else can.">Public</span>{% endif %}</p>
+          <p class="repo-item-title"><a href="{{ r.href }}">{{ r.name }}</a><span class="chip{% if r.tier == "Public" %} chip-accent{% endif %}" title="{{ r.tier_title }}"><svg class="icon" aria-hidden="true"><use href="#i-{% if r.tier == "Public" %}globe{% else if r.tier == "Internal" %}users{% else %}lock{% endif %}"/></svg> {{ r.tier }}<span class="sr-only">: {{ r.tier_title }}</span></span></p>
           {% if !r.description.is_empty() %}<p>{{ r.description }}</p>{% endif %}
           <p class="muted small">{% if let Some(t) = r.updated %}Updated {% call ui::time(t) %}{% else %}No pushes yet{% endif %}</p>
         </li>

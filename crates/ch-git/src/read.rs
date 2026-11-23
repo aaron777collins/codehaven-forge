@@ -181,13 +181,14 @@ impl GitCore {
 
     /// A bare branch name means the branch. Git itself looks for a tag of that name first, and
     /// anyone with write access can push a tag, so on a protected branch `main` would show a
-    /// commit nobody reviewed. A bare name that is a branch becomes `refs/heads/<name>`; anything
-    /// else (a tag, a sha, `HEAD`, a full ref) goes to git as written.
+    /// commit nobody reviewed. A bare name that is a branch becomes `refs/heads/<name>`, and a
+    /// short hex name is checked as a branch first, so a tag cannot shadow a branch called
+    /// `beef`. Anything else (a full commit id, a tag, `HEAD`, a full ref) goes to git as written.
     pub(crate) async fn pin_rev(&self, repo: RepoId, rev: &str) -> Result<String> {
         let rev = check_rev(rev)?;
         let (base, suffix) = split_rev(rev);
-        let hex = (4..=64).contains(&base.len()) && base.bytes().all(|b| b.is_ascii_hexdigit());
-        if base.is_empty() || base == "HEAD" || base.starts_with("refs/") || hex {
+        let full_sha = (base.len() == 40 || base.len() == 64) && base.bytes().all(|b| b.is_ascii_hexdigit());
+        if base.is_empty() || base == "HEAD" || base.starts_with("refs/") || full_sha {
             return Ok(rev.to_string());
         }
         let full = format!("refs/heads/{base}");
@@ -367,6 +368,11 @@ impl GitCore {
     /// Three-dot diff: what `head` changed since it left `base`. For a commit and its parent
     /// this is exactly the commit's own change.
     pub(crate) async fn read_diff(&self, repo: RepoId, base: &str, head: &str) -> Result<Diff> {
+        // A root commit is compared with the empty tree, which is not a commit to resolve.
+        if base == EMPTY_TREE {
+            let head_sha = self.read_resolve(repo, head).await?;
+            return Ok((*self.diff_between(repo, EMPTY_TREE, &head_sha).await?).clone());
+        }
         let base_sha = self.read_resolve(repo, base).await?;
         let head_sha = self.read_resolve(repo, head).await?;
         let from = self.merge_base(repo, &base_sha, &head_sha).await?.unwrap_or(base_sha);
@@ -413,25 +419,27 @@ impl GitCore {
         let sha = self.read_resolve(repo, rev).await?;
         let cmd = self
             .git(repo)
-            .args(["grep", "-n", "-I", "-i", "-F", "--max-count=20", "-e", pattern, &sha, "--"])
+            .args(["grep", "-z", "-n", "-I", "-i", "-F", "--max-count=20", "-e", pattern, &sha, "--"])
             .timeout(std::time::Duration::from_secs(5));
         let out = match self.exec_any(cmd).await {
             Ok(o) => o,
-            // Out of time: no results beats a hung page.
-            Err(GitError::Timeout(_)) => return Ok(Vec::new()),
+            // Out of time: say so, rather than show no results as if there were none.
+            Err(GitError::Timeout(_)) => return Err(Error::unavailable("The search took too long. Try longer or rarer words.")),
             Err(e) => return Err(e.into()),
         };
         let prefix = format!("{sha}:");
         let mut hits = Vec::new();
-        for line in String::from_utf8_lossy(&out.stdout).lines() {
-            let Some(rest) = line.strip_prefix(&prefix) else { continue };
-            let mut it = rest.splitn(3, ':');
+        // With `-z` a record is `<sha>:<path>\0<line number>\0<text>\n`, so a colon in a path
+        // or in a line of text cannot be mistaken for a separator.
+        for line in out.stdout.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+            let Some(rest) = line.strip_prefix(prefix.as_bytes()) else { continue };
+            let mut it = rest.splitn(3, |b| *b == 0);
             let (Some(path), Some(no), Some(text)) = (it.next(), it.next(), it.next()) else { continue };
             hits.push(SearchHit {
                 kind: "code".into(),
-                id: no.parse().unwrap_or(0),
-                title: path.to_string(),
-                snippet: text.chars().take(300).collect(),
+                id: String::from_utf8_lossy(no).parse().unwrap_or(0),
+                title: String::from_utf8_lossy(path).into_owned(),
+                snippet: String::from_utf8_lossy(text).chars().take(300).collect(),
             });
             if hits.len() as u32 >= limit.clamp(1, 200) {
                 break;

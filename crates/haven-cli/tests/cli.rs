@@ -61,6 +61,7 @@ struct State {
     recs: Vec<Rec>,
     run_polls: u32,
     org_repos_only: bool,
+    repo_tiers: bool,
     merge_status: Option<u16>,
     release_assets: Vec<Value>,
     uploads: Vec<(String, String, usize)>,
@@ -113,7 +114,20 @@ async fn handle(AxState(st): AxState<Shared>, req: Request<Body>) -> Response {
         (Method::GET, ["users", u, "repos"]) | (Method::GET, ["orgs", u, "repos"]) => {
             json_resp(200, json!([repo_json(&format!("{u}/one")), repo_json(&format!("{u}/two"))]))
         }
-        (Method::GET, ["user", "repos"]) => json_resp(200, json!([repo_json("alice/mine")])),
+        (Method::GET, ["user", "repos"]) => {
+            if st.lock().unwrap().repo_tiers {
+                json_resp(
+                    200,
+                    json!([
+                        with(repo_json("alice/mine"), &[("visibility", json!("private"))]),
+                        with(repo_json("alice/inside"), &[("visibility", json!("internal"))]),
+                        repo_json("alice/open"), // the snapshot's own "public"
+                    ]),
+                )
+            } else {
+                json_resp(200, json!([repo_json("alice/mine")]))
+            }
+        }
         (Method::GET, ["repos", o, r]) => json_resp(200, repo_json(&format!("{o}/{r}"))),
         (Method::POST, ["repos", o, r, "forks"]) => {
             json_resp(202, repo_json(&format!("{}/{r}", body_json["organization"].as_str().unwrap_or("alice")).replace("//", "/")).clone())
@@ -560,16 +574,39 @@ async fn repo_create_picks_the_right_endpoint_and_defaults_to_private() {
     ok(&c.run(&["repo", "create", "mine", "-d", "my repo"]).await);
     let r = &s.find("POST", "/user/repos")[0];
     assert_eq!(r.body["name"], "mine");
-    assert_eq!(r.body["private"], true);
+    assert_eq!(r.body["visibility"], "private");
+    assert!(r.body.get("private").is_none() || r.body["private"].is_null());
     assert_eq!(r.body["description"], "my repo");
     ok(&c.run(&["repo", "create", "alice/also-mine"]).await);
     assert_eq!(s.find("POST", "/user/repos").len(), 2, "an owner that is you uses your own endpoint");
-    ok(&c.run(&["repo", "create", "acme/team-repo", "--public", "--add-readme"]).await);
+    ok(&c.run(&["repo", "create", "acme/team-repo", "--internal", "--add-readme"]).await);
     let org = &s.find("POST", "/orgs/acme/repos")[0];
-    assert_eq!(org.body["private"], false);
+    assert_eq!(org.body["visibility"], "internal");
     assert_eq!(org.body["auto_init"], true);
     let o = c.run(&["repo", "create", "acme/", "--json"]).await;
     assert_eq!(o.code, 1);
+}
+
+#[tokio::test]
+async fn repo_create_public_refuses_and_sends_nothing() {
+    let s = server().await;
+    let c = Cli::new(&s.url);
+    let o = c.run(&["repo", "create", "open", "--public"]).await;
+    assert_eq!(o.code, 1);
+    assert!(o.err.contains("Make a repository public in the browser."), "{}", o.err);
+    assert!(s.find("POST", "/user/repos").is_empty(), "nothing was sent");
+    let o = c.run(&["repo", "create", "x", "--public", "--internal"]).await;
+    assert_ne!(o.code, 0);
+}
+
+#[tokio::test]
+async fn repo_list_shows_all_three_tiers() {
+    let s = server().await;
+    let c = Cli::new(&s.url);
+    s.st.lock().unwrap().repo_tiers = true;
+    let o = c.run(&["repo", "list"]).await;
+    ok(&o);
+    assert!(o.out.contains("private") && o.out.contains("internal") && o.out.contains("public"), "{}", o.out);
 }
 
 #[tokio::test]

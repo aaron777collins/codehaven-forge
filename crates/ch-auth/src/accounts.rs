@@ -126,9 +126,24 @@ impl Accounts for AccountsService {
             .bind(expires_at)
             .execute(&mut *tx)
             .await?;
+        // A reset means the password may be known to someone else, so it signs the account out
+        // everywhere now, in this transaction, not when the link is used. A first password link
+        // (`SetPassword`) leaves sessions alone.
+        let mut signed_out = 0;
+        if purpose == LinkPurpose::ResetPassword {
+            signed_out = delete_sessions_except(&mut *tx, user, None).await?;
+            crate::apps::revoke_all_for_user(&mut tx, user, "password reset").await?;
+        }
         let act = if purpose == LinkPurpose::SetPassword { action::PASSWORD_SET } else { action::PASSWORD_RESET };
         self.core
-            .audit_tx(&mut tx, actor, client, act, Some(("user", user.0)), json!({"stage": "link_issued", "expires_at": expires_at}))
+            .audit_tx(
+                &mut tx,
+                actor,
+                client,
+                act,
+                Some(("user", user.0)),
+                json!({"stage": "link_issued", "expires_at": expires_at, "sessions_ended": signed_out}),
+            )
             .await?;
         tx.commit().await?;
         Ok(OneTimeLink { path: link_path(&token), token, expires_at })

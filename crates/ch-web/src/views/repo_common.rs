@@ -58,7 +58,22 @@ impl RepoCtx {
     pub async fn chrome(&self, ctx: &Ctx, title: &str, section: &str) -> Chrome {
         let full = self.repo.full_name();
         let t = if title.is_empty() { full } else { format!("{title} - {full}") };
-        ctx.chrome(&t).await.repo(self.nav(section))
+        let mut nav = self.nav(section);
+        nav.workspace = self.workspace_link(ctx).await;
+        ctx.chrome(&t).await.repo(nav)
+    }
+
+    /// The workspace URL for the header button, or empty when the button must not show: only a
+    /// signed-in reader gets it, never a signed-out public read, and only while an admin has
+    /// the editor on within what the config allows.
+    pub async fn workspace_link(&self, ctx: &Ctx) -> String {
+        if !ctx.signed_in() || ctx.public_read {
+            return String::new();
+        }
+        match ctx.state.repos.workspace_settings().await {
+            Ok(s) if s.editor_on(&ctx.state.config) => format!("{}/workspace", self.base()),
+            _ => String::new(),
+        }
     }
 
     /// The https clone address, shown on the repo home page.

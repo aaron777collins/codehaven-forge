@@ -1,0 +1,51 @@
+{% extends "admin/layout.html" %}
+{% import "components.html" as ui %}
+{% block admin_body %}
+<h1>Workspace</h1>
+<section class="card stack">
+  <h2>Code editor in the browser</h2>
+  <p>People who can read a repository can open it in an editor at its Workspace link. People who can write can commit from there. Everyone must be signed in.</p>
+  {% if !allowed %}
+  <p>The server's config file turns the workspace off (<code>[workspace] enabled = false</code>). Change it there first.</p>
+  {% else if editor %}
+  <p>The editor is on.</p>
+  <form method="post" action="/admin/workspace" class="inline">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="editor" value="0">
+    <button class="btn danger" type="submit">Turn the editor off</button>
+  </form>
+  {% else %}
+  <p>The editor is off. Open workspace links are hidden and the workspace pages answer "not found".</p>
+  <form method="post" action="/admin/workspace" class="inline">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="editor" value="1">
+    <button class="btn btn-primary" type="submit">Turn the editor on</button>
+  </form>
+  {% endif %}
+</section>
+<section class="card stack">
+  <h2>Terminal in the browser</h2>
+  <p>People who can read a repository can open a shell in their own browser, on a copy of its files. It runs only in their browser, has no internet, and never runs on this server. Everyone must be signed in.</p>
+  {% if !allowed %}
+  <p>The server's config file turns the workspace off (<code>[workspace] enabled = false</code>). Change it there first.</p>
+  {% else if !terminal_allowed %}
+  <p>The server's config file turns the terminal off (<code>[workspace] terminal = false</code>). Change it there first.</p>
+  {% else if !editor %}
+  <p>Turn the editor on first. The terminal lives inside it.</p>
+  {% else if terminal %}
+  <p>The terminal is on.</p>
+  <form method="post" action="/admin/workspace" class="inline">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="terminal" value="0">
+    <button class="btn danger" type="submit">Turn the terminal off</button>
+  </form>
+  {% else %}
+  <p>The terminal is off.</p>
+  <form method="post" action="/admin/workspace" class="inline">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="terminal" value="1">
+    <button class="btn btn-primary" type="submit">Turn the terminal on</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

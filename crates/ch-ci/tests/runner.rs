@@ -469,6 +469,29 @@ async fn live_logs_stream_to_a_viewer_and_resume_after_a_drop(pool: PgPool) {
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_live_log_closes_within_two_seconds_of_losing_access(pool: PgPool) {
+    let w = Arc::new(World::new(pool).await);
+    one_job(&w, ONE).await;
+    let r = w.runner("r", &["x"]).await;
+    let j = r.request(&w, 0).await.unwrap();
+    r.logs(&w, j.job_id, 0, 0, &["still running"]).await;
+    let uri = format!("/api/v3/repos/alice/demo/actions/jobs/{}/logs/stream", j.job_id);
+    let (w2, uri2) = (w.clone(), uri.clone());
+    // The job keeps running, so only the live check can end this stream.
+    let viewer = tokio::spawn(async move { w2.send_raw(Method::GET, &uri2, &Who::User(w2.alice), None).await });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    sqlx::query("UPDATE users SET suspended_at = now() WHERE id = $1").bind(w.alice.0).execute(w.pool()).await.unwrap();
+    let start = std::time::Instant::now();
+    let (s, body) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), viewer).await.expect("the stream ends when access does").unwrap();
+    assert!(start.elapsed() <= std::time::Duration::from_millis(2500), "{:?}", start.elapsed());
+    assert_eq!(s, StatusCode::OK);
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("still running"));
+    assert!(!text.contains("event: done"), "it closed, it did not finish: {text}");
+}
+
 // ------------------------------------------------------------------ artifacts
 
 fn zip_bytes() -> Bytes {

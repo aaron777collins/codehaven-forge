@@ -106,6 +106,269 @@ pub const PUBLIC_ROUTES: &[PublicRoute] = &[
     PublicRoute { methods: &["POST"], pattern: "/oauth/revoke", why: "Empty answer for any token, known or not" },
 ];
 
+/// What a signed-out route on the public list is about. The gate looks the target up before
+/// any handler runs, and lets the request through only when that target is public now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicTarget {
+    /// Listed only while the instance allows public repositories. No lookup.
+    Discovery,
+    /// The `{owner}` (or `{login}`, `{user}`, `{org}`) segment must own a public repository.
+    Owner,
+    /// `{owner}/{repo}` must be a public repository.
+    Repo,
+}
+
+/// How much a request may cost the shared server, for the signed-out caps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Cost {
+    /// An ordinary page or JSON answer.
+    Light,
+    /// Blame, compare, diffs and file lists of a pull request.
+    Heavy,
+    /// A raw file, a blob or a release file.
+    Raw,
+    /// A zip or tar of a tree.
+    Archive,
+    /// A clone or fetch.
+    Git,
+}
+
+/// One route a signed-out visitor may reach on a public repository (epic ch-4pn, spec section
+/// 5). The pattern is written exactly as the router registers it, so the gate and the router
+/// agree on which route a path is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublicRepoRoute {
+    pub methods: &'static [&'static str],
+    pub pattern: &'static str,
+    pub target: PublicTarget,
+    pub cost: Cost,
+}
+
+const fn r(pattern: &'static str, target: PublicTarget, cost: Cost) -> PublicRepoRoute {
+    PublicRepoRoute { methods: &["GET"], pattern, target, cost }
+}
+
+use Cost::{Archive, Git, Heavy, Light, Raw};
+use PublicTarget::{Discovery, Owner, Repo as RepoT};
+
+/// The complete list of what a signed-out visitor may read while the instance allows public
+/// repositories. HEAD follows GET, except on git and archive routes. Everything else stays
+/// closed. Changing this list is a security decision, reviewed by Claude.
+pub const PUBLIC_REPO_ROUTES: &[PublicRepoRoute] = &[
+    // Discovery
+    r("/explore", Discovery, Light),
+    r("/avatar/{name}", Discovery, Light),
+    r("/api/v3/search/repositories", Discovery, Light),
+    // Owners that have a public repository
+    r("/{owner}", Owner, Light),
+    r("/api/v3/users/{login}", Owner, Light),
+    r("/api/v3/users/{user}/repos", Owner, Light),
+    r("/api/v3/orgs/{org}", Owner, Light),
+    r("/api/v3/orgs/{org}/repos", Owner, Light),
+    // Repository pages
+    r("/{owner}/{repo}", RepoT, Light),
+    r("/{owner}/{repo}/tree/{*rest}", RepoT, Light),
+    r("/{owner}/{repo}/blob/{*rest}", RepoT, Light),
+    r("/{owner}/{repo}/find/{*rest}", RepoT, Light),
+    r("/{owner}/{repo}/raw/{*rest}", RepoT, Raw),
+    r("/{owner}/{repo}/blame/{*rest}", RepoT, Heavy),
+    r("/{owner}/{repo}/archive/{*rest}", RepoT, Archive),
+    r("/{owner}/{repo}/commits", RepoT, Light),
+    r("/{owner}/{repo}/commits/{*rest}", RepoT, Light),
+    r("/{owner}/{repo}/commit/{sha}", RepoT, Heavy),
+    r("/{owner}/{repo}/branches", RepoT, Light),
+    r("/{owner}/{repo}/tags", RepoT, Light),
+    r("/{owner}/{repo}/compare", RepoT, Light),
+    r("/{owner}/{repo}/compare/{*spec}", RepoT, Heavy),
+    r("/{owner}/{repo}/issues", RepoT, Light),
+    r("/{owner}/{repo}/issues/{number}", RepoT, Light),
+    r("/{owner}/{repo}/labels", RepoT, Light),
+    r("/{owner}/{repo}/milestones", RepoT, Light),
+    r("/{owner}/{repo}/pulls", RepoT, Light),
+    r("/{owner}/{repo}/pulls/{number}", RepoT, Light),
+    r("/{owner}/{repo}/pulls/{number}/commits", RepoT, Light),
+    r("/{owner}/{repo}/pulls/{number}/files", RepoT, Heavy),
+    r("/{owner}/{repo}/releases", RepoT, Light),
+    r("/{owner}/{repo}/releases/tag/{tag}", RepoT, Light),
+    r("/{owner}/{repo}/releases/download/{tag}/{name}", RepoT, Raw),
+    // Repository API
+    r("/api/v3/repos/{owner}/{repo}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/topics", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/forks", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/branches", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/branches/{*rest}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/tags", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/commits", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/commits/{ref}", RepoT, Heavy),
+    r("/api/v3/repos/{owner}/{repo}/compare/{basehead}", RepoT, Heavy),
+    r("/api/v3/repos/{owner}/{repo}/contents", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/contents/{*path}", RepoT, Raw),
+    r("/api/v3/repos/{owner}/{repo}/readme", RepoT, Light),
+    PublicRepoRoute { methods: &["GET"], pattern: "/api/v3/repos/{owner}/{repo}/zipball", target: RepoT, cost: Archive },
+    PublicRepoRoute { methods: &["GET"], pattern: "/api/v3/repos/{owner}/{repo}/zipball/{ref}", target: RepoT, cost: Archive },
+    PublicRepoRoute { methods: &["GET"], pattern: "/api/v3/repos/{owner}/{repo}/tarball", target: RepoT, cost: Archive },
+    PublicRepoRoute { methods: &["GET"], pattern: "/api/v3/repos/{owner}/{repo}/tarball/{ref}", target: RepoT, cost: Archive },
+    r("/api/v3/repos/{owner}/{repo}/git/refs", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/git/matching-refs/{*prefix}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/git/ref/{*name}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/git/refs/{*name}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/git/trees/{sha}", RepoT, Heavy),
+    r("/api/v3/repos/{owner}/{repo}/git/blobs/{sha}", RepoT, Raw),
+    r("/api/v3/repos/{owner}/{repo}/git/commits/{sha}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/issues", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/issues/{number}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/issues/{number}/comments", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/issues/comments/{id}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/issues/{number}/labels", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/issues/{number}/events", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/issues/{number}/timeline", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/issues/{number}/reactions", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/issues/comments/{id}/reactions", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/issue-templates", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/labels", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/labels/{name}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/milestones", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/milestones/{number}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls/{number}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls/{number}/files", RepoT, Heavy),
+    r("/api/v3/repos/{owner}/{repo}/pulls/{number}/commits", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls/{number}/merge", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls/{number}/reviews", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls/{number}/reviews/{id}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls/{number}/reviews/{id}/comments", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls/{number}/comments", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls/{number}/threads", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls/comments/{id}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/pulls/comments/{id}/reactions", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/releases", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/releases/latest", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/releases/tags/{*tag}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/releases/{id}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/releases/{id}/assets", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/releases/assets/{id}", RepoT, Raw),
+    // Git over HTTPS: clone and fetch only. Push always challenges.
+    PublicRepoRoute { methods: &["GET"], pattern: "/{owner}/{repo}/info/refs", target: RepoT, cost: Git },
+    PublicRepoRoute { methods: &["POST"], pattern: "/{owner}/{repo}/git-upload-pack", target: RepoT, cost: Git },
+];
+
+/// The target a public route names: the owner segment and, for a repository route, the repo
+/// segment, as written in the path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicMatch<'a> {
+    pub rule: &'static PublicRepoRoute,
+    pub owner: Option<&'a str>,
+    pub repo: Option<&'a str>,
+}
+
+/// How specific a pattern segment is, the way the router ranks them: a literal beats a
+/// parameter, which beats a catch-all.
+fn rank_of(seg: &str) -> u8 {
+    if seg.starts_with("{*") || seg == "*" {
+        0
+    } else if seg.starts_with('{') {
+        1
+    } else {
+        2
+    }
+}
+
+/// The public-repository route a signed-out request with this method, path and query would
+/// reach. Only the shape is checked here. The gate then looks the target up, and a layer inside
+/// the router confirms the router chose this same pattern.
+pub fn public_repo_route<'a>(method: &Method, path: &'a str, query: Option<&str>) -> Option<PublicMatch<'a>> {
+    let segs = safe_segments(path)?;
+    let head = *method == Method::HEAD;
+    let m = if head { "GET" } else { method.as_str() };
+    let mut best: Option<(&'static PublicRepoRoute, Vec<u8>)> = None;
+    for rule in PUBLIC_REPO_ROUTES {
+        if !rule.methods.contains(&m) || !pattern_matches(rule.pattern, &segs) {
+            continue;
+        }
+        let ranks: Vec<u8> = rule.pattern.trim_start_matches('/').split('/').map(rank_of).collect();
+        if best.as_ref().is_none_or(|(_, b)| ranks > *b) {
+            best = Some((rule, ranks));
+        }
+    }
+    let (rule, _) = best?;
+    if head && matches!(rule.cost, Cost::Git | Cost::Archive) {
+        return None;
+    }
+    // `info/refs` is open only for exactly one `service=git-upload-pack`.
+    if rule.pattern.ends_with("/info/refs") && query != Some("service=git-upload-pack") {
+        return None;
+    }
+    // A branch, never its protection settings.
+    if rule.pattern.ends_with("/branches/{*rest}") && segs.last().is_some_and(|s| *s == "protection") {
+        return None;
+    }
+    let pats: Vec<&str> = rule.pattern.trim_start_matches('/').split('/').collect();
+    let mut owner = None;
+    let mut repo = None;
+    for (i, p) in pats.iter().enumerate() {
+        match *p {
+            "{owner}" | "{login}" | "{user}" | "{org}" => owner = segs.get(i).copied(),
+            "{repo}" => repo = segs.get(i).copied(),
+            _ => {}
+        }
+    }
+    Some(PublicMatch { rule, owner, repo })
+}
+
+/// An account name as the users table allows it: 1 to 39 letters, digits and inner dashes.
+pub fn valid_owner_name(s: &str) -> bool {
+    let b = s.as_bytes();
+    !b.is_empty() && b.len() <= 39 && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'-') && b[0] != b'-' && b[b.len() - 1] != b'-'
+}
+
+/// A repository name as the repositories table allows it, with an optional `.git` suffix
+/// removed first. `None` when it is not one.
+pub fn valid_repo_name(s: &str) -> Option<&str> {
+    let n = s.strip_suffix(".git").unwrap_or(s);
+    let ok = !n.is_empty()
+        && n.len() <= 100
+        && n != "."
+        && n != ".."
+        && n.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'));
+    ok.then_some(n)
+}
+
+/// The key a signed-out limit counts by: the address, or its /64 for IPv6, so one host cannot
+/// take a fresh budget from each of its addresses.
+pub fn address_key(ip: std::net::IpAddr) -> String {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.to_string(),
+        std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let s = v6.segments();
+                format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+            }
+        },
+    }
+}
+
+/// True when `router_path` (a registered pattern such as `/{owner}/{repo}/tree/{*rest}`) is the
+/// rule's own pattern. The router layer checks this, so a path the gate admitted can only run
+/// the handler the rule names.
+pub fn same_route(rule: &PublicRepoRoute, router_path: &str) -> bool {
+    normalize_pattern(rule.pattern) == normalize_pattern(router_path)
+}
+
+/// A route pattern with parameter names dropped, so `/{a}/x` and `/{b}/x` compare equal.
+pub fn normalize_route(p: &str) -> String {
+    normalize_pattern(p)
+}
+
+/// Set by the gate on a signed-out request it admitted to a public route. A handler or
+/// extractor that would refuse a signed-out caller lets it through only with this present, and
+/// `Authz` still has to say `View` for the repository.
+#[derive(Debug, Clone)]
+pub struct PublicRead {
+    pub pattern: &'static str,
+    pub cost: Cost,
+}
+
 /// Splits a path into segments, or `None` when the path is not safe to match at all:
 /// empty segments, dot segments, encoded slashes or backslashes, control characters.
 fn safe_segments(path: &str) -> Option<Vec<&str>> {
@@ -133,7 +396,7 @@ fn pattern_matches(pattern: &str, segs: &[&str]) -> bool {
     let pats: Vec<&str> = if pattern == "/" { vec![] } else { pattern[1..].split('/').collect() };
     let mut i = 0;
     for (n, p) in pats.iter().enumerate() {
-        if *p == "*" {
+        if *p == "*" || p.starts_with("{*") {
             // `*` must be last and needs at least one segment.
             return n == pats.len() - 1 && segs.len() > n;
         }

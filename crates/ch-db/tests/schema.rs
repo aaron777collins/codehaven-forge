@@ -187,7 +187,10 @@ async fn repo_names_are_unique_per_owner_and_case_insensitive(pool: PgPool) {
 async fn visibility_is_public_or_private_only(pool: PgPool) {
     let a = user(&pool, "alice").await;
     let r = sqlx::query("INSERT INTO repositories (owner_id, name, visibility) VALUES ($1, 'x', 'anonymous')").bind(a).execute(&pool).await;
-    assert!(is_violation(r, CHECK), "there is no anonymous-readable visibility");
+    assert!(is_violation(r, CHECK), "the legacy column takes only public or private");
+    let r =
+        sqlx::query("INSERT INTO repositories (owner_id, name, access_tier) VALUES ($1, 'z', 'anonymous')").bind(a).execute(&pool).await;
+    assert!(is_violation(r, CHECK), "the tier is private, internal or public");
     let v: String = sqlx::query_scalar("INSERT INTO repositories (owner_id, name) VALUES ($1, 'y') RETURNING visibility")
         .bind(a)
         .fetch_one(&pool)
@@ -532,8 +535,14 @@ async fn the_oauth_migration_changes_no_existing_row_and_adds_only_empty_tables(
     let checksum_before = checksum_of(&pool, 3).await;
     let applied_before: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations").fetch_one(&pool).await.unwrap();
 
-    // Upgrade with the current binary's migrator.
-    ch_db::migrate(&pool).await.expect("the upgrade must run on an instance with data");
+    // Upgrade to 0120 exactly. Later migrations have their own tests over a seeded copy (see
+    // `visibility.rs` for 0121), and the full upgrade runs at the end of this test.
+    let to_0120 = || {
+        let all = migrator_as_first_applied();
+        let migrations: Vec<sqlx::migrate::Migration> = all.iter().filter(|m| m.version <= 120).cloned().collect();
+        sqlx::migrate::Migrator { migrations: std::borrow::Cow::Owned(migrations), ignore_missing: false, locking: true, no_tx: false }
+    };
+    to_0120().run(&pool).await.expect("the upgrade must run on an instance with data");
 
     let after = fingerprint(&pool).await;
     for (table, was) in &before {
@@ -552,8 +561,11 @@ async fn the_oauth_migration_changes_no_existing_row_and_adds_only_empty_tables(
     let applied_after: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations").fetch_one(&pool).await.unwrap();
     assert_eq!(applied_after, applied_before + 1);
     // Running again is a no-op.
-    ch_db::migrate(&pool).await.unwrap();
+    to_0120().run(&pool).await.unwrap();
     assert_eq!(fingerprint(&pool).await, after);
+    // And the current binary's migrator takes it the rest of the way, keeping the old 0003.
+    ch_db::migrate(&pool).await.expect("the full upgrade runs on top");
+    assert_eq!(checksum_of(&pool, 3).await, checksum_before);
     // The old binary's queries still work on the new schema (rollback runs it without --migrate).
     let n: i64 =
         sqlx::query_scalar("SELECT count(*) FROM issues i JOIN repositories r ON r.id = i.repo_id JOIN users u ON u.id = r.owner_id")

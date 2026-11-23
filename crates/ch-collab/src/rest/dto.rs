@@ -238,7 +238,12 @@ impl Ctx {
             assignees: issue.assignees,
             requested_reviewers: v.requested.users.iter().map(|u| self.user(u)).collect(),
             head: api_p::PullBranch {
-                label: format!("{}:{}", head_owner, v.pull.head_ref),
+                // A head repository the caller cannot read shows as its branch name only.
+                label: if v.head_repo.is_some() && head_repo.is_none() {
+                    v.pull.head_ref.clone()
+                } else {
+                    format!("{}:{}", head_owner, v.pull.head_ref)
+                },
                 git_ref: v.pull.head_ref.clone(),
                 sha: v.pull.head_sha.clone(),
                 user: user.clone(),

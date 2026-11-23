@@ -58,7 +58,8 @@ pub fn status_from_runs(runs: &[CheckRun]) -> Option<StatusView> {
 
 pub async fn commit_rows(ctx: &Ctx, rc: &RepoCtx, commits: &[CommitInfo], with_status: bool) -> Vec<CommitRow> {
     let base = rc.base();
-    let statuses: Vec<Option<StatusView>> = if with_status {
+    // Signed out shows no CI status: those records keep the audience they were made for.
+    let statuses: Vec<Option<StatusView>> = if with_status && !ctx.actor.is_anonymous() {
         let futs = commits.iter().map(|c| ctx.state.checks.check_runs_for_sha(rc.id(), &c.sha));
         futures::future::join_all(futs).await.into_iter().map(|r| r.ok().and_then(|runs| status_from_runs(&runs))).collect()
     } else {
@@ -121,11 +122,10 @@ fn is_image(name: &str) -> bool {
     [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp", ".svg"].iter().any(|e| l.ends_with(e))
 }
 
-fn signature(ctx: &Ctx, user: &ch_core::model::User) -> Signature {
-    let _ = ctx;
+pub(crate) fn signature(ctx: &Ctx, user: &ch_core::model::User) -> Signature {
     Signature {
         name: if user.display_name.is_empty() { user.username.clone() } else { user.display_name.clone() },
-        email: user.email.clone().unwrap_or_else(|| format!("{}@users.noreply.invalid", user.username)),
+        email: ch_core::noreply::noreply_email(user.id.0, &user.username, &ctx.state.config.server.external_url),
         at: chrono::Utc::now(),
     }
 }
@@ -440,7 +440,18 @@ pub async fn blob(ctx: Ctx, Path((owner, name, rest)): Path<(String, String, Str
         Err(_) => None,
     };
     let picker = BranchPicker::new(&rp, &branches, &tags, &rc.repo.default_branch, &format!("{base}/blob"), &rp.path, &base);
-    let c = rc.chrome(&ctx, &rp.path, "code").await;
+    let mut c = rc.chrome(&ctx, &rp.path, "code").await;
+    // The file page knows the file, so its workspace button opens it: on this branch, or on
+    // the default branch when the page shows a tag or a commit, which the workspace cannot edit.
+    if let Some(nav) = c.repo.as_mut()
+        && !nav.workspace.is_empty()
+    {
+        nav.workspace = if rp.kind == RefKind::Branch {
+            format!("{}?branch={}&path={}", nav.workspace, fmt::enc(&rp.name), fmt::enc_path(&rp.path))
+        } else {
+            format!("{}?path={}", nav.workspace, fmt::enc_path(&rp.path))
+        };
+    }
     ctx.page(&BlobPage {
         c,
         picker,
@@ -709,8 +720,10 @@ pub async fn commit(ctx: Ctx, Path((owner, name, sha)): Path<(String, String, St
     let base = rc.base();
     let sum = code::summarize(&diff);
     let opts = DiffOptions { file_url: Some(format!("{base}/blob/{}/{{path}}", info.sha)), ..Default::default() };
-    let runs = ctx.state.checks.check_runs_for_sha(rc.id(), &info.sha).await.unwrap_or_default();
-    let statuses = ctx.state.checks.statuses_for_sha(rc.id(), &info.sha).await.unwrap_or_default();
+    // CI records keep the audience they were made for, and signed-out Actions is not open yet.
+    let anon = ctx.actor.is_anonymous();
+    let runs = if anon { Vec::new() } else { ctx.state.checks.check_runs_for_sha(rc.id(), &info.sha).await.unwrap_or_default() };
+    let statuses = if anon { Vec::new() } else { ctx.state.checks.statuses_for_sha(rc.id(), &info.sha).await.unwrap_or_default() };
     let mut checks: Vec<CheckLine> = runs
         .iter()
         .map(|r| CheckLine {

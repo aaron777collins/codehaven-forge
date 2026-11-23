@@ -1,0 +1,145 @@
+/* The Runs panel: the toolbar, the list of runs, a run's jobs, a job's streamed log with its
+   steps, and the ANSI colours a log may use. Every colour is a page token or a color-mix over
+   the page tokens, so the ANSI colours stay readable in both themes. */
+
+.ws-runs-tools { display: flex; gap: 8px; margin-bottom: 8px; }
+
+.ws-runs .ws-note { display: flex; align-items: flex-start; gap: 8px; }
+.ws-runs .ws-note .ws-icon { flex: none; width: 14px; height: 14px; margin-top: 1px; }
+.ws-runs .ws-note div { overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------- the list of runs */
+
+.ws-runs-group { margin-bottom: 10px; }
+.ws-runs-group-title { margin: 6px 0 4px; color: var(--muted); font-size: 12px; font-weight: 500; }
+
+.ws-run-row { display: flex; align-items: center; gap: 6px; border-radius: 4px; }
+.ws-run-row:hover, .ws-run-row.ws-on { background: var(--accent-soft); }
+.ws-run-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-run-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-run-num { flex: none; color: var(--muted); }
+.ws-run-sha { flex: none; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.ws-run-actions { display: flex; gap: 4px; }
+.ws-run-btn { height: 24px; padding: 0 8px; font-size: 12px; }
+
+/* ---------------------------------------------------------------- the status mark */
+
+.ws-mark { flex: none; display: inline-flex; align-items: center; }
+.ws-mark-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.ws-dot-ok { background: var(--ok); }
+.ws-dot-danger { background: var(--danger); }
+.ws-dot-warn { background: var(--warn); animation: ws-dot-pulse 1.6s ease-in-out infinite; }
+@keyframes ws-dot-pulse { 50% { opacity: 0.4; } }
+
+/* ---------------------------------------------------------------- one run and its jobs */
+
+.ws-run-detail { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.ws-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 2px; }
+.ws-detail-state { color: var(--muted); font-size: 12px; }
+
+.ws-job-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-job-row:hover, .ws-job-row.ws-on { background: var(--accent-soft); }
+.ws-job-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-job-state { flex: none; color: var(--muted); font-size: 11px; }
+
+/* ---------------------------------------------------------------- one job's log */
+
+.ws-log { margin-top: 8px; font: 12px/1.55 var(--mono); }
+.ws-log-step { margin-bottom: 6px; border: 1px solid var(--border); border-radius: 4px; }
+.ws-log-step-head { display: flex; align-items: center; gap: 8px; padding: 5px 8px; cursor: pointer; }
+.ws-log-step-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-log-step-state { flex: none; margin-left: auto; color: var(--muted); font-size: 11px; }
+.ws-log-lines { padding: 2px 0 6px; overflow-x: auto; }
+.ws-log-line { display: flex; gap: 10px; padding: 0 8px; }
+.ws-log-num { flex: none; min-width: 4ch; text-align: right; color: var(--muted); user-select: none; }
+.ws-log-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* A path mention in a log line: a button, never a link. */
+.ws-log-jump {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- the dispatch dialog's fields */
+
+.ws-disp-fields { display: flex; flex-direction: column; gap: 8px; }
+.ws-disp-field { display: flex; flex-direction: column; gap: 4px; }
+.ws-disp-label { color: var(--muted); font-size: 12px; }
+.ws-disp-check { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+
+/* ---------------------------------------------------------------- ANSI colours over the page tokens */
+
+.ansi-bold { font-weight: 700; }
+.ansi-dim { color: var(--muted); }
+.ansi-italic { font-style: italic; }
+.ansi-underline { text-decoration: underline; }
+
+/* Black and white become the two greys of the theme; the other six take the nearest token. */
+.ansi-black { color: color-mix(in srgb, var(--muted) 50%, var(--surface) 50%); }
+.ansi-red { color: color-mix(in srgb, var(--danger) 70%, var(--surface) 30%); }
+.ansi-green { color: color-mix(in srgb, var(--ok) 70%, var(--surface) 30%); }
+.ansi-yellow { color: color-mix(in srgb, var(--warn) 70%, var(--surface) 30%); }
+.ansi-blue { color: color-mix(in srgb, var(--accent) 70%, var(--surface) 30%); }
+.ansi-magenta { color: color-mix(in srgb, var(--danger) 35%, var(--accent) 35%, var(--surface) 30%); }
+.ansi-cyan { color: color-mix(in srgb, var(--accent) 35%, var(--ok) 35%, var(--surface) 30%); }
+.ansi-white { color: var(--muted); }
+
+.ansi-bright-black { color: color-mix(in srgb, var(--muted) 70%, var(--surface) 30%); }
+.ansi-bright-red { color: var(--danger); }
+.ansi-bright-green { color: var(--ok); }
+.ansi-bright-yellow { color: var(--warn); }
+.ansi-bright-blue { color: var(--accent); }
+.ansi-bright-magenta { color: color-mix(in srgb, var(--danger) 50%, var(--accent) 50%); }
+.ansi-bright-cyan { color: color-mix(in srgb, var(--accent) 50%, var(--ok) 50%); }
+.ansi-bright-white { color: color-mix(in srgb, var(--muted) 70%, var(--border) 30%); }
+
+.ansi-bg-black { background: color-mix(in srgb, var(--muted) 18%, var(--surface) 82%); }
+.ansi-bg-red { background: color-mix(in srgb, var(--danger) 22%, var(--surface) 78%); }
+.ansi-bg-green { background: color-mix(in srgb, var(--ok) 22%, var(--surface) 78%); }
+.ansi-bg-yellow { background: color-mix(in srgb, var(--warn) 22%, var(--surface) 78%); }
+.ansi-bg-blue { background: color-mix(in srgb, var(--accent) 22%, var(--surface) 78%); }
+.ansi-bg-magenta { background: color-mix(in srgb, var(--danger) 11%, var(--accent) 11%, var(--surface) 78%); }
+.ansi-bg-cyan { background: color-mix(in srgb, var(--accent) 11%, var(--ok) 11%, var(--surface) 78%); }
+.ansi-bg-white { background: color-mix(in srgb, var(--muted) 30%, var(--surface) 70%); }
+
+/* ---------------------------------------------------------------- under 640: touch targets */
+
+@media (max-width: 639.98px) {
+  .ws-run-main, .ws-job-row { min-height: 44px; }
+  .ws-run-btn { height: 36px; min-height: 44px; min-width: 44px; }
+}

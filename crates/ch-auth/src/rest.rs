@@ -118,7 +118,52 @@ async fn patch_me(
     Ok(Json(profile_dto(&s, &me, true).await?))
 }
 
+/// Signed out, an account exists only while it owns a public repository (the gate checked, and
+/// this checks again). It shows the name and display name and nothing else.
+async fn public_owner(s: &AppState, actor: &Actor, login: &str) -> Res<Option<User>> {
+    if !actor.is_anonymous() {
+        return Ok(None);
+    }
+    let public: Option<bool> = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM users u JOIN repositories r ON r.owner_id = u.id WHERE u.username = $1::citext AND r.access_tier = 'public') \
+         AND (SELECT allow_public_repos FROM visibility_settings)",
+    )
+    .bind(login)
+    .fetch_one(&s.db)
+    .await?;
+    if public != Some(true) {
+        return Err(Error::unauthorized());
+    }
+    Ok(Some(s.accounts.get_by_username(&Actor::System, login).await.map_err(|_| Error::unauthorized())?))
+}
+
+/// The epoch, where a signed-out answer must carry a date it may not show.
+fn hidden_date() -> DateTime<Utc> {
+    DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_default()
+}
+
 async fn get_user(State(s): State<AppState>, CurrentActor(actor): CurrentActor, Path(login): Path<String>) -> Res<Json<dto::User>> {
+    if let Some(u) = public_owner(&s, &actor, &login).await? {
+        let b = base(&s);
+        return Ok(Json(dto::User {
+            login: u.username.clone(),
+            id: u.id.0,
+            avatar_url: format!("{b}/avatar/{}", u.username),
+            url: format!("{b}/api/v3/users/{}", u.username),
+            html_url: format!("{b}/{}", u.username),
+            kind: kind_name(u.kind).into(),
+            site_admin: false,
+            name: Some(u.display_name.clone()).filter(|n| !n.is_empty()),
+            email: None,
+            bio: None,
+            company: None,
+            location: None,
+            created_at: hidden_date(),
+            updated_at: hidden_date(),
+            two_factor_authentication: None,
+            suspended_at: None,
+        }));
+    }
     let u = s.accounts.get_by_username(&actor, &login).await.map_err(login_not_found)?;
     let me = actor.user_id() == Some(u.id);
     Ok(Json(profile_dto(&s, &u, me).await?))
@@ -334,6 +379,12 @@ async fn create_org(
 }
 
 async fn get_org(State(s): State<AppState>, CurrentActor(actor): CurrentActor, Path(org): Path<String>) -> Res<Json<dto::Organization>> {
+    if public_owner(&s, &actor, &org).await?.is_some() {
+        let o = s.orgs.get(&Actor::System, &org).await.map_err(|_| Error::unauthorized())?;
+        let mut d = org_dto(&s, &o);
+        d.created_at = hidden_date();
+        return Ok(Json(d));
+    }
     Ok(Json(org_dto(&s, &s.orgs.get(&actor, &org).await?)))
 }
 

@@ -109,3 +109,30 @@ async fn invites_with_org_and_team_and_the_recovery_commands(pool: PgPool) {
     let who: Vec<String> = sqlx::query_scalar("SELECT DISTINCT actor_label FROM audit_events ORDER BY 1").fetch_all(&pool).await.unwrap();
     assert_eq!(who, vec!["System (cli)"]);
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn the_public_repositories_switch_is_audited_and_off_lowers_every_public_repository(pool: PgPool) {
+    use codehaven::cli::PublicReposCommand;
+    let (state, _dir) = state(pool.clone()).await;
+    admin::run(&state, create("alice", false)).await.unwrap();
+    let alice: i64 = count(&pool, "SELECT id FROM users WHERE username = 'alice'").await;
+    sqlx::query("INSERT INTO repositories (owner_id, name, access_tier) VALUES ($1, 'a', 'internal'), ($1, 'b', 'internal')")
+        .bind(alice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    admin::run(&state, AdminCommand::PublicRepos { command: PublicReposCommand::Status }).await.unwrap();
+    admin::run(&state, AdminCommand::PublicRepos { command: PublicReposCommand::On }).await.unwrap();
+    assert_eq!(count(&pool, "SELECT count(*) FROM repositories WHERE access_tier = 'public'").await, 0, "on makes nothing public");
+    sqlx::query("UPDATE repositories SET access_tier = 'public', public_since = now() WHERE name = 'a'").execute(&pool).await.unwrap();
+    admin::run(&state, AdminCommand::PublicRepos { command: PublicReposCommand::Status }).await.unwrap();
+    admin::run(&state, AdminCommand::PublicRepos { command: PublicReposCommand::Off }).await.unwrap();
+    assert_eq!(count(&pool, "SELECT count(*) FROM repositories WHERE access_tier = 'public'").await, 0);
+    assert_eq!(count(&pool, "SELECT count(*) FROM repositories WHERE name = 'a' AND access_tier = 'internal'").await, 1);
+    assert_eq!(count(&pool, "SELECT count(*) FROM audit_events WHERE action = 'instance.public_repos_changed'").await, 2);
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM audit_events WHERE action = 'repo.visibility_changed' AND details->>'reason' IS NOT NULL").await,
+        1,
+        "each lowered repository is audited"
+    );
+}

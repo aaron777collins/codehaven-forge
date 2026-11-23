@@ -133,7 +133,7 @@ M2:
 - Branch protection storage and evaluation, protection REST endpoints.
 
 M4:
-- Forks with alternates, import from URL, `git gc` jobs.
+- Forks that copy their objects and borrow nothing, import from URL, `git gc` jobs.
 - `ch-registry`: OCI distribution, token auth, uploads, mounts, GC, passing the
   OCI conformance suite in a container on the build host.
 
@@ -408,7 +408,7 @@ admin to turn them on." on its Actions tab.
 | UI drifts toward a copy of another forge | Our own mark, palette, sidebar navigation and icons; Claude reviews screenshots against ARCHITECTURE.md section 12.3 |
 | Merging three-way conflicts in parallel branches | Disjoint directories per stream; shared files are only foundation's |
 | A stranger gets in on the public instance | No sign-up route exists; deny-by-default gate in M0 with a test over every route; invites single use and hashed; no web setup page; Argon2id, lockout, rate limits, two-factor for admins; smoke test after every deploy |
-| A new route leaks data to signed-out visitors | Routes are private unless listed in `PUBLIC_ROUTES`, which only Claude reviews changes to; `anonymous_surface.rs` fails the build |
+| A new route leaks data to signed-out visitors | Routes are private unless listed in `PUBLIC_ROUTES` or `PUBLIC_REPO_ROUTES`, which only Claude reviews changes to; `anonymous_surface.rs` fails the build |
 | Someone locks the admin out by guessing at the password | Lockout blocks only password sign-in; tokens and SSH keys keep working; `admin unlock` on the host |
 | An invited friend's CI job attacks the host | `can_run_ci` off by default; jobs in the separate `dind` daemon with limits; `container.options` restricted to a safe list (ARCHITECTURE.md section 2.5) |
 | The proxy edit breaks other sites | Backup, `diff` showing only this instance's block, config validation before a graceful reload, other sites checked after, one-step rollback |

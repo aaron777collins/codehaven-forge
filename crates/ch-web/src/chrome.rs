@@ -31,6 +31,9 @@ pub struct RepoNav {
     pub base: String,
     pub description: String,
     pub private: bool,
+    /// The chip: `Private`, `Internal` or `Public`, and its explanation.
+    pub tier: &'static str,
+    pub tier_title: &'static str,
     pub archived: bool,
     pub is_empty: bool,
     pub default_branch: String,
@@ -40,6 +43,9 @@ pub struct RepoNav {
     pub can_admin: bool,
     pub can_maintain: bool,
     pub can_triage: bool,
+    /// The workspace URL for the header's "Open workspace" button, or empty when the button
+    /// must not show (signed out, a public read, or the editor off).
+    pub workspace: String,
 }
 
 impl RepoNav {
@@ -50,6 +56,8 @@ impl RepoNav {
             base: format!("/{}/{}", crate::fmt::enc(&repo.owner_name), crate::fmt::enc(&repo.name)),
             description: repo.description.clone(),
             private: repo.visibility == ch_core::model::Visibility::Private,
+            tier: crate::views::visibility::chip(repo.visibility).0,
+            tier_title: crate::views::visibility::chip(repo.visibility).1,
             archived: repo.archived,
             is_empty: repo.is_empty,
             default_branch: repo.default_branch.clone(),
@@ -58,6 +66,7 @@ impl RepoNav {
             can_admin: perm.allows(Permission::Admin),
             can_maintain: perm.allows(Permission::Maintain),
             can_triage: perm.allows(Permission::Triage) && !repo.archived,
+            workspace: String::new(),
         }
     }
 }
@@ -83,6 +92,8 @@ pub struct Chrome {
     pub nav: String,
     /// A line shown above the page, such as "turn on two-factor".
     pub banner: Option<String>,
+    /// A signed-out visitor reading a public repository: show the sign-in prompt, no forms.
+    pub signed_out_reader: bool,
 }
 
 impl Chrome {

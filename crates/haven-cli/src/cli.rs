@@ -96,8 +96,11 @@ pub struct RepoCreateArgs {
     pub name: String,
     #[arg(long, short)]
     pub description: Option<String>,
-    /// Let every signed-in account on this instance read it. Repositories are private by
-    /// default. Nothing here is readable without signing in.
+    /// Let everyone signed in to this server read it. They can also open issues, comment and
+    /// send pull requests unless the owner limits that. Repositories are private by default.
+    #[arg(long, conflicts_with = "public")]
+    pub internal: bool,
+    /// Not available here: make a repository public in the browser, after checking its history.
     #[arg(long)]
     pub public: bool,
     /// Create a first commit with an empty README.

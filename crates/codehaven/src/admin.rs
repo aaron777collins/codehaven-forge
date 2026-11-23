@@ -2,7 +2,7 @@
 //! `Actor::System`, so every one writes its audit event through the trait ("System (cli)").
 //! The password never passes through a shell: the default is a one-time link.
 
-use crate::cli::{AdminCommand, CreateUser, InviteCommand, parse_expiry};
+use crate::cli::{AdminCommand, CreateUser, InviteCommand, PublicReposCommand, parse_expiry};
 use anyhow::{Context, Result, bail};
 use ch_core::identity::UserListFilter;
 use ch_core::model::*;
@@ -159,6 +159,32 @@ pub async fn run(state: &AppState, command: AdminCommand) -> Result<()> {
                 println!("{:>5}  {:<24} {:<32} {}", u.id, u.username, u.email.as_deref().unwrap_or("-"), flags.join(","));
             }
         }
+        AdminCommand::PublicRepos { command } => match command {
+            PublicReposCommand::Status => {
+                let on = state.repos.public_repos_allowed().await.map_err(describe)?;
+                println!("Public repositories are {}.", if on { "allowed" } else { "off" });
+                if on {
+                    let public = state.repos.list_accessible(&Actor::Anonymous, 1, 100).await.map_err(describe)?;
+                    if public.is_empty() {
+                        println!("No repository is public.");
+                    }
+                    for r in public {
+                        println!("public  {}", r.full_name());
+                    }
+                }
+            }
+            PublicReposCommand::On => {
+                state.repos.set_public_repos_allowed(&sys, true, &cli_client).await.map_err(describe)?;
+                println!("Public repositories are allowed. No repository was made public: an owner does that in the browser.");
+            }
+            PublicReposCommand::Off => {
+                let n = state.repos.set_public_repos_allowed(&sys, false, &cli_client).await.map_err(describe)?;
+                println!(
+                    "Public repositories are off. {n} public {} internal now.",
+                    if n == 1 { "repository is" } else { "repositories are" }
+                );
+            }
+        },
         AdminCommand::Suspend { username } => {
             let user = state.accounts.get_by_username(&sys, &username).await.map_err(describe)?;
             state.accounts.suspend(&sys, user.id, &cli_client).await.map_err(describe)?;

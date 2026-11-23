@@ -26,6 +26,8 @@ pub mod repo;
 pub mod repo_common;
 pub mod repo_settings;
 pub mod settings;
+pub mod visibility;
+pub mod workspace;
 
 /// A label as the templates draw it.
 #[derive(Debug, Clone, Default)]

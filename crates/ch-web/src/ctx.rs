@@ -37,6 +37,12 @@ pub struct Ctx {
     /// The token the request guard in front of the router expects for this request. Empty when
     /// there is no guard (the demo and the page tests), and then `csrf_token` makes its own.
     pub guard_csrf: String,
+    /// A signed-out visitor the gate admitted to a public repository's page. Such a page sets no
+    /// cookie and renders no form or CSRF token.
+    pub public_read: bool,
+    /// What signed this request in, with no secret, for streams that check again while open.
+    /// `None` outside the gate.
+    pub credential: Option<ch_core::live::Credential>,
 }
 
 impl FromRequestParts<AppState> for Ctx {
@@ -70,6 +76,8 @@ impl FromRequestParts<AppState> for Ctx {
             origin: hdr("origin"),
             referer: hdr("referer"),
             guard_csrf: parts.extensions.get::<ch_core::identity::CsrfToken>().map(|t| t.0.clone()).unwrap_or_default(),
+            public_read: parts.extensions.get::<ch_core::access::PublicRead>().is_some(),
+            credential: parts.extensions.get::<ch_core::live::Credential>().cloned(),
         })
     }
 }
@@ -196,7 +204,8 @@ impl Ctx {
     pub async fn chrome(&self, title: &str) -> Chrome {
         let instance = self.state.config.server.name.clone();
         let mut c = Chrome::base(title, &instance, &self.theme());
-        c.csrf = self.csrf_token();
+        c.csrf = if self.public_read { String::new() } else { self.csrf_token() };
+        c.signed_out_reader = self.public_read;
         c.flash = self.read_flash();
         if let Actor::User { id, is_admin, has_2fa, .. } = &self.actor {
             let user = self.state.accounts.get_user(*id).await.ok();

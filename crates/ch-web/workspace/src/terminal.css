@@ -1,0 +1,106 @@
+/* The terminal panel: under the editor on wider screens, a pane of its own on a phone. The
+   warning line sits outside the frame, so nothing the shell prints can cover it. */
+
+.ws-term {
+  position: relative;
+  flex: none;
+  height: 280px;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+.ws-term-grip {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+  z-index: 2;
+}
+.ws-term-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 2px 8px 2px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ws-term-title { margin: 0; font-size: 13px; }
+.ws-term-state { color: var(--muted); font-size: 12px; }
+.ws-term-box { position: relative; flex: 1; min-height: 96px; }
+.ws-term-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: var(--surface); }
+.ws-term-fail { padding: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.ws-term-warn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 12px;
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+  background: var(--warn-soft);
+  color: var(--ws-warn-text);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.ws-term-tray {
+  flex: none;
+  max-height: 45%;
+  overflow: auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.ws-term-tray-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ws-term-tray-title { margin: 0; font-size: 13px; }
+.ws-term-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.ws-term-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+.ws-term-row:hover { background: var(--surface-2); }
+.ws-term-row input[disabled] { cursor: not-allowed; }
+.ws-term-row-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.ws-term-refused .ws-term-row-main { color: var(--muted); }
+.ws-term-refused { flex-wrap: wrap; }
+.ws-term-chip {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--ws-warn-text);
+  font-size: 11px;
+}
+.ws-term-tray-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+
+.ws-commit-terminal { display: flex; flex-direction: column; gap: 6px; }
+.ws-commit-term-file summary { cursor: pointer; }
+.ws-commit-diff { height: auto; max-height: 220px; overflow: auto; font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Between a phone and the full layout the panel is a little shorter. */
+@media (min-width: 640px) and (max-width: 1023.98px) {
+  .ws-term { height: 240px; }
+}
+
+@media (max-width: 639.98px) {
+  .ws-term-toggle { display: none; }
+  .ws-app[data-pane="terminal"] .ws-center { display: flex; }
+  .ws-app[data-pane="terminal"] .ws-center > :not(.ws-term) { display: none; }
+  .ws-app[data-pane="terminal"] .ws-term { flex: 1; height: auto !important; border-top: 0; }
+  .ws-app:not([data-pane="terminal"]) .ws-term { display: none; }
+  .ws-term-grip { display: none; }
+  .ws-term-head { flex-wrap: wrap; }
+  .ws-term-row { min-height: 44px; }
+  .ws-term-row input { width: 22px; height: 22px; }
+  .ws-term-warn { padding-bottom: 6px; }
+}

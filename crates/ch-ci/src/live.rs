@@ -8,15 +8,17 @@
 use crate::ctx::Ctx;
 use crate::logs::read_range;
 use crate::shared::LogMsg;
+use axum::Extension;
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use ch_core::access::CurrentActor;
+use ch_core::live::{Credential, LiveAuth, guarded};
 use ch_core::state::AppState;
-use ch_core::{Error, Permission, Result};
-use futures::Stream;
+use ch_core::{Error, JobId, Permission, Result, RunId};
 use std::collections::VecDeque;
-use std::convert::Infallible;
+use std::sync::Arc;
 use tokio::sync::broadcast::{self, error::RecvError};
 
 #[derive(serde::Deserialize, Default)]
@@ -72,12 +74,15 @@ impl St {
 pub async fn stream_logs(
     State(state): State<AppState>,
     CurrentActor(actor): CurrentActor,
+    credential: Option<Extension<Credential>>,
     Path((owner, name, id)): Path<(String, String, i64)>,
     Query(q): Query<FromQuery>,
     headers: HeaderMap,
-) -> Result<Sse<impl Stream<Item = std::result::Result<Event, Infallible>>>> {
+) -> Result<Response> {
     let repo = state.repos.get_by_name(&actor, &owner, &name).await?;
     state.authz.require(&actor, repo.id, Permission::Read).await?;
+    // Checked again every second while open, so the stream ends soon after access does.
+    let Some(Extension(credential)) = credential else { return Err(Error::NotFound) };
     let ctx = Ctx::from_state(&state);
     let row: Option<(i64, i64)> =
         sqlx::query_as("SELECT run_id, repo_id FROM workflow_jobs WHERE id = $1").bind(id).fetch_optional(&ctx.db).await?;
@@ -88,6 +93,7 @@ pub async fn stream_logs(
     let from = headers.get("last-event-id").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok()).or(q.from).unwrap_or(0);
     // Subscribe before reading the file, so a line written in between is not lost.
     let rx = ctx.shared.hub.subscribe(id);
+    let live = Arc::new(LiveAuth::new(state.clone(), credential, repo.id).job(RunId(run), JobId(id)));
     let st = St { ctx, run, job: id, cursor: from, rx, queue: VecDeque::new(), first: true, finished: false };
     let stream = futures::stream::unfold(st, |mut st| async move {
         loop {
@@ -121,5 +127,8 @@ pub async fn stream_logs(
             }
         }
     });
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    let mut r = Sse::new(guarded(live, stream)).keep_alive(KeepAlive::default()).into_response();
+    r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    r.headers_mut().insert("x-accel-buffering", HeaderValue::from_static("no"));
+    Ok(r)
 }

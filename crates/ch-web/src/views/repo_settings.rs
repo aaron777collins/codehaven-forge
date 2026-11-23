@@ -233,6 +233,20 @@ struct GeneralPage {
     c: Chrome,
     base: String,
     branches: Vec<BranchOption>,
+    /// `private`, `internal` or `public`.
+    tier: &'static str,
+    /// The parent's tier for a fork, which caps the choices; `public` otherwise.
+    parent_tier: &'static str,
+    switch_on: bool,
+    /// The account owner (or an org owner, or a site admin): the only one who may publish or
+    /// change who can contribute.
+    is_owner: bool,
+    /// `everyone` or `grants`.
+    policy: &'static str,
+    text_private: &'static str,
+    text_internal: &'static str,
+    text_public: &'static str,
+    confirm_internal: &'static str,
     description: String,
     topics: String,
     can_admin: bool,
@@ -245,6 +259,17 @@ struct GeneralPage {
     transfer_confirm: String,
     delete_confirm: String,
     errors: FieldErrors,
+}
+
+/// The tier a fork may reach: its parent's. Anything else may reach public.
+async fn parent_tier(ctx: &Ctx, rc: &RepoCtx) -> &'static str {
+    match rc.repo.fork_parent_id {
+        Some(p) => match ctx.state.repos.get(&ch_core::Actor::System, p).await {
+            Ok(parent) => parent.visibility.as_str(),
+            Err(_) => "private",
+        },
+        None => "public",
+    }
 }
 
 async fn general_page(ctx: &Ctx, rc: &RepoCtx, input: GeneralInput, errors: FieldErrors, status: StatusCode) -> WebResult<Response> {
@@ -260,6 +285,15 @@ async fn general_page(ctx: &Ctx, rc: &RepoCtx, input: GeneralInput, errors: Fiel
         branches,
         can_admin: rc.perm.allows(Permission::Admin),
         is_private: rc.repo.visibility == Visibility::Private,
+        tier: rc.repo.visibility.as_str(),
+        parent_tier: parent_tier(ctx, rc).await,
+        switch_on: ctx.state.repos.public_repos_allowed().await.unwrap_or(false),
+        is_owner: super::visibility::is_owner_for_page(ctx, rc).await,
+        policy: rc.repo.contribution_policy.as_str(),
+        text_private: super::visibility::TEXT_PRIVATE,
+        text_internal: super::visibility::TEXT_INTERNAL,
+        text_public: super::visibility::TEXT_PUBLIC,
+        confirm_internal: super::visibility::CONFIRM_INTERNAL,
         archived: rc.repo.archived,
         repo_name: rc.repo.name.clone(),
         full_name: rc.repo.full_name(),
@@ -315,24 +349,6 @@ pub async fn general_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>,
             None => Err(e.into()),
         },
     }
-}
-
-pub async fn visibility_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, form: FormData) -> WebResult<Response> {
-    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
-    rc.require(Permission::Admin)?;
-    let visibility = match form.get("value") {
-        "private" => Visibility::Private,
-        "public" => Visibility::Public,
-        _ => return Err(WebError::bad("Use the visibility buttons on the settings page.")),
-    };
-    let update = RepoUpdate { visibility: Some(visibility), ..Default::default() };
-    ctx.state.repos.update(&ctx.actor, rc.id(), update, &ctx.client).await?;
-    let text = if visibility == Visibility::Private {
-        "This repository is private now. Only people with access can see it."
-    } else {
-        "This repository is public now. Every account on this server can read it."
-    };
-    Ok(ctx.redirect_flash(&format!("{}/settings", rc.base()), "ok", text))
 }
 
 pub async fn archive_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, form: FormData) -> WebResult<Response> {
@@ -903,7 +919,7 @@ mod tests {
 
 // ROUTES:
 // GET+POST /{owner}/{repo}/settings -> general_get, general_post
-// POST /{owner}/{repo}/settings/visibility -> visibility_post
+// GET+POST /{owner}/{repo}/settings/visibility and POST .../settings/contributions -> views::visibility
 // POST /{owner}/{repo}/settings/archive -> archive_post
 // POST /{owner}/{repo}/settings/rename -> rename_post
 // POST /{owner}/{repo}/settings/transfer -> transfer_post

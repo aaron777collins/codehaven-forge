@@ -248,6 +248,68 @@ async fn a_private_repo_is_a_404_for_someone_who_cannot_read_it() {
     assert_eq!(r.status, StatusCode::OK);
 }
 
+#[tokio::test]
+async fn repository_pages_link_to_the_workspace() {
+    // The demo has the editor on, so every repository page offers the workspace button.
+    let r = get("/ada/lighthouse").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("data-workspace-link"), "the header button is missing");
+    assert!(r.body.contains("href=\"/ada/lighthouse/workspace\""));
+
+    // The file page knows the branch and the file, so its button opens that file. The `&` of
+    // the query is escaped in the attribute, as on every other link.
+    let r = get("/ada/lighthouse/blob/main/src/beam.rs").await;
+    assert_eq!(r.status, StatusCode::OK);
+    let at = r.body.find("data-workspace-link").expect("the button");
+    let tag = &r.body[r.body[..at].rfind("<a ").unwrap()..at];
+    assert!(tag.contains("/ada/lighthouse/workspace?branch=main"), "{tag}");
+    assert!(tag.contains("beam.rs"), "{tag}");
+
+    // No signed-out check: the demo gate sends every anonymous page request to the sign-in
+    // page, so no repository is ever read signed out here.
+}
+
+/// The opening `<a ...` tag of the workspace button, up to the `data-workspace-link` attribute.
+fn workspace_tag(body: &str) -> String {
+    let at = body.find("data-workspace-link").expect("the button");
+    body[body[..at].rfind("<a ").unwrap()..at].to_string()
+}
+
+#[tokio::test]
+async fn a_file_page_at_a_tag_opens_the_workspace_on_the_default_branch() {
+    // v0.2.0 is a tag, not a branch, so the button cannot ask the workspace for it. It still
+    // opens the same file, on the default branch.
+    let r = get("/ada/lighthouse/blob/v0.2.0/src/beam.rs").await;
+    assert_eq!(r.status, StatusCode::OK);
+    let tag = workspace_tag(&r.body);
+    assert!(!tag.contains("branch="), "{tag}");
+    assert!(tag.contains("/ada/lighthouse/workspace?path="), "{tag}");
+    assert!(tag.contains("beam.rs"), "{tag}");
+}
+
+#[tokio::test]
+async fn an_open_pull_request_opens_the_workspace_on_its_branch() {
+    // Pull 14 is open and comes from a branch of this repository, so every tab of it opens
+    // the workspace on that branch. The slash of `feature/signal-colours` is percent-encoded.
+    for p in [
+        "/ada/lighthouse/pulls/14",
+        "/ada/lighthouse/pulls/14/commits",
+        "/ada/lighthouse/pulls/14/checks",
+        "/ada/lighthouse/pulls/14/files",
+    ] {
+        let r = get(p).await;
+        assert_eq!(r.status, StatusCode::OK, "{p}");
+        let tag = workspace_tag(&r.body);
+        assert!(tag.contains("/ada/lighthouse/workspace?branch=feature%2Fsignal-colours"), "{p}: {tag}");
+    }
+
+    // Pull 7 is merged, so its head branch may be gone; it keeps the plain button.
+    let r = get("/ada/lighthouse/pulls/7").await;
+    assert_eq!(r.status, StatusCode::OK);
+    let tag = workspace_tag(&r.body);
+    assert!(!tag.contains("branch="), "{tag}");
+}
+
 // ------------------------------------------------------------------ signed out
 
 #[tokio::test]
@@ -743,7 +805,7 @@ async fn sidebar_marks_the_current_section_and_hides_settings_from_readers() {
 #[tokio::test]
 async fn an_admin_without_two_factor_is_told_to_turn_it_on() {
     let cookie = format!("ch_session={ADMIN_NO_2FA_COOKIE}");
-    for p in ["/admin", "/admin/invites", "/admin/users", "/admin/runners", "/admin/audit"] {
+    for p in ["/admin", "/admin/invites", "/admin/users", "/admin/runners", "/admin/audit", "/admin/workspace"] {
         let r = get_as(&cookie, p).await;
         assert_eq!(r.status, StatusCode::FORBIDDEN, "{p}");
         assert!(r.body.contains("two-factor"), "{p}");
@@ -859,4 +921,99 @@ async fn release_assets_are_listed_and_download() {
     assert_eq!(get("/ada/lighthouse/releases/download/v0.2.0/nothing.bin").await.status, StatusCode::NOT_FOUND);
     let anon = send(&app(), Method::GET, "/ada/lighthouse/releases/download/v0.2.0/lighthouse-0.2.0-linux.tar.gz", None, None, None).await;
     assert!(anon.status == StatusCode::SEE_OTHER || anon.status == StatusCode::UNAUTHORIZED, "{}", anon.status);
+}
+
+// ------------------------------------------------------------------ visibility tiers
+
+#[tokio::test]
+async fn settings_show_three_visibility_choices() {
+    let r = get("/ada/lighthouse/settings").await;
+    assert_eq!(r.status, StatusCode::OK);
+    for needle in [
+        "value=\"private\"",
+        "value=\"internal\"",
+        "value=\"public\"",
+        "Anyone signed in to this Codehaven can read it.",
+        "Anyone on the internet can read it without an account.",
+        "Who can open issues, comment and send pull requests",
+        "Everyone signed in who can read it",
+        "Only people with access",
+        "This also covers reactions and reviews.",
+    ] {
+        assert!(r.body.contains(needle), "missing {needle}");
+    }
+    // The demo lighthouse is internal, so exactly that radio is checked.
+    assert!(r.body.contains("name=\"value\" value=\"internal\" checked"), "the current tier is checked");
+    assert!(!r.body.contains("name=\"value\" value=\"private\" checked"));
+    assert!(!r.body.contains("name=\"value\" value=\"public\" checked"));
+}
+
+#[tokio::test]
+async fn publish_page_lists_what_becomes_public() {
+    let r = get("/ada/lighthouse/settings/visibility").await;
+    assert_eq!(r.status, StatusCode::OK);
+    for needle in [
+        "Make ada/lighthouse public",
+        "Anyone on the internet will be able to read and copy this repository without an account.",
+        "I have checked the code and its history for secrets and personal information.",
+        "name=\"snapshot\" value=\"demo-snapshot\"",
+        "from other people",
+    ] {
+        assert!(r.body.contains(needle), "missing {needle}");
+    }
+    assert!(r.body.contains("<span class=\"chip\">lighthouse</span>"), "the linked package is a chip: {}", r.body);
+}
+
+#[tokio::test]
+async fn publish_refuses_a_wrong_name_or_no_box() {
+    let r =
+        post("/ada/lighthouse/settings/visibility", &[("value", "public"), ("confirm", "ada/wrong"), ("snapshot", "demo-snapshot")]).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(r.body.contains("Type ada/lighthouse to confirm."));
+    assert!(r.body.contains("Tick the box once you have checked."));
+    let r = post(
+        "/ada/lighthouse/settings/visibility",
+        &[("value", "public"), ("confirm", "ada/lighthouse"), ("checked_history", "1"), ("snapshot", "stale")],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(r.body.contains("The repository changed since this page was loaded."));
+}
+
+#[tokio::test]
+async fn admin_settings_page() {
+    let r = get("/admin/settings").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("Allow public repositories"));
+    assert!(r.body.contains("Turning this on does not make any repository public."));
+    let bob = get_as(&format!("ch_session={BOB_COOKIE}"), "/admin/settings").await;
+    assert_eq!(bob.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn admin_workspace_page() {
+    let r = get("/admin/workspace").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("Code editor in the browser"));
+    assert!(r.body.contains("Turn the editor off"), "the demo has the editor on");
+    assert!(r.body.contains("href=\"/admin/workspace\""), "the admin menu links it");
+    let bob = get_as(&format!("ch_session={BOB_COOKIE}"), "/admin/workspace").await;
+    assert_eq!(bob.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn new_repo_offers_three_choices() {
+    let r = get("/new").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("value=\"internal\""));
+    assert!(r.body.contains("A public repository is created private first"));
+}
+
+#[tokio::test]
+async fn chips_name_the_tier() {
+    let r = get("/ada/lighthouse").await;
+    assert_eq!(r.status, StatusCode::OK);
+    // The demo lighthouse is internal, so the chip explains that tier.
+    assert!(r.body.contains("title=\"Anyone signed in to this Codehaven can read it."));
+    assert!(!r.body.contains("Every account on this server can read it. Nobody else can."));
 }

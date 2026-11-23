@@ -9,7 +9,7 @@ use crate::command::{GitCommand, GitError, Output};
 use crate::hooks::PushRegistry;
 use crate::store::Store;
 use ch_core::audit::{AuditEvent, Outcome};
-use ch_core::model::{BranchProtection, ClientInfo, Repo, Visibility};
+use ch_core::model::{BranchProtection, ClientInfo, ContributionPolicy, Repo, Visibility};
 use ch_core::services::{Audit, Authz, EventBus};
 use ch_core::{Actor, Config, Error, Permission, RepoId, Result, UserId};
 use chrono::{DateTime, Utc};
@@ -48,6 +48,10 @@ pub struct GitCore {
     pub(crate) procs: Semaphore,
     pub(crate) pushed: crate::maintenance::Pushed,
     pub(crate) diff_cache: moka::future::Cache<(i64, String, String), Arc<ch_core::model::Diff>>,
+    /// Running writes per repository, so a store rebuild can wait for them and keep new ones out.
+    pub(crate) writes: crate::tier::WriteGate,
+    /// This core, for work that must finish even if the request that started it is dropped.
+    pub(crate) me: std::sync::Weak<GitCore>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -57,7 +61,8 @@ pub(crate) struct RepoRow {
     pub owner_name: String,
     pub name: String,
     pub description: String,
-    pub visibility: String,
+    pub access_tier: String,
+    pub contribution_policy: String,
     pub default_branch: String,
     pub archived: bool,
     pub is_empty: bool,
@@ -68,7 +73,7 @@ pub(crate) struct RepoRow {
 }
 
 pub(crate) const REPO_SELECT: &str = "SELECT r.id, r.owner_id, u.username::text AS owner_name, r.name::text AS name, \
-     r.description, r.visibility, r.default_branch, r.archived, r.is_empty, r.fork_parent_id, \
+     r.description, r.access_tier, r.contribution_policy, r.default_branch, r.archived, r.is_empty, r.fork_parent_id, \
      r.topics, r.pushed_at, r.created_at \
      FROM repositories r JOIN users u ON u.id = r.owner_id";
 
@@ -80,7 +85,8 @@ impl RepoRow {
             owner_name: self.owner_name,
             name: self.name,
             description: self.description,
-            visibility: if self.visibility == "public" { Visibility::Public } else { Visibility::Private },
+            // The column has a CHECK on these three. Anything else reads as private, never wider.
+            visibility: Visibility::parse(&self.access_tier).unwrap_or(Visibility::Private),
             default_branch: self.default_branch,
             archived: self.archived,
             is_empty: self.is_empty,
@@ -88,6 +94,7 @@ impl RepoRow {
             topics: self.topics,
             pushed_at: self.pushed_at,
             created_at: self.created_at,
+            contribution_policy: ContributionPolicy::parse(&self.contribution_policy).unwrap_or(ContributionPolicy::Grants),
         }
     }
 }
@@ -206,19 +213,18 @@ impl GitCore {
     }
 
     /// The identity to put on commits the server makes for a user (the README at creation,
-    /// web edits, merges): their display name and primary email, or a noreply address.
+    /// web edits, merges): their display name and their noreply address. Account emails
+    /// never go into history.
     pub(crate) async fn commit_identity(&self, user: UserId) -> Result<(String, String)> {
-        let row: Option<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT u.username::text, u.display_name, (SELECT e.email::text FROM user_emails e WHERE e.user_id = u.id ORDER BY e.is_primary DESC, e.id LIMIT 1) \
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT u.username::text, u.display_name \
              FROM users u WHERE u.id = $1",
         )
         .bind(user.0)
         .fetch_optional(&self.db)
         .await?;
-        let (username, display, email) = row.ok_or(Error::NotFound)?;
-        let host = self.cfg.external_url_parts().map(|u| u.host).unwrap_or_else(|_| "codehaven.invalid".into());
-        let host = host.split(':').next().unwrap_or("codehaven.invalid").to_string();
+        let (username, display) = row.ok_or(Error::NotFound)?;
         let name = if display.trim().is_empty() { username.clone() } else { display };
-        Ok((name, email.unwrap_or_else(|| format!("{username}@users.noreply.{host}"))))
+        Ok((name, ch_core::noreply::noreply_email(user.0, &username, &self.cfg.server.external_url)))
     }
 }

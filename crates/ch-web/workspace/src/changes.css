@@ -1,0 +1,159 @@
+/* The Changes view and the commit dialog (spec section 10). Only the page's own colour
+   tokens are used, with soft mixes built from them, so both themes work unchanged. */
+
+.ws-changes { display: flex; flex-direction: column; gap: 8px; }
+.ws-changes > .ws-hint, .ws-changes > .ws-note { margin: 0; }
+
+/* ---------------------------------------------------------------- the last commit */
+
+.ws-commit-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--ok) 35%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ok) 8%, var(--surface));
+}
+.ws-commit-note-text { margin: 0; color: var(--ok); font-weight: 600; }
+.ws-commit-note a.ws-btn { text-decoration: none; }
+.ws-commit-note .ws-hint { margin: 0; flex-basis: 100%; }
+
+/* ---------------------------------------------------------------- conflicts */
+
+.ws-conflicts { display: flex; flex-direction: column; gap: 4px; }
+.ws-conflicts .ws-note { margin: 0; }
+.ws-conflict { display: flex; flex-direction: column; gap: 4px; }
+.ws-conflict-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.ws-conflict-main .ws-path { flex: 1; min-width: 16ch; }
+.ws-conflict-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--warn-soft);
+}
+.ws-conflict-edit .ws-hint { margin: 0; }
+.ws-conflict-text {
+  width: 100%;
+  min-height: 160px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+  font: 12px/1.5 var(--mono);
+  resize: vertical;
+}
+.ws-conflicts-actions { display: flex; flex-wrap: wrap; margin-top: 4px; }
+
+/* ---------------------------------------------------------------- the list of changes */
+
+.ws-changes-list { display: flex; flex-direction: column; }
+.ws-changes-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 0;
+  border-radius: 6px;
+}
+.ws-changes-row:hover, .ws-changes-row:focus-within { background: var(--accent-soft); }
+.ws-changes-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-changes-path { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.ws-changes-letter {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  font: 600 11px var(--mono);
+}
+.ws-letter-a { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.ws-letter-m { color: color-mix(in srgb, var(--accent) 78%, var(--text)); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.ws-letter-r { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.ws-letter-d { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.ws-changes-chip {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--ws-warn-text);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.ws-changes-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ---------------------------------------------------------------- commit on save */
+
+.ws-autocommit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.ws-autocommit .ws-hint { margin: 0; }
+.ws-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* ---------------------------------------------------------------- the commit dialog */
+
+.ws-commit-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 8px;
+  border-left: 2px solid var(--border);
+}
+.ws-commit-path { color: var(--muted); font: 12px var(--mono); overflow-wrap: anywhere; }
+.ws-commit-msg {
+  width: 100%;
+  min-height: 64px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+.ws-commit-where { display: flex; flex-direction: column; gap: 6px; }
+.ws-radio { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; cursor: pointer; }
+.ws-radio input { margin: 0; }
+.ws-radio .ws-hint { margin: 0; }
+.ws-commit-new { display: flex; flex-direction: column; gap: 4px; padding-left: 20px; }
+.ws-commit-new .ws-error { margin: 0; }
+.ws-commit-workflow { display: flex; flex-direction: column; gap: 6px; }
+.ws-commit-workflow .ws-note { margin: 0; }
+.ws-commit-runs { display: flex; flex-direction: column; gap: 2px; }
+.ws-commit-runs .ws-hint { margin: 0; }
+
+/* ---------------------------------------------------------------- phones: 44px tap areas */
+
+@media (max-width: 639.98px) {
+  .ws-changes-main { min-height: 44px; }
+  /* A checkbox or radio is tapped through its whole label row. */
+  .ws-check, .ws-radio { min-height: 44px; }
+}

@@ -65,6 +65,22 @@ pub enum AdminCommand {
     Unsuspend { username: String },
     /// List accounts, newest last.
     Users,
+    /// Whether repositories may be public (readable by anyone without an account). `off`
+    /// lowers every public repository to internal at once; `on` makes none public.
+    PublicRepos {
+        #[command(subcommand)]
+        command: PublicReposCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PublicReposCommand {
+    /// Say whether public repositories are allowed and list the public ones.
+    Status,
+    /// Allow public repositories. No repository becomes public by this.
+    On,
+    /// Turn public repositories off. Every public repository becomes internal.
+    Off,
 }
 
 #[derive(Args, Debug)]

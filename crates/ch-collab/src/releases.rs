@@ -195,7 +195,7 @@ impl Core {
     }
 
     pub async fn release_views(&self, actor: &Actor, repo: RepoId) -> Result<Vec<ReleaseView>> {
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_view(actor, repo).await?;
         let sql = format!(
             "SELECT {REL_COLS} FROM releases WHERE repo_id = $1 AND ($2 OR NOT draft) ORDER BY COALESCE(published_at, created_at) DESC, id DESC"
         );
@@ -204,7 +204,7 @@ impl Core {
     }
 
     pub async fn release_view(&self, actor: &Actor, repo: RepoId, id: ReleaseId) -> Result<ReleaseView> {
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_view(actor, repo).await?;
         let row = self.release_row(repo, id).await?;
         if row.draft && !Self::can_see_drafts(perm) {
             return Err(Error::NotFound);
@@ -213,7 +213,7 @@ impl Core {
     }
 
     pub async fn release_view_by_tag(&self, actor: &Actor, repo: RepoId, tag: &str) -> Result<ReleaseView> {
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_view(actor, repo).await?;
         let row = self.release_by_tag_row(repo, tag).await?;
         if row.draft && !Self::can_see_drafts(perm) {
             return Err(Error::NotFound);
@@ -222,7 +222,7 @@ impl Core {
     }
 
     pub async fn release_latest_view(&self, actor: &Actor, repo: RepoId) -> Result<ReleaseView> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let sql = format!(
             "SELECT {REL_COLS} FROM releases WHERE repo_id = $1 AND NOT draft AND NOT prerelease ORDER BY published_at DESC, id DESC LIMIT 1"
         );
@@ -486,7 +486,7 @@ impl Core {
     }
 
     pub async fn release_asset(&self, actor: &Actor, repo: RepoId, asset: i64) -> Result<AssetInfo> {
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_view(actor, repo).await?;
         let (a, r) = self.asset_row(repo, asset).await?;
         if r.draft && !Self::can_see_drafts(perm) {
             return Err(Error::NotFound);
@@ -589,7 +589,7 @@ impl Core {
         tag: &str,
         name: &str,
     ) -> Result<(AssetInfo, BoxStream<'static, std::io::Result<Bytes>>)> {
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_view(actor, repo).await?;
         let r = self.release_by_tag_row(repo, tag).await?;
         if r.draft && !Self::can_see_drafts(perm) {
             return Err(Error::NotFound);
@@ -609,7 +609,7 @@ impl Core {
         repo: RepoId,
         asset: i64,
     ) -> Result<(AssetInfo, BoxStream<'static, std::io::Result<Bytes>>)> {
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_view(actor, repo).await?;
         let (a, r) = self.asset_row(repo, asset).await?;
         if r.draft && !Self::can_see_drafts(perm) {
             return Err(Error::NotFound);

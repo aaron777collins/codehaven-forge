@@ -244,6 +244,65 @@ pub fn to_lines(text: &str) -> Vec<String> {
     lines.into_iter().map(|l| line_html(l, &mut style)).collect()
 }
 
+/// One text span of a log line and its classes, from a fixed list. For pages that build the
+/// log with text nodes and never take HTML (the browser workspace).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Span {
+    pub t: String,
+    pub c: Vec<&'static str>,
+}
+
+const FG: [&str; 8] = ["ansi-black", "ansi-red", "ansi-green", "ansi-yellow", "ansi-blue", "ansi-magenta", "ansi-cyan", "ansi-white"];
+const FG_BRIGHT: [&str; 8] = [
+    "ansi-bright-black",
+    "ansi-bright-red",
+    "ansi-bright-green",
+    "ansi-bright-yellow",
+    "ansi-bright-blue",
+    "ansi-bright-magenta",
+    "ansi-bright-cyan",
+    "ansi-bright-white",
+];
+const BG: [&str; 8] =
+    ["ansi-bg-black", "ansi-bg-red", "ansi-bg-green", "ansi-bg-yellow", "ansi-bg-blue", "ansi-bg-magenta", "ansi-bg-cyan", "ansi-bg-white"];
+
+fn span_classes(st: &Style) -> Vec<&'static str> {
+    let mut v = Vec::new();
+    match st.fg {
+        Some(f @ 0..=7) => v.push(FG[f as usize]),
+        Some(f @ 8..=15) => v.push(FG_BRIGHT[(f - 8) as usize]),
+        _ => {}
+    }
+    match st.bg {
+        Some(b @ 0..=7) => v.push(BG[b as usize]),
+        Some(b @ 8..=15) => v.push(BG[(b - 8) as usize]),
+        _ => {}
+    }
+    if st.bold {
+        v.push("ansi-bold");
+    }
+    if st.dim {
+        v.push("ansi-dim");
+    }
+    if st.italic {
+        v.push("ansi-italic");
+    }
+    if st.underline {
+        v.push("ansi-underline");
+    }
+    v
+}
+
+/// Each source line as text spans with fixed class names. Never HTML.
+pub fn to_spans(text: &str) -> Vec<Vec<Span>> {
+    let mut style = Style::default();
+    let mut lines: Vec<&str> = text.split('\n').collect();
+    if lines.last() == Some(&"") {
+        lines.pop();
+    }
+    lines.into_iter().map(|l| segments(l, &mut style).into_iter().map(|(st, t)| Span { c: span_classes(&st), t }).collect()).collect()
+}
+
 pub fn to_html(text: &str) -> String {
     to_lines(text).join("\n")
 }
@@ -254,6 +313,16 @@ mod tests {
 
     fn balanced(s: &str) -> bool {
         s.matches("<span").count() == s.matches("</span>").count()
+    }
+
+    #[test]
+    fn spans_carry_text_and_fixed_classes_only() {
+        let lines = to_spans("\u{1b}[31;1merror\u{1b}[0m <b>x</b>\n\u{1b}]8;;https://e.example\u{7}link\u{1b}]8;;\u{7}\n");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0][0], Span { t: "error".into(), c: vec!["ansi-red", "ansi-bold"] });
+        assert_eq!(lines[0][1].t, " <b>x</b>", "markup stays text");
+        let all: String = lines[1].iter().map(|s| s.t.as_str()).collect();
+        assert!(!all.contains("https://"), "OSC 8 targets are dropped: {all}");
     }
 
     #[test]

@@ -72,6 +72,30 @@ impl Repos for GitCore {
     async fn list_accessible(&self, actor: &Actor, page: u32, per_page: u32) -> Result<Vec<Repo>> {
         self.do_list_accessible(actor, page, per_page).await
     }
+    async fn set_tier(&self, actor: &Actor, id: RepoId, to: Visibility, client: &ClientInfo) -> Result<Repo> {
+        self.do_set_tier(actor, id, to, client).await
+    }
+    async fn fork_as(&self, actor: &Actor, id: RepoId, into: UserId, visibility: Visibility, client: &ClientInfo) -> Result<Repo> {
+        self.do_fork_as(actor, id, into, None, visibility, client).await
+    }
+    async fn set_contribution_policy(&self, actor: &Actor, id: RepoId, policy: ContributionPolicy, client: &ClientInfo) -> Result<Repo> {
+        self.do_set_contribution_policy(actor, id, policy, client).await
+    }
+    async fn public_repos_allowed(&self) -> Result<bool> {
+        self.public_allowed().await
+    }
+    async fn publish_summary(&self, actor: &Actor, id: RepoId) -> Result<PublishSummary> {
+        self.do_publish_summary(actor, id).await
+    }
+    async fn set_public_repos_allowed(&self, actor: &Actor, on: bool, client: &ClientInfo) -> Result<u64> {
+        self.do_set_public_switch(actor, on, client).await
+    }
+    async fn workspace_settings(&self) -> Result<WorkspaceSettings> {
+        self.do_workspace_settings().await
+    }
+    async fn set_workspace_settings(&self, actor: &Actor, settings: WorkspaceSettings, client: &ClientInfo) -> Result<()> {
+        self.do_set_workspace_settings(actor, settings, client).await
+    }
 }
 
 /// Reads take no actor: the caller has already checked access to the repository. Writes check
@@ -122,6 +146,33 @@ impl GitService for GitCore {
     }
     async fn merge(&self, actor: &Actor, req: MergeRequest, client: &ClientInfo) -> Result<MergeOutcome> {
         self.do_merge(actor, req, client).await
+    }
+    async fn workspace_branch_head(&self, repo: RepoId, branch: &str) -> Result<Option<String>> {
+        self.ws_branch_head(repo, branch).await
+    }
+    async fn workspace_is_ancestor(&self, repo: RepoId, sha: &str, head: &str) -> Result<bool> {
+        self.ws_is_ancestor(repo, sha, head).await
+    }
+    async fn workspace_tree(&self, repo: RepoId, sha: &str, limits: WorkspaceTreeLimits) -> Result<WorkspaceTree> {
+        self.ws_tree(repo, sha, limits).await
+    }
+    async fn workspace_blob(&self, repo: RepoId, sha: &str, path: &[u8], max_bytes: u64) -> Result<WorkspaceBlob> {
+        self.ws_blob(repo, sha, path, max_bytes).await
+    }
+    async fn workspace_search(&self, repo: RepoId, sha: &str, text: &str, limits: WorkspaceSearchLimits) -> Result<WorkspaceSearch> {
+        self.ws_search(repo, sha, text, limits).await
+    }
+    async fn workspace_snapshot(
+        &self,
+        repo: RepoId,
+        sha: &str,
+        prefix: &[u8],
+        limits: WorkspaceSnapshotLimits,
+    ) -> Result<WorkspaceSnapshot> {
+        self.ws_snapshot(repo, sha, prefix, limits).await
+    }
+    async fn workspace_direct_commit_allowed(&self, actor: &Actor, repo: RepoId, branch: &str) -> Result<bool> {
+        self.ws_direct_commit_allowed(actor, repo, branch).await
     }
     async fn update_ref(&self, actor: &Actor, repo: RepoId, name: &str, sha: &str, force: bool, client: &ClientInfo) -> Result<()> {
         self.do_update_ref(actor, repo, name, sha, force, client).await

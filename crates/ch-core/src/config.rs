@@ -20,6 +20,8 @@ pub struct Config {
     pub webhooks: WebhooksConfig,
     pub ci: CiConfig,
     pub mcp: McpConfig,
+    pub public_access: PublicAccessConfig,
+    pub workspace: WorkspaceConfig,
     pub log: LogConfig,
 }
 
@@ -125,6 +127,49 @@ pub struct McpConfig {
     pub allowed_origins: Vec<String>,
 }
 
+/// Limits for signed-out visitors to public repositories (epic ch-4pn). Starting values, to be
+/// measured on the server. "Per address" counts an IPv6 address by its /64.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PublicAccessConfig {
+    /// Any signed-out request, rejections included, per address.
+    pub requests_per_minute: u32,
+    pub burst: u32,
+    /// Public pages and API answers for the whole instance.
+    pub instance_requests_per_minute: u32,
+    /// Name lookups the gate runs at once. When full, the request gets the ordinary rejection.
+    pub lookups_at_once: u32,
+    /// Blame, compare, diffs and recursive trees.
+    pub heavy_per_address: u32,
+    pub heavy_instance: u32,
+    /// Clones and fetches.
+    pub git_per_address: u32,
+    pub git_instance: u32,
+    pub git_per_address_per_minute: u32,
+    pub git_timeout_secs: u64,
+    /// Zip and tar archives.
+    pub archive_per_address: u32,
+    pub archive_instance: u32,
+    pub archive_per_address_per_minute: u32,
+    pub archive_timeout_secs: u64,
+    /// Raw files, blobs and release files.
+    pub raw_per_address: u32,
+    pub raw_instance: u32,
+}
+
+/// The browser workspace: the code editor at `/{owner}/{repo}/workspace`. These are the
+/// ceiling. A site admin can turn each part off at `/admin/workspace`, never on past this.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspaceConfig {
+    /// The editor, commits from the browser and the run panel.
+    pub enabled: bool,
+    /// The terminal that runs in the visitor's browser, in a sandboxed frame. Never on the server.
+    pub terminal: bool,
+    /// Where an optional Linux image for the terminal is installed. Empty means none.
+    pub linux_image_dir: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LogConfig {
@@ -184,6 +229,33 @@ impl Default for McpConfig {
         }
     }
 }
+impl Default for PublicAccessConfig {
+    fn default() -> Self {
+        Self {
+            requests_per_minute: 240,
+            burst: 120,
+            instance_requests_per_minute: 600,
+            lookups_at_once: 8,
+            heavy_per_address: 2,
+            heavy_instance: 4,
+            git_per_address: 2,
+            git_instance: 3,
+            git_per_address_per_minute: 30,
+            git_timeout_secs: 600,
+            archive_per_address: 1,
+            archive_instance: 2,
+            archive_per_address_per_minute: 6,
+            archive_timeout_secs: 120,
+            raw_per_address: 4,
+            raw_instance: 10,
+        }
+    }
+}
+impl Default for WorkspaceConfig {
+    fn default() -> Self {
+        Self { enabled: true, terminal: true, linux_image_dir: String::new() }
+    }
+}
 impl Default for LogConfig {
     fn default() -> Self {
         Self { format: "json".into(), level: "info".into() }
@@ -196,6 +268,46 @@ pub enum ConfigError {
     Load(String),
     #[error("invalid configuration: {0}")]
     Invalid(String),
+}
+
+impl PublicAccessConfig {
+    /// Refuses a zero anywhere, and an instance cap below its per-address cap.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        fn positive(name: &str, v: u64) -> Result<(), ConfigError> {
+            if v == 0 {
+                return Err(ConfigError::Invalid(format!("public_access.{name} must be more than 0")));
+            }
+            Ok(())
+        }
+        positive("requests_per_minute", self.requests_per_minute.into())?;
+        positive("burst", self.burst.into())?;
+        positive("instance_requests_per_minute", self.instance_requests_per_minute.into())?;
+        positive("lookups_at_once", self.lookups_at_once.into())?;
+        positive("heavy_per_address", self.heavy_per_address.into())?;
+        positive("heavy_instance", self.heavy_instance.into())?;
+        positive("git_per_address", self.git_per_address.into())?;
+        positive("git_instance", self.git_instance.into())?;
+        positive("git_per_address_per_minute", self.git_per_address_per_minute.into())?;
+        positive("git_timeout_secs", self.git_timeout_secs)?;
+        positive("archive_per_address", self.archive_per_address.into())?;
+        positive("archive_instance", self.archive_instance.into())?;
+        positive("archive_per_address_per_minute", self.archive_per_address_per_minute.into())?;
+        positive("archive_timeout_secs", self.archive_timeout_secs)?;
+        positive("raw_per_address", self.raw_per_address.into())?;
+        positive("raw_instance", self.raw_instance.into())?;
+
+        fn at_least(instance: (&str, u32), per_address: (&str, u32)) -> Result<(), ConfigError> {
+            if instance.1 < per_address.1 {
+                return Err(ConfigError::Invalid(format!("public_access.{} must be at least public_access.{}", instance.0, per_address.0)));
+            }
+            Ok(())
+        }
+        at_least(("heavy_instance", self.heavy_instance), ("heavy_per_address", self.heavy_per_address))?;
+        at_least(("git_instance", self.git_instance), ("git_per_address", self.git_per_address))?;
+        at_least(("archive_instance", self.archive_instance), ("archive_per_address", self.archive_per_address))?;
+        at_least(("raw_instance", self.raw_instance), ("raw_per_address", self.raw_per_address))?;
+        Ok(())
+    }
 }
 
 impl Config {
@@ -269,6 +381,7 @@ impl Config {
         {
             return Err(ConfigError::Invalid("invites.default_expiry_hours is outside the allowed range".into()));
         }
+        self.public_access.validate()?;
         Ok(())
     }
 
@@ -446,5 +559,54 @@ mod tests {
     #[test]
     fn missing_database_is_an_error() {
         assert!(Config::default().database_url().is_err());
+    }
+
+    #[test]
+    fn public_access_defaults() {
+        let c = PublicAccessConfig::default();
+        assert_eq!(c.requests_per_minute, 240);
+        assert_eq!(c.burst, 120);
+        assert_eq!(c.instance_requests_per_minute, 600);
+        assert_eq!(c.lookups_at_once, 8);
+        assert_eq!(c.heavy_per_address, 2);
+        assert_eq!(c.heavy_instance, 4);
+        assert_eq!(c.git_per_address, 2);
+        assert_eq!(c.git_instance, 3);
+        assert_eq!(c.git_per_address_per_minute, 30);
+        assert_eq!(c.git_timeout_secs, 600);
+        assert_eq!(c.archive_per_address, 1);
+        assert_eq!(c.archive_instance, 2);
+        assert_eq!(c.archive_per_address_per_minute, 6);
+        assert_eq!(c.archive_timeout_secs, 120);
+        assert_eq!(c.raw_per_address, 4);
+        assert_eq!(c.raw_instance, 10);
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn public_access_override_from_toml() {
+        let dir = std::env::temp_dir().join(format!("ch-cfg-public-access-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("codehaven.toml");
+        std::fs::write(&f, "[server]\nexternal_url = \"https://code.example.com\"\n[public_access]\ngit_instance = 5\n").unwrap();
+        let c = Config::load(Some(&f)).unwrap();
+        assert_eq!(c.public_access.git_instance, 5);
+        assert_eq!(c.public_access.git_per_address, 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn public_access_refuses_zero() {
+        let c = PublicAccessConfig { git_instance: 0, ..Default::default() };
+        assert_eq!(c.validate().unwrap_err().to_string(), "invalid configuration: public_access.git_instance must be more than 0");
+    }
+
+    #[test]
+    fn public_access_refuses_instance_below_address() {
+        let c = PublicAccessConfig { archive_instance: 1, archive_per_address: 2, ..Default::default() };
+        assert_eq!(
+            c.validate().unwrap_err().to_string(),
+            "invalid configuration: public_access.archive_instance must be at least public_access.archive_per_address"
+        );
     }
 }

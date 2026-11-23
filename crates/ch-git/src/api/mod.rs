@@ -47,7 +47,8 @@ impl Api {
     /// The repository, with the permission an operation needs.
     pub async fn repo_with(&self, owner: &str, name: &str, needed: Permission) -> Result<Repo> {
         let repo = self.repo(owner, name).await?;
-        if needed > Permission::Read {
+        // `repo` proves only `View`. Anything more is checked here.
+        if needed > Permission::View {
             self.core.require(&self.actor, &repo, needed).await?;
         }
         Ok(repo)
@@ -58,7 +59,9 @@ impl FromRequestParts<AppState> for Api {
     type Rejection = Error;
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> std::result::Result<Self, Error> {
         let CurrentActor(actor) = CurrentActor::from_request_parts(parts, state).await.unwrap_or(CurrentActor(Actor::Anonymous));
-        if actor.is_anonymous() {
+        // A signed-out caller only on a route the gate admitted from the public list. `Authz`
+        // still decides each repository.
+        if actor.is_anonymous() && parts.extensions.get::<ch_core::access::PublicRead>().is_none() {
             return Err(Error::unauthorized());
         }
         let core = state.ext.get::<GitCore>().ok_or_else(|| Error::unavailable("git is not built yet"))?;

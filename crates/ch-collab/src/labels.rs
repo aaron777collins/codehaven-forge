@@ -43,7 +43,7 @@ impl Core {
     // ------------------------------------------------------------ labels
 
     pub async fn labels(&self, actor: &Actor, repo: RepoId) -> Result<Vec<LabelInfo>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         self.labels_of(repo).await
     }
 
@@ -60,7 +60,7 @@ impl Core {
     }
 
     pub async fn label(&self, actor: &Actor, repo: RepoId, name: &str) -> Result<LabelInfo> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let row: Option<(LabelId, String, String, String)> =
             sqlx::query_as("SELECT id, name::text, color, description FROM labels WHERE repo_id = $1 AND name = $2::citext")
                 .bind(repo)
@@ -203,7 +203,7 @@ impl Core {
     // ------------------------------------------------------------ milestones
 
     pub async fn milestones(&self, actor: &Actor, repo: RepoId, open: Option<bool>) -> Result<Vec<Milestone>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let sql = format!(
             "{MILESTONE_SELECT} WHERE m.repo_id = $1 AND ($2::bool IS NULL OR m.open = $2) GROUP BY m.id ORDER BY m.due_on ASC NULLS LAST, m.number ASC"
         );
@@ -212,7 +212,7 @@ impl Core {
     }
 
     pub async fn milestone(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Milestone> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         self.milestone_by_number(repo, number).await
     }
 

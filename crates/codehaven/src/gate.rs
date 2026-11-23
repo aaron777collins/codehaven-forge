@@ -5,7 +5,10 @@
 //! caller from the credentials in the request, and lets the request through only when
 //!
 //! 1. the method and path are in `ch_core::access::PUBLIC_ROUTES`, or
-//! 2. the caller is signed in with a credential that this kind of route accepts.
+//! 2. the caller is signed in with a credential that this kind of route accepts, or
+//! 3. the caller sent no credential, the route is on `PUBLIC_REPO_ROUTES`, the instance allows
+//!    public repositories and the repository or owner it names is public now (see
+//!    `public_gate`).
 //!
 //! Anything else gets the rejection for its kind. A new route is private the moment it is
 //! added and stays private until someone edits `PUBLIC_ROUTES` on purpose.
@@ -17,9 +20,10 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use ch_core::access::{self, RouteKind};
+use ch_core::live::Credential;
 use ch_core::model::ClientInfo;
 use ch_core::state::AppState;
-use ch_core::{Actor, Error};
+use ch_core::{Actor, AuthVia, Error};
 
 pub async fn gate(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let method = req.method().clone();
@@ -48,7 +52,8 @@ pub async fn gate(State(state): State<AppState>, mut req: Request, next: Next) -
     // Set when the password was right but the account needs a token. The only refusal that says
     // anything more than "authentication required", and only after the right password.
     let mut hint: Option<String> = None;
-    let actor = match resolve_actor(&state, req.headers(), &client).await {
+    let mut session_hash: Option<Vec<u8>> = None;
+    let actor = match resolve_actor(&state, req.headers(), &client, &mut session_hash).await {
         Ok(a) => a,
         Err(Error::RateLimited { retry_after_secs }) => return Error::RateLimited { retry_after_secs }.into_response(),
         // Bad credentials count as no credentials.
@@ -66,13 +71,53 @@ pub async fn gate(State(state): State<AppState>, mut req: Request, next: Next) -
         }
     };
 
+    // A signed-in page may be framed only as the workspace terminal. This also covers public
+    // routes, and runs before any handler, so a framed document that navigates itself elsewhere
+    // (a redirect, a typed URL) reaches nothing. Signed-out answers do not change.
+    if matches!(actor, Actor::User { via: AuthVia::Session, .. }) && framed(req.headers()) && !is_terminal_frame_path(&path) {
+        let mut r = (StatusCode::FORBIDDEN, "Framing not allowed\n").into_response();
+        r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return r;
+    }
+
     if access::actor_accepted(&actor, kind) {
+        match credential_for(&state, &actor, session_hash).await {
+            Ok(Some(c)) => {
+                req.extensions_mut().insert(c);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::error!(error = %e, "could not record the credential");
+                return Error::unavailable("Service unavailable").into_response();
+            }
+        }
         req.extensions_mut().insert(actor);
         return next.run(req).await;
     }
     if public {
         req.extensions_mut().insert(Actor::Anonymous);
         return next.run(req).await;
+    }
+    // Public repositories (epic ch-4pn). Only a request with no credential at all: a bad or
+    // unaccepted `Authorization` header never turns into a public read. A cookie that did not
+    // sign anyone in is ignored.
+    let has_auth_header = req.headers().contains_key(header::AUTHORIZATION);
+    if actor.is_anonymous()
+        && !has_auth_header
+        && hint.is_none()
+        && let Some(m) = access::public_repo_route(&method, &path, req.uri().query())
+    {
+        match crate::public_gate::admit(&state, &m, &access::address_key(client.ip)).await {
+            crate::public_gate::Admit::Yes(read, permit) => {
+                let cost = read.cost;
+                req.extensions_mut().insert(Actor::Anonymous);
+                req.extensions_mut().insert(read);
+                let resp = next.run(req).await;
+                return crate::public_gate::hold_until_sent(crate::public_gate::finish(resp), permit, cost, &state.config.public_access);
+            }
+            crate::public_gate::Admit::Busy(wait) => return crate::public_gate::busy(wait),
+            crate::public_gate::Admit::No => {}
+        }
     }
     let mut resp = reject(&state, kind, &method, &path, req.uri().query());
     if let Some(h) = hint
@@ -153,8 +198,49 @@ pub fn mcp_challenge(state: &AppState, token_presented: bool) -> Response {
     r
 }
 
-/// Reads the credentials: `Authorization` first, then the session cookie.
-async fn resolve_actor(state: &AppState, headers: &HeaderMap, client: &ClientInfo) -> Result<Actor, Error> {
+/// `Sec-Fetch-Dest` says the request loads a frame or an embedded document.
+fn framed(headers: &HeaderMap) -> bool {
+    headers
+        .get("sec-fetch-dest")
+        .and_then(|v| v.to_str().ok())
+        .map(|d| matches!(d.to_ascii_lowercase().as_str(), "iframe" | "frame" | "embed" | "object" | "fencedframe"))
+        .unwrap_or(false)
+}
+
+/// Exactly `/{owner}/{repo}/workspace/terminal`: two plain segments, then those two words.
+/// No trailing slash, no extra segment, no encoded slash. Case is checked by the route itself.
+pub fn is_terminal_frame_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix('/') else { return false };
+    let parts: Vec<&str> = rest.split('/').collect();
+    parts.len() == 4
+        && parts[2] == "workspace"
+        && parts[3] == "terminal"
+        && parts[..2].iter().all(|p| !p.is_empty() && *p != "." && *p != ".." && !p.contains('%'))
+}
+
+/// What signed this request in, with no secret, for checks that run again later (`LiveAuth`).
+async fn credential_for(state: &AppState, actor: &Actor, session_hash: Option<Vec<u8>>) -> Result<Option<Credential>, Error> {
+    Ok(match actor {
+        Actor::User { via: AuthVia::Session, .. } => session_hash.map(|hash| Credential::Session { hash }),
+        Actor::User { id, via: AuthVia::Basic, .. } => {
+            state.authn.password_fingerprint(*id).await?.map(|fingerprint| Credential::Basic { user_id: *id, fingerprint })
+        }
+        Actor::Token { token_id, .. } => Some(Credential::Token { token_id: *token_id }),
+        Actor::Job { job_id, .. } => Some(Credential::Job { job_id: *job_id }),
+        Actor::Runner { runner_id } => Some(Credential::Runner { runner_id: *runner_id }),
+        Actor::App { grant_id, .. } => Some(Credential::App { grant_id: *grant_id }),
+        _ => None,
+    })
+}
+
+/// Reads the credentials: `Authorization` first, then the session cookie. When the cookie
+/// signed someone in, `session_hash` gets its hash.
+async fn resolve_actor(
+    state: &AppState,
+    headers: &HeaderMap,
+    client: &ClientInfo,
+    session_hash: &mut Option<Vec<u8>>,
+) -> Result<Actor, Error> {
     if let Some(auth) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
         let (scheme, rest) = auth.split_once(' ').unwrap_or((auth, ""));
         let rest = rest.trim();
@@ -169,7 +255,11 @@ async fn resolve_actor(state: &AppState, headers: &HeaderMap, client: &ClientInf
     }
     let cookie_name = access::session_cookie_name(state.config.is_https());
     if let Some(value) = cookie_value(headers, cookie_name) {
-        return state.authn.from_session(&value, client).await;
+        let actor = state.authn.from_session(&value, client).await?;
+        if !actor.is_anonymous() {
+            *session_hash = Some(ch_db::tokens::hash_token(&value));
+        }
+        return Ok(actor);
     }
     Ok(Actor::Anonymous)
 }
@@ -273,6 +363,36 @@ mod tests {
         assert_eq!(decode_basic(""), None);
         assert_eq!(decode_basic("YWxpY2U="), None, "no colon");
         assert_eq!(decode_basic("OngA"), None, "empty user");
+    }
+
+    #[test]
+    fn only_the_terminal_path_may_be_framed() {
+        assert!(is_terminal_frame_path("/alice/demo/workspace/terminal"));
+        for p in [
+            "/alice/demo/workspace",
+            "/alice/demo/workspace/terminal/",
+            "/alice/demo/workspace/terminal/x",
+            "/alice/demo/workspace/Terminal",
+            "/alice/demo/Workspace/terminal",
+            "//demo/workspace/terminal",
+            "/alice/../workspace/terminal",
+            "/alice/demo%2fx/workspace/terminal",
+            "/alice/workspace/terminal",
+            "/api/v3/user",
+            "",
+        ] {
+            assert!(!is_terminal_frame_path(p), "{p}");
+        }
+        let mut h = HeaderMap::new();
+        assert!(!framed(&h));
+        for d in ["iframe", "frame", "embed", "object", "fencedframe", "IFRAME"] {
+            h.insert("sec-fetch-dest", HeaderValue::from_str(d).unwrap());
+            assert!(framed(&h), "{d}");
+        }
+        for d in ["document", "empty", "script"] {
+            h.insert("sec-fetch-dest", HeaderValue::from_str(d).unwrap());
+            assert!(!framed(&h), "{d}");
+        }
     }
 
     #[test]

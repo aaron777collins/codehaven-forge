@@ -936,6 +936,10 @@ pub async fn job_stream(
     Query(q): Query<Params>,
 ) -> WebResult<Response> {
     let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    // The stream checks the caller again every second (`LiveAuth`), so it ends soon after a
+    // sign-out, a suspension or lost access. With no credential to check it does not open.
+    let Some(credential) = ctx.credential.clone() else { return Err(WebError::not_found()) };
+    let live = std::sync::Arc::new(ch_core::live::LiveAuth::new(ctx.state.clone(), credential, rc.id()));
     let offset: u64 = q.get("offset").and_then(|v| v.parse().ok()).unwrap_or(0);
     let line: u64 = q.get("line").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     let st = LogStream {
@@ -951,10 +955,11 @@ pub async fn job_stream(
         finished: false,
         deadline: std::time::Instant::now() + std::time::Duration::from_secs(STREAM_CAP_SECS),
     };
-    let stream = futures::stream::unfold(st, next_event);
+    let stream = ch_core::live::guarded(live, futures::stream::unfold(st, next_event));
     let mut r =
         Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)).text("keepalive")).into_response();
     r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    r.headers_mut().insert("x-accel-buffering", HeaderValue::from_static("no"));
     Ok(r)
 }
 

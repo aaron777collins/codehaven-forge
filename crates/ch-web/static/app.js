@@ -302,7 +302,7 @@
     run();
   });
 
-  // ---- keyboard shortcuts: / search, t file finder (goes to the file search), g i, g p
+  // ---- keyboard shortcuts: / search, t file finder (goes to the file search), g i, g p, . workspace
   var gPending = false;
   doc.addEventListener('keydown', function (e) {
     var tag = (e.target.tagName || '').toLowerCase();
@@ -311,6 +311,11 @@
     if (e.key === '/') {
       var s = doc.getElementById('global-search');
       if (s) { e.preventDefault(); s.focus(); }
+      return;
+    }
+    if (e.key === '.') {
+      var ws = doc.querySelector('[data-workspace-link]');
+      if (ws) { e.preventDefault(); location.href = ws.getAttribute('href'); }
       return;
     }
     if (gPending) {

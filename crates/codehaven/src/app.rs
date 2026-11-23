@@ -31,6 +31,9 @@ pub fn build_router(state: AppState, metrics: Arc<Metrics>, extra: Option<Router
     // CSRF, the Origin check and rate limits. Inside the gate, so the caller is resolved.
     let guard = Arc::new(ch_auth::Guard::new(&state.config));
     routes
+        // The second lock on signed-out public reads: the router must pick the route the gate
+        // admitted. A route layer, so it sees the matched pattern.
+        .route_layer(from_fn_with_state(state.clone(), crate::public_gate::route_check))
         .with_state(state.clone())
         .layer(from_fn_with_state(guard, crate::reqinfo::auth_guard))
         .layer(from_fn_with_state(state.clone(), gate))

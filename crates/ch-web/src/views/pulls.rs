@@ -423,10 +423,27 @@ async fn load(ctx: &Ctx, owner: &str, name: &str, number: i64) -> WebResult<Load
     Ok(Loaded { rc, pr, cmp, people: People::new(&ctx.state) })
 }
 
+/// The chrome of a pull request's pages. An open pull request from a branch of this same
+/// repository opens the workspace on that branch. A fork's branch is not in this repository,
+/// and a closed one's branch may be gone, so those keep the plain button.
+async fn pr_chrome(ctx: &Ctx, l: &Loaded, title: &str) -> Chrome {
+    let mut c = l.rc.chrome(ctx, title, "pulls").await;
+    let st = PrState::of(&l.pr);
+    if let Some(nav) = c.repo.as_mut()
+        && !nav.workspace.is_empty()
+        && l.pr.head_repo_id == Some(l.rc.id())
+        && !l.pr.head_ref.is_empty()
+        && (st == PrState::Open || st == PrState::Draft)
+    {
+        nav.workspace = format!("{}?branch={}", nav.workspace, fmt::enc(&l.pr.head_ref));
+    }
+    c
+}
+
 async fn head(ctx: &Ctx, l: &mut Loaded, tab: &'static str, check_count: usize) -> WebResult<PrHead> {
     let st = PrState::of(&l.pr);
-    let me = ctx.user_id()?;
-    let can_edit = !l.rc.repo.archived && (l.rc.perm.allows(Permission::Triage) || l.pr.issue.author_id == me);
+    let me = ctx.user_id().ok();
+    let can_edit = me.is_some() && !l.rc.repo.archived && (l.rc.perm.allows(Permission::Triage) || Some(l.pr.issue.author_id) == me);
     let (merged_by, merged_when) = match (l.pr.merged_by, l.pr.merged_at) {
         (Some(u), Some(t)) => (Some(l.people.get(u).await), Some(fmt::time(t))),
         (None, Some(t)) => (None, Some(fmt::time(t))),
@@ -457,6 +474,10 @@ async fn head(ctx: &Ctx, l: &mut Loaded, tab: &'static str, check_count: usize) 
 }
 
 async fn check_rows(ctx: &Ctx, rc: &RepoCtx, sha: &str) -> Vec<CheckRow> {
+    // CI records keep the audience they were made for, and signed-out Actions is not open yet.
+    if ctx.actor.is_anonymous() {
+        return Vec::new();
+    }
     let runs = ctx.state.checks.check_runs_for_sha(rc.id(), sha).await.unwrap_or_default();
     let statuses = ctx.state.checks.statuses_for_sha(rc.id(), sha).await.unwrap_or_default();
     let mut out: Vec<CheckRow> = runs
@@ -505,7 +526,7 @@ fn inline_thread(rc: &RepoCtx, t: &ThreadView) -> InlineThread {
 
 /// Where the forms inside a thread post, and which of them this viewer gets. Resolving follows
 /// the service rule: the pull request's author or someone with write access.
-fn thread_forms(ctx: &Ctx, rc: &RepoCtx, pr: &PullRequest, me: UserId, number: i64, back: &str, can_reply: bool) -> ThreadForms {
+fn thread_forms(ctx: &Ctx, rc: &RepoCtx, pr: &PullRequest, me: Option<UserId>, number: i64, back: &str, can_reply: bool) -> ThreadForms {
     let base = rc.base();
     ThreadForms {
         csrf: ctx.csrf_token(),
@@ -513,7 +534,7 @@ fn thread_forms(ctx: &Ctx, rc: &RepoCtx, pr: &PullRequest, me: UserId, number: i
         resolve_action: format!("{base}/pulls/{number}/resolve"),
         back: back.into(),
         can_reply,
-        can_resolve: !rc.repo.archived && (pr.issue.author_id == me || rc.perm.allows(Permission::Write)),
+        can_resolve: me.is_some() && !rc.repo.archived && (Some(pr.issue.author_id) == me || rc.perm.allows(Permission::Write)),
     }
 }
 
@@ -547,8 +568,9 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
     let checks = check_rows(&ctx, &l.rc, &l.pr.head_sha).await;
     let h = head(&ctx, &mut l, "conversation", checks.len()).await?;
     let st = PrState::of(&l.pr);
-    let me = ctx.user_id()?;
-    let can_comment = !l.rc.repo.archived && !l.pr.issue.locked;
+    // A signed-out visitor reads a public pull request and gets no forms.
+    let me = ctx.user_id().ok();
+    let can_comment = me.is_some() && !l.rc.repo.archived && !l.pr.issue.locked;
     let comments = ctx.state.issues.comments(&ctx.actor, l.rc.id(), number).await?;
     let reviews = ctx.state.reviews.list(&ctx.actor, l.rc.id(), number).await.unwrap_or_default();
     let threads = ctx.state.reviews.threads(&ctx.actor, l.rc.id(), number).await.unwrap_or_default();
@@ -667,11 +689,13 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
     } else {
         GateView { mergeable: false, reasons: Vec::new() }
     };
-    let checks_summary = {
+    let checks_summary = if ctx.actor.is_anonymous() {
+        None
+    } else {
         let runs = ctx.state.checks.check_runs_for_sha(l.rc.id(), &l.pr.head_sha).await.unwrap_or_default();
         status_from_runs(&runs)
     };
-    let c = l.rc.chrome(&ctx, &format!("{} (#{number})", l.pr.issue.title), "pulls").await;
+    let c = pr_chrome(&ctx, &l, &format!("{} (#{number})", l.pr.issue.title)).await;
     ctx.page(&ShowPage {
         c,
         owner: l.rc.repo.owner_name.clone(),
@@ -683,7 +707,10 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
         checks_summary,
         can_merge: l.rc.perm.allows(Permission::Write) && !l.rc.repo.archived && st == PrState::Open,
         can_comment,
-        can_review: !l.rc.repo.archived && l.pr.issue.author_id != me && (st == PrState::Open || st == PrState::Draft),
+        can_review: me.is_some()
+            && !l.rc.repo.archived
+            && Some(l.pr.issue.author_id) != me
+            && (st == PrState::Open || st == PrState::Draft),
         is_open: st == PrState::Open || st == PrState::Draft,
         is_merged: st == PrState::Merged,
         is_draft: st == PrState::Draft,
@@ -713,7 +740,7 @@ pub async fn commits(ctx: Ctx, Path((owner, name, number)): Path<(String, String
         Some(c) => super::repo::commit_rows_pub(&ctx, &l.rc, &c.commits).await,
         None => Vec::new(),
     };
-    let c = l.rc.chrome(&ctx, &format!("Commits - {} (#{number})", l.pr.issue.title), "pulls").await;
+    let c = pr_chrome(&ctx, &l, &format!("Commits - {} (#{number})", l.pr.issue.title)).await;
     ctx.page(&CommitsPage { c, h, rows })
 }
 
@@ -734,7 +761,7 @@ pub async fn checks(ctx: Ctx, Path((owner, name, number)): Path<(String, String,
     let rows = check_rows(&ctx, &l.rc, &l.pr.head_sha).await;
     let h = head(&ctx, &mut l, "checks", rows.len()).await?;
     let runs = ctx.state.checks.check_runs_for_sha(l.rc.id(), &l.pr.head_sha).await.unwrap_or_default();
-    let c = l.rc.chrome(&ctx, &format!("Checks - {} (#{number})", l.pr.issue.title), "pulls").await;
+    let c = pr_chrome(&ctx, &l, &format!("Checks - {} (#{number})", l.pr.issue.title)).await;
     ctx.page(&ChecksPage { c, h, rows, summary: status_from_runs(&runs), sha: fmt::short_sha(&l.pr.head_sha) })
 }
 
@@ -765,8 +792,8 @@ pub async fn files(ctx: Ctx, Path((owner, name, number)): Path<(String, String, 
     let h = head(&ctx, &mut l, "files", checks).await?;
     let mode = DiffMode::from_query(q.get("diff").map(String::as_str));
     let st = PrState::of(&l.pr);
-    let me = ctx.user_id()?;
-    let can_comment = !l.rc.repo.archived && st != PrState::Merged;
+    let me = ctx.user_id().ok();
+    let can_comment = me.is_some() && !l.rc.repo.archived && st != PrState::Merged;
     let threads = ctx.state.reviews.threads(&ctx.actor, l.rc.id(), number).await.unwrap_or_default();
     let mut opts = DiffOptions {
         can_comment,
@@ -793,8 +820,9 @@ pub async fn files(ctx: Ctx, Path((owner, name, number)): Path<(String, String, 
         }
         None => (String::new(), code::DiffSummary { files: 0, additions: 0, deletions: 0 }, Vec::new()),
     };
-    let can_review = !l.rc.repo.archived && l.pr.issue.author_id != me && (st == PrState::Open || st == PrState::Draft);
-    let c = l.rc.chrome(&ctx, &format!("Files changed - {} (#{number})", l.pr.issue.title), "pulls").await;
+    let can_review =
+        me.is_some() && !l.rc.repo.archived && Some(l.pr.issue.author_id) != me && (st == PrState::Open || st == PrState::Draft);
+    let c = pr_chrome(&ctx, &l, &format!("Files changed - {} (#{number})", l.pr.issue.title)).await;
     ctx.page(&FilesPage {
         c,
         mode_unified: format!("{base}/pulls/{number}/files"),

@@ -28,19 +28,40 @@
   <div class="row"><button class="btn btn-primary" type="submit">Save changes</button></div>
 </form>
 {% if can_admin %}
+<section class="card pad stack" aria-labelledby="vis-h">
+  <h3 id="vis-h">Visibility</h3>
+  <form method="post" action="{{ base }}/settings/visibility" class="stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <fieldset class="field">
+      <legend>Who can read it</legend>
+      <label class="choice"><input type="radio" name="value" value="private"{% if tier == "private" %} checked{% endif %}> <strong>Private.</strong> {{ text_private }}</label>
+      <label class="choice"><input type="radio" name="value" value="internal"{% if tier == "internal" %} checked{% endif %}{% if parent_tier == "private" %} disabled{% endif %}> <strong>Internal.</strong> {{ text_internal }}{% if parent_tier == "private" %} <span class="hint">A fork cannot be more visible than the repository it came from.</span>{% endif %}</label>
+      <label class="choice"><input type="radio" name="value" value="public"{% if tier == "public" %} checked{% endif %}{% if !switch_on || parent_tier != "public" || !is_owner %} disabled{% endif %}> <strong>Public.</strong> {{ text_public }}{% if !switch_on %} <span class="hint">Public repositories are off on this server.</span>{% else if parent_tier != "public" %} <span class="hint">A fork cannot be more visible than the repository it came from.</span>{% else if !is_owner %} <span class="hint">Only the owner can make this public.</span>{% endif %}</label>
+    </fieldset>
+    <label class="choice"><input type="checkbox" name="confirm_internal" value="1"> {{ confirm_internal }}</label>
+    <p class="hint">Making it public opens a page that checks it first.</p>
+    <div class="row"><button class="btn btn-primary" type="submit">Change visibility</button></div>
+  </form>
+</section>
+<section class="card pad stack" aria-labelledby="contrib-h">
+  <h3 id="contrib-h">Who can open issues, comment and send pull requests</h3>
+  {% if is_private %}<p class="hint">This applies if the repository becomes internal or public.</p>{% endif %}
+  {% if is_owner %}
+  <form method="post" action="{{ base }}/settings/contributions" class="stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <label class="choice"><input type="radio" name="policy" value="everyone"{% if policy == "everyone" %} checked{% endif %}> Everyone signed in who can read it</label>
+    <label class="choice"><input type="radio" name="policy" value="grants"{% if policy == "grants" %} checked{% endif %}> Only people with access</label>
+    <p class="hint">This also covers reactions and reviews. Pushing, merging and triage always need access.</p>
+    <div class="row"><button class="btn" type="submit">Save</button></div>
+  </form>
+  {% else %}
+  <p>{% if policy == "everyone" %}Everyone signed in who can read it.{% else %}Only people with access.{% endif %}</p>
+  {% endif %}
+</section>
+{% endif %}
+{% if can_admin %}
 <div class="danger-zone card pad stack">
   <h3>Danger zone</h3>
-  <div class="danger-row">
-    <div>
-      <h4>Change visibility</h4>
-      <p class="muted">{% if is_private %}Private. Only people you give access to can see this repository.{% else %}Public. Every account on this server can read it.{% endif %}</p>
-    </div>
-    <form method="post" action="{{ base }}/settings/visibility" class="inline"{% if is_private %} data-confirm="Make this repository public? Every account on this server will be able to read it."{% endif %}>
-      {% call ui::csrf_field(c.csrf) %}
-      <input type="hidden" name="value" value="{% if is_private %}public{% else %}private{% endif %}">
-      <button class="btn danger" type="submit">{% if is_private %}Make public{% else %}Make private{% endif %}</button>
-    </form>
-  </div>
   <div class="danger-row">
     <div>
       <h4>{% if archived %}Unarchive this repository{% else %}Archive this repository{% endif %}</h4>

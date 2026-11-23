@@ -57,6 +57,7 @@ mod tests {
             ssh_url: "git@code.example.com:alice/codehaven.git".into(),
             default_branch: "main".into(),
             visibility: "public".into(),
+            contribution_policy: "everyone".into(),
             archived: false,
             disabled: false,
             topics: vec!["rust".into()],

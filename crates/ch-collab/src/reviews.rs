@@ -236,7 +236,7 @@ impl Core {
     }
 
     pub async fn review_views(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Vec<ReviewView>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (issue, _) = self.pull_pair(repo, number).await?;
         let sql = format!("SELECT {REVIEW_COLS} FROM reviews r WHERE r.pull_id = $1 ORDER BY COALESCE(r.submitted_at, r.created_at), r.id");
         let rows = sqlx::query_as::<_, ReviewRow>(&sql).bind(issue.id).fetch_all(self.db()).await?;
@@ -274,7 +274,7 @@ impl Core {
     }
 
     pub async fn review_comment(&self, actor: &Actor, repo: RepoId, comment: CommentId) -> Result<ReviewCommentView> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (c, _) = self.comment_row(repo, comment).await?;
         // Someone else's pending comment does not exist as far as this caller is concerned.
         if c.pending && Some(c.author_id) != actor.author_id() {
@@ -284,7 +284,7 @@ impl Core {
     }
 
     pub async fn review_threads(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Vec<ThreadView>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (issue, _) = self.pull_pair(repo, number).await?;
         let viewer = actor.author_id();
         let sql = format!(
@@ -485,7 +485,7 @@ impl Core {
         _client: &ClientInfo,
     ) -> Result<Review> {
         let user = writing_user(actor, repo)?;
-        self.need_read(actor, repo).await?;
+        self.need_contribute(actor, repo).await?;
         let rrow = self.repo(repo).await?;
         Self::ensure_writable(&rrow)?;
         if state == ReviewState::Dismissed {
@@ -608,7 +608,7 @@ impl Core {
         _client: &ClientInfo,
     ) -> Result<Review> {
         let user = writing_user(actor, repo)?;
-        self.need_read(actor, repo).await?;
+        self.need_contribute(actor, repo).await?;
         Self::ensure_writable(&self.repo(repo).await?)?;
         if matches!(state, ReviewState::Pending | ReviewState::Dismissed) {
             return Err(Error::invalid("PullRequestReview", "event", "event must be COMMENT, APPROVE or REQUEST_CHANGES"));
@@ -710,7 +710,7 @@ impl Core {
         _client: &ClientInfo,
     ) -> Result<ReviewCommentView> {
         let user = writing_user(actor, repo)?;
-        self.need_read(actor, repo).await?;
+        self.need_contribute(actor, repo).await?;
         let rrow = self.repo(repo).await?;
         Self::ensure_writable(&rrow)?;
         let (issue, pull) = self.pull_pair(repo, number).await?;
@@ -750,7 +750,7 @@ impl Core {
         _client: &ClientInfo,
     ) -> Result<ReviewCommentView> {
         let user = writing_user(actor, repo)?;
-        self.need_read(actor, repo).await?;
+        self.need_contribute(actor, repo).await?;
         Self::ensure_writable(&self.repo(repo).await?)?;
         let (c, _) = self.comment_row(repo, comment).await?;
         if c.author_id != user {
@@ -804,7 +804,7 @@ impl Core {
         _client: &ClientInfo,
     ) -> Result<()> {
         let user = writing_user(actor, repo)?;
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_contribute(actor, repo).await?;
         Self::ensure_writable(&self.repo(repo).await?)?;
         let row: Option<(IssueId,)> =
             sqlx::query_as("SELECT pull_id FROM review_threads WHERE id = $1").bind(thread).fetch_optional(self.db()).await?;
@@ -828,7 +828,7 @@ impl Core {
 
     pub async fn review_apply_suggestion(&self, actor: &Actor, repo: RepoId, comment: CommentId, client: &ClientInfo) -> Result<String> {
         let user = writing_user(actor, repo)?;
-        self.need_read(actor, repo).await?;
+        self.need_contribute(actor, repo).await?;
         Self::ensure_writable(&self.repo(repo).await?)?;
         let (c, issue) = self.comment_row(repo, comment).await?;
         if c.pending {
@@ -916,7 +916,7 @@ impl Core {
     // ------------------------------------------------------------ review requests
 
     pub async fn review_requested(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<RequestedReviewers> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (issue, pull) = self.pull_pair(repo, number).await?;
         Ok(self.hydrate_pull(issue, pull).await?.requested)
     }

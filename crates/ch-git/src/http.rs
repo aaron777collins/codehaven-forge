@@ -6,8 +6,9 @@
 //! POST /{owner}/{repo}(.git)/git-receive-pack
 //! ```
 //!
-//! The gate has already refused anyone without a Basic or token credential, so a handler here
-//! always has a signed-in caller. There is no anonymous clone, even of a public repository.
+//! The gate has already checked credentials, so a handler here
+//! has a signed-in caller, except a clone or fetch of a public repository, which the gate
+//! admits signed out.
 //! Bodies are streamed in both directions and never held whole.
 
 use async_compression::tokio::bufread::GzipDecoder;

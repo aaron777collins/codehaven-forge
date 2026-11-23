@@ -90,16 +90,104 @@ async fn create_get_patch_delete_a_repository(pool: PgPool) {
         .patch("alice", "/repos/alice/demo", json!({"description": "changed", "private": false, "name": "renamed", "archived": false}))
         .await;
     assert_eq!(p.status, 200, "{}", p.body);
+    // `private: false` on a private repository makes it internal, and internal still reads as
+    // private in the legacy flag.
     assert_eq!(
         (p.body["name"].as_str(), p.body["description"].as_str(), p.body["private"].as_bool()),
-        (Some("renamed"), Some("changed"), Some(false))
+        (Some("renamed"), Some("changed"), Some(true))
     );
+    assert_eq!(p.body["visibility"], "internal");
     // The old name still works through the redirect.
     assert_eq!(h.get("alice", "/repos/alice/demo").await.status, 200);
 
     assert_eq!(h.delete("alice", "/repos/alice/renamed").await.status, 204);
     assert_eq!(h.get("alice", "/repos/alice/renamed").await.status, 404);
     assert_eq!(f.env.count("repositories").await, 0);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn visibility_on_create_and_patch(pool: PgPool) {
+    let (_f, h, _alice) = setup(pool).await;
+
+    // Creating.
+    let a = h.post("alice", "/user/repos", json!({"name": "a"})).await;
+    assert_eq!(a.status, 201, "{}", a.body);
+    assert_eq!(a.body["visibility"], "private");
+    assert_eq!(a.body["private"], true);
+    assert_eq!(a.body["contribution_policy"], "everyone");
+    let b = h.post("alice", "/user/repos", json!({"name": "b", "private": false})).await;
+    assert_eq!(b.status, 201, "{}", b.body);
+    assert_eq!(b.body["visibility"], "internal");
+    assert_eq!(b.body["private"], true);
+    let c = h.post("alice", "/user/repos", json!({"name": "c", "visibility": "internal", "private": true})).await;
+    assert_eq!(c.status, 201, "{}", c.body);
+    assert_eq!(c.body["visibility"], "internal");
+    let d = h.post("alice", "/user/repos", json!({"name": "d", "visibility": "public"})).await;
+    assert_eq!(d.status, 403, "{}", d.body);
+    assert_eq!(d.body["message"], "Public repositories are off on this server.");
+    assert_eq!(h.post("alice", "/user/repos", json!({"name": "e", "visibility": "secret"})).await.status, 422);
+    assert_eq!(h.post("alice", "/user/repos", json!({"name": "f", "visibility": "private", "private": false})).await.status, 422);
+
+    // Editing.
+    let p = h.patch("alice", "/repos/alice/a", json!({"private": false})).await;
+    assert_eq!(p.status, 200, "{}", p.body);
+    assert_eq!(p.body["visibility"], "internal");
+    let again = h.patch("alice", "/repos/alice/a", json!({"private": false})).await;
+    assert_eq!(again.status, 200, "{}", again.body);
+    assert_eq!(again.body["visibility"], "internal");
+    let back = h.patch("alice", "/repos/alice/a", json!({"private": true})).await;
+    assert_eq!(back.status, 200, "{}", back.body);
+    assert_eq!(back.body["visibility"], "private");
+    let up = h.patch("alice", "/repos/alice/a", json!({"visibility": "internal"})).await;
+    assert_eq!(up.status, 200, "{}", up.body);
+    assert_eq!(up.body["visibility"], "internal");
+    assert_eq!(h.patch("alice", "/repos/alice/a", json!({"visibility": "public"})).await.status, 403);
+    // A refusal leaves the repository as it was.
+    assert_eq!(h.get("alice", "/repos/alice/a").await.body["visibility"], "internal");
+    assert_eq!(h.patch("alice", "/repos/alice/a", json!({"visibility": "Private"})).await.status, 422);
+    assert_eq!(h.get("alice", "/repos/alice/a").await.body["visibility"], "internal");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn contribution_policy_by_rest(pool: PgPool) {
+    let (f, h, _alice) = setup(pool).await;
+    let made = h.post("alice", "/user/repos", json!({"name": "a", "visibility": "internal"})).await;
+    assert_eq!(made.status, 201, "{}", made.body);
+
+    let p = h.patch("alice", "/repos/alice/a", json!({"contribution_policy": "grants"})).await;
+    assert_eq!(p.status, 200, "{}", p.body);
+    assert_eq!(p.body["contribution_policy"], "grants");
+    assert_eq!(h.get("alice", "/repos/alice/a").await.body["contribution_policy"], "grants");
+    assert_eq!(h.patch("alice", "/repos/alice/a", json!({"contribution_policy": "nobody"})).await.status, 422);
+
+    // An admin collaborator still cannot change it: only the account owner.
+    f.user("bob").await;
+    let add = h.put("alice", "/repos/alice/a/collaborators/bob", json!({"permission": "admin"})).await;
+    assert!(matches!(add.status, 201 | 204), "{}", add.body);
+    assert_eq!(h.patch("bob", "/repos/alice/a", json!({"contribution_policy": "everyone"})).await.status, 403);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn forks_start_private_and_never_above_the_source(pool: PgPool) {
+    let (f, h, _alice) = setup(pool).await;
+    let made = h.post("alice", "/user/repos", json!({"name": "src", "visibility": "internal", "auto_init": true})).await;
+    assert_eq!(made.status, 201, "{}", made.body);
+    f.user("bob").await;
+
+    let fork = h.post("bob", "/repos/alice/src/forks", json!({})).await;
+    assert_eq!(fork.status, 202, "{}", fork.body);
+    assert_eq!(fork.body["visibility"], "private");
+    let named = h.post("bob", "/repos/alice/src/forks", json!({"name": "src2", "visibility": "internal"})).await;
+    assert_eq!(named.status, 202, "{}", named.body);
+    assert_eq!(named.body["visibility"], "internal");
+    assert_eq!(h.post("bob", "/repos/alice/src/forks", json!({"name": "src3", "visibility": "public"})).await.status, 403);
+
+    // A fork of a private repository cannot ask for internal, even with access to the source.
+    let hidden = h.post("alice", "/user/repos", json!({"name": "hidden", "auto_init": true})).await;
+    assert_eq!(hidden.status, 201, "{}", hidden.body);
+    let add = h.put("alice", "/repos/alice/hidden/collaborators/bob", json!({"permission": "pull"})).await;
+    assert!(matches!(add.status, 201 | 204), "{}", add.body);
+    assert_eq!(h.post("bob", "/repos/alice/hidden/forks", json!({"name": "hidden2", "visibility": "internal"})).await.status, 422);
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
@@ -183,8 +271,8 @@ async fn topics_collaborators_and_forks(pool: PgPool) {
     assert_eq!(h.delete("alice", "/repos/alice/proj/collaborators/bob").await.status, 204);
     assert_eq!(h.delete("alice", "/repos/alice/proj/collaborators/bob").await.status, 404);
 
-    // Forks.
-    let fork = h.post("bob", "/repos/alice/proj/forks", json!({})).await;
+    // Forks. An internal one, so the parent's owner can see it in the list.
+    let fork = h.post("bob", "/repos/alice/proj/forks", json!({"visibility": "internal"})).await;
     assert_eq!(fork.status, 202, "{}", fork.body);
     assert_eq!(fork.body["full_name"], "bob/proj");
     assert_eq!(fork.body["fork"], true);

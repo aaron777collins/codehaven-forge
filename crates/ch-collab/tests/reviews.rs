@@ -265,7 +265,7 @@ async fn suggestions_become_commits_on_the_head_branch(pool: PgPool) {
     assert_eq!(change.expected_sha.as_deref(), Some(sha_of(2).as_str()));
     assert_eq!(String::from_utf8(change.changes[0].content.clone().unwrap()).unwrap(), "fn a() {}\nfn better() {}\nfn c() {}\nfn d() {}\n");
     assert!(change.message.starts_with("Apply suggestion from @bob"));
-    assert!(change.message.contains("Co-authored-by: bob <bob@test.example>"));
+    assert!(change.message.contains(&format!("Co-authored-by: bob <{}+bob@users.noreply.test.example>", w.bob.0)), "{}", change.message);
     let v = w.core.pull_view(&w.carol_a(), w.repo, n).await.unwrap();
     assert_eq!(v.pull.head_sha, new_sha);
     let threads = w.core.review_threads(&w.carol_a(), w.repo, n).await.unwrap();

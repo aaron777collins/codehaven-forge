@@ -75,7 +75,9 @@ async fn merging_records_the_merge_everywhere(pool: PgPool) {
     assert_eq!(req.title, "Merge pull request #2 from feature");
     assert_eq!(req.message, "Add feature");
     assert_eq!(req.expected_base_sha, sha_of(1));
-    assert_eq!((req.committer.name.as_str(), req.committer.email.as_str()), ("bob", "bob@test.example"));
+    // Server-made commits carry the noreply address, never the account email.
+    let bob_noreply = format!("{}+bob@users.noreply.test.example", w.bob.0);
+    assert_eq!((req.committer.name.as_str(), req.committer.email.as_str()), ("bob", bob_noreply.as_str()));
     assert_eq!(req.author.email, req.committer.email);
 
     let events = w.events().await;
@@ -104,8 +106,8 @@ async fn squash_and_rebase_write_their_own_messages(pool: PgPool) {
     assert_eq!(sq.method, MergeMethod::Squash);
     assert_eq!(sq.title, "Add feature (#1)");
     assert!(sq.message.starts_with("* Change something"));
-    assert_eq!(sq.author.email, "carol@test.example", "the squash keeps the pull request author");
-    assert_eq!(sq.committer.email, "bob@test.example");
+    assert_eq!(sq.author.email, format!("{}+carol@users.noreply.test.example", w.carol.0), "the squash keeps the pull request author");
+    assert_eq!(sq.committer.email, format!("{}+bob@users.noreply.test.example", w.bob.0));
 
     let n2 = w.pull_from(w.carol, "other", "Second", "").await.pull.issue.number;
     merge(&w, &w.bob_a(), n2, MergeMethod::Rebase).await.unwrap();

@@ -2,8 +2,12 @@
 //!
 //! `repo_permission` is the maximum of: site admin, owner of a personal repo, org owner,
 //! direct collaborator, each team the user belongs to, the org's base permission for members,
-//! and `Read` for any signed-in user when the repo is public. It is then capped by the
-//! token's scopes. `Anonymous` gets `None` everywhere, public repo or not.
+//! and `Read` for any signed-in user when the repo is internal or public (epic ch-4pn). It is
+//! then capped by the token's scopes, and a public repo stays readable to any token.
+//!
+//! `Anonymous` gets `View` on a public repository while the instance switch allows public
+//! repositories, and `None` everywhere else. `View` sits below `Read`, so every check written
+//! for `Read` still refuses a signed-out caller.
 //!
 //! The decision itself is the pure function `compute`, so a table test can cover every row
 //! without a database.
@@ -12,6 +16,7 @@ use crate::core::Core;
 use async_trait::async_trait;
 use ch_core::error::{Error, Result};
 use ch_core::ids::*;
+use ch_core::model::Visibility;
 use ch_core::services::{Authz, OrgRole};
 use ch_core::{Actor, Permission};
 use std::sync::Arc;
@@ -26,7 +31,13 @@ pub struct Facts {
     pub team_permissions: Vec<Permission>,
     /// The org's base permission, when the user is a member of the repo's org.
     pub org_member_base: Option<Permission>,
+    /// The repository is internal or public, so every signed-in account reads it.
     pub public: bool,
+}
+
+/// What the grant rows alone give, with nothing from the tier.
+pub fn grant_of(f: &Facts) -> Permission {
+    compute(&Facts { public: false, ..f.clone() })
 }
 
 pub fn compute(f: &Facts) -> Permission {
@@ -71,11 +82,19 @@ impl AuthzService {
     }
 
     async fn user_permission(&self, user: UserId, site_admin: bool, repo: RepoId) -> Result<(Permission, bool)> {
+        let (facts, archived, _) = self.user_facts(user, site_admin, repo).await?;
+        Ok((facts.as_ref().map(compute).unwrap_or(Permission::None), archived))
+    }
+
+    /// The facts, whether the repo is archived, and whether a signed-out visitor could read it
+    /// right now (public, with the instance switch on). `None` facts for a missing repo.
+    async fn user_facts(&self, user: UserId, site_admin: bool, repo: RepoId) -> Result<(Option<Facts>, bool, bool)> {
         #[derive(sqlx::FromRow)]
         struct Row {
             owner_id: i64,
             owner_kind: String,
-            visibility: String,
+            access_tier: String,
+            open_to_all: bool,
             archived: bool,
             org_base: String,
             org_role: Option<String>,
@@ -83,7 +102,9 @@ impl AuthzService {
             team_perms: Option<Vec<String>>,
         }
         let row: Option<Row> = sqlx::query_as(
-            "SELECT r.owner_id, o.kind AS owner_kind, r.visibility, r.archived, o.org_base_permission AS org_base,
+            "SELECT r.owner_id, o.kind AS owner_kind, r.access_tier, \
+                    (r.access_tier = 'public' AND (SELECT s.allow_public_repos FROM visibility_settings s)) IS TRUE AS open_to_all, \
+                    r.archived, o.org_base_permission AS org_base,
                     (SELECT m.role FROM org_members m WHERE m.org_id = r.owner_id AND m.user_id = $2) AS org_role,
                     (SELECT c.permission FROM repo_collaborators c WHERE c.repo_id = r.id AND c.user_id = $2) AS collab,
                     (SELECT array_agg(tr.permission) FROM team_repos tr JOIN team_members tm ON tm.team_id = tr.team_id WHERE tr.repo_id = r.id AND tm.user_id = $2) AS team_perms
@@ -93,7 +114,7 @@ impl AuthzService {
         .bind(user.0)
         .fetch_optional(&self.core.db)
         .await?;
-        let Some(r) = row else { return Ok((Permission::None, false)) };
+        let Some(r) = row else { return Ok((None, false, false)) };
         let is_org = r.owner_kind == "org";
         let facts = Facts {
             site_admin,
@@ -102,9 +123,26 @@ impl AuthzService {
             collaborator: r.collab.as_deref().and_then(Permission::parse),
             team_permissions: r.team_perms.unwrap_or_default().iter().filter_map(|s| Permission::parse(s)).collect(),
             org_member_base: if is_org && r.org_role.is_some() { Permission::parse(&r.org_base) } else { None },
-            public: r.visibility == "public",
+            // An unknown stored tier reads as private.
+            public: matches!(Visibility::parse(&r.access_tier), Some(Visibility::Internal | Visibility::Public)),
         };
-        Ok((compute(&facts), r.archived))
+        Ok((Some(facts), r.archived, r.open_to_all))
+    }
+
+    /// `View` when a signed-out visitor may read the repository now: it is public and the
+    /// instance allows public repositories. `None` for everything else, missing included.
+    async fn anonymous_permission(&self, repo: RepoId) -> Result<(Permission, bool)> {
+        let row: Option<(bool, bool)> = sqlx::query_as(
+            "SELECT (r.access_tier = 'public' AND (SELECT s.allow_public_repos FROM visibility_settings s)) IS TRUE, r.archived \
+             FROM repositories r WHERE r.id = $1",
+        )
+        .bind(repo.0)
+        .fetch_optional(&self.core.db)
+        .await?;
+        Ok(match row {
+            Some((true, archived)) => (Permission::View, archived),
+            _ => (Permission::None, false),
+        })
     }
 
     /// What the person can do on a repository as an app would see it: never site admin power.
@@ -115,7 +153,8 @@ impl AuthzService {
     /// The permission and whether the repo is archived.
     async fn resolve(&self, actor: &Actor, repo: RepoId) -> Result<(Permission, bool)> {
         match actor {
-            Actor::Anonymous | Actor::Runner { .. } => Ok((Permission::None, false)),
+            Actor::Anonymous => self.anonymous_permission(repo).await,
+            Actor::Runner { .. } => Ok((Permission::None, false)),
             Actor::System => Ok((Permission::Admin, false)),
             Actor::Job { repo_id, perms, .. } => {
                 // A job may read its own repo and nothing else, public or not.
@@ -130,8 +169,11 @@ impl AuthzService {
             }
             Actor::User { id, .. } => self.user_permission(*id, actor.is_site_admin(), repo).await,
             Actor::Token { user_id, scopes, .. } => {
-                let (p, archived) = self.user_permission(*user_id, false, repo).await?;
-                Ok((p.min(scopes.repo_cap()), archived))
+                let (facts, archived, open_to_all) = self.user_facts(*user_id, false, repo).await?;
+                let p = facts.as_ref().map(compute).unwrap_or(Permission::None).min(scopes.repo_cap());
+                // What anyone can read, any token can read.
+                let floor = if open_to_all { Permission::View } else { Permission::None };
+                Ok((p.max(floor), archived))
             }
             Actor::App { user_id, grant, .. } => {
                 // What the person can do, capped by what they gave this app on this repository.
@@ -154,6 +196,18 @@ impl Authz for AuthzService {
         Ok(self.resolve(actor, repo).await?.0)
     }
 
+    async fn has_grant(&self, actor: &Actor, repo: RepoId) -> Result<bool> {
+        let (user, site_admin) = match actor {
+            Actor::System => return Ok(true),
+            Actor::User { id, .. } => (*id, actor.is_site_admin()),
+            Actor::Token { user_id, .. } | Actor::App { user_id, .. } => (*user_id, false),
+            // A job reads its own repository, which is not a grant to contribute.
+            _ => return Ok(false),
+        };
+        let (facts, _, _) = self.user_facts(user, site_admin, repo).await?;
+        Ok(facts.as_ref().map(grant_of).unwrap_or(Permission::None) >= Permission::Read)
+    }
+
     async fn org_role(&self, actor: &Actor, org: OrgId) -> Result<Option<OrgRole>> {
         if actor.is_site_admin() {
             return Ok(Some(OrgRole::Owner));
@@ -171,13 +225,18 @@ impl Authz for AuthzService {
         })
     }
 
-    /// `NotFound` when the actor cannot read the repo at all, `Forbidden` when they can see
+    /// `NotFound` when the actor cannot see the repo at all, `Forbidden` when they can see
     /// it but lack `needed`. A write to an archived repository says so. Admin level actions
     /// (such as unarchiving) stay possible.
     async fn require(&self, actor: &Actor, repo: RepoId, needed: Permission) -> Result<()> {
         let (have, archived) = self.resolve(actor, repo).await?;
-        if have < Permission::Read {
+        if have < Permission::View {
             return Err(Error::NotFound);
+        }
+        // A signed-out visitor only ever reads. Anything more is the gate's rejection, never a
+        // message that says the repository exists.
+        if actor.is_anonymous() && needed > Permission::View {
+            return Err(Error::unauthorized());
         }
         if have < needed {
             return Err(Error::forbidden(match needed {
@@ -241,5 +300,19 @@ mod tests {
         for (name, facts, want) in cases {
             assert_eq!(compute(&facts), want, "{name}");
         }
+    }
+
+    #[test]
+    fn the_tier_is_never_a_grant() {
+        // What the contribution setting asks: does access come from a grant row?
+        assert_eq!(grant_of(&Facts { public: true, ..f() }), None, "reading an internal or public repo is not a grant");
+        assert_eq!(grant_of(&Facts { public: true, collaborator: Some(Read), ..f() }), Read);
+        assert_eq!(grant_of(&Facts { public: true, org_member_base: Some(None), ..f() }), None);
+        assert_eq!(grant_of(&Facts { owns_personal_repo: true, public: true, ..f() }), Admin);
+        // The tier still gives every signed-in account Read, so nothing changes for them.
+        assert_eq!(compute(&Facts { public: true, ..f() }), Read);
+        // View exists only for signed-out reading and is below every grant.
+        assert!(View < Read && None < View);
+        assert_eq!(Permission::parse("view"), Option::None, "View is never stored or parsed");
     }
 }

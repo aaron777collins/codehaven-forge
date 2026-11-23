@@ -425,8 +425,9 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
         assignees.push(people.get(*a).await);
     }
     let can_triage = rc.perm.allows(Permission::Triage) && !rc.repo.archived;
-    let me = ctx.user_id()?;
-    let can_edit = can_triage || (issue.author_id == me && !rc.repo.archived);
+    // A signed-out visitor reads a public issue and gets no forms.
+    let me = ctx.user_id().ok();
+    let can_edit = can_triage || (Some(issue.author_id) == me && !rc.repo.archived);
 
     let milestones = ctx.state.tracker.milestones(&ctx.actor, rc.id(), None).await.unwrap_or_default();
     let milestone = issue
@@ -494,7 +495,7 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
         assignees,
         milestone,
         closed_note,
-        can_comment: !rc.repo.archived && !issue.locked,
+        can_comment: me.is_some() && !rc.repo.archived && !issue.locked,
         can_triage,
         can_edit,
         label_choices,

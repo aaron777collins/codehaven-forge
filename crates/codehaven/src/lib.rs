@@ -12,6 +12,7 @@ pub mod headers;
 pub mod internal;
 pub mod meta;
 pub mod metrics;
+pub mod public_gate;
 pub mod reqinfo;
 pub mod serve;
 pub mod wiring;

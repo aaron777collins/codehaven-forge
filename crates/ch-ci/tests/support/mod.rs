@@ -22,8 +22,9 @@ use ch_ci::shared::shared_for;
 use ch_ci::source::{CommitSummary, WorkflowSource};
 use ch_core::actor::{Actor, AuthVia, Permission};
 use ch_core::events::{DomainEvent, StoredEvent};
+use ch_core::live::Credential;
 use ch_core::model::*;
-use ch_core::services::{Authz, OrgRole, Repos};
+use ch_core::services::{Authn, Authz, OrgRole, Repos};
 use ch_core::state::AppState;
 use ch_core::{Error, OrgId, RepoId, Result, UserId};
 use ch_testkit::fixtures::{TestEnv, admin_actor, user_actor};
@@ -128,6 +129,11 @@ impl WorkflowSource for GitDirs {
     async fn resolve(&self, repo: RepoId, rev: &str) -> Result<String> {
         let dir = self.dir(repo).ok_or(Error::NotFound)?;
         git(&dir, &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")]).map(|s| s.trim().to_string()).ok_or(Error::NotFound)
+    }
+    async fn exact_ref(&self, repo: RepoId, name: &str) -> Result<Option<String>> {
+        let dir = self.dir(repo).ok_or(Error::NotFound)?;
+        let Some(out) = git(&dir, &["for-each-ref", "--format=%(refname) %(objectname)", name]) else { return Ok(None) };
+        Ok(out.lines().filter_map(|l| l.split_once(' ')).find(|(n, _)| *n == name).map(|(_, sha)| sha.to_string()))
     }
     async fn list_dir(&self, repo: RepoId, sha: &str, d: &str) -> Result<Vec<String>> {
         let dir = self.dir(repo).ok_or(Error::NotFound)?;
@@ -247,7 +253,7 @@ impl Repos for DbRepos {
             return Err(Error::NotFound);
         }
         let r: (i64, i64, String, String, String, String, String, bool, bool, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
-            "SELECT r.id, r.owner_id, u.username::text, r.name::text, r.description, r.visibility, r.default_branch, r.archived, r.is_empty, r.created_at FROM repositories r JOIN users u ON u.id = r.owner_id WHERE r.id = $1",
+            "SELECT r.id, r.owner_id, u.username::text, r.name::text, r.description, r.access_tier, r.default_branch, r.archived, r.is_empty, r.created_at FROM repositories r JOIN users u ON u.id = r.owner_id WHERE r.id = $1",
         )
         .bind(id.0)
         .fetch_one(&self.0)
@@ -258,7 +264,7 @@ impl Repos for DbRepos {
             owner_name: r.2,
             name: r.3,
             description: r.4,
-            visibility: if r.5 == "public" { Visibility::Public } else { Visibility::Private },
+            visibility: Visibility::parse(&r.5).unwrap_or(Visibility::Private),
             default_branch: r.6,
             archived: r.7,
             is_empty: r.8,
@@ -266,6 +272,7 @@ impl Repos for DbRepos {
             topics: vec![],
             pushed_at: None,
             created_at: r.9,
+            contribution_policy: Default::default(),
         })
     }
     async fn list_for_owner(&self, _: &Actor, _: UserId) -> Result<Vec<Repo>> {
@@ -357,9 +364,61 @@ async fn fake_gate(State(pool): State<PgPool>, mut req: Request, next: Next) -> 
     if actor.is_anonymous() && !is_public {
         return Response::builder().status(StatusCode::UNAUTHORIZED).body(Body::from("{\"message\":\"Requires authentication\"}")).unwrap();
     }
+    let credential = match &actor {
+        Actor::User { id, .. } => Some(Credential::Basic { user_id: *id, fingerprint: vec![] }),
+        Actor::Runner { runner_id } => Some(Credential::Runner { runner_id: *runner_id }),
+        Actor::Job { job_id, .. } => Some(Credential::Job { job_id: *job_id }),
+        _ => None,
+    };
+    if let Some(c) = credential {
+        req.extensions_mut().insert(c);
+    }
     req.extensions_mut().insert(actor);
     req.extensions_mut().insert(ClientInfo { ip: "10.1.2.3".parse().unwrap(), user_agent: Some("test".into()) });
     next.run(req).await
+}
+
+/// Plays the identity service for the live checks of a stream: a person's credential lasts
+/// while the account is not suspended, a job's while the job is not completed.
+struct TestAuthn(PgPool);
+
+#[async_trait]
+impl Authn for TestAuthn {
+    async fn from_session(&self, _c: &str, _client: &ClientInfo) -> Result<Actor> {
+        Ok(Actor::Anonymous)
+    }
+    async fn from_basic(&self, _u: &str, _s: &str, _client: &ClientInfo) -> Result<Actor> {
+        Err(Error::unauthorized())
+    }
+    async fn from_bearer(&self, _t: &str, _client: &ClientInfo) -> Result<Actor> {
+        Err(Error::unauthorized())
+    }
+    async fn from_ssh_key(&self, _f: &str) -> Result<Option<SshIdentity>> {
+        Ok(None)
+    }
+    async fn recheck(&self, credential: &Credential) -> Result<Option<Actor>> {
+        match credential {
+            Credential::Basic { user_id, .. } => {
+                let admin: Option<bool> = sqlx::query_scalar("SELECT is_admin FROM users WHERE id = $1 AND suspended_at IS NULL")
+                    .bind(user_id.0)
+                    .fetch_optional(&self.0)
+                    .await?;
+                Ok(admin.map(|a| if a { admin_actor(*user_id) } else { user_actor(*user_id) }))
+            }
+            Credential::Job { job_id } => {
+                let repo: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM workflow_jobs WHERE id = $1 AND status <> 'completed'")
+                    .bind(job_id.0)
+                    .fetch_optional(&self.0)
+                    .await?;
+                Ok(repo.map(|r| Actor::Job {
+                    job_id: *job_id,
+                    repo_id: RepoId(r),
+                    perms: ch_core::JobPerms { contents_read: true, write_checks: true },
+                }))
+            }
+            _ => Ok(None),
+        }
+    }
 }
 
 impl World {
@@ -377,6 +436,7 @@ impl World {
         let mut b = env.builder().await;
         let authz = Arc::new(DbAuthz(pool.clone()));
         b.authz = authz.clone();
+        b.authn = Arc::new(TestAuthn(pool.clone()));
         b.repos = Arc::new(DbRepos(pool.clone(), authz));
         use ch_core::state::Install;
         ch_ci::build(&b).unwrap().install(&mut b);

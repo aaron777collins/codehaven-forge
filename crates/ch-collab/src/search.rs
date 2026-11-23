@@ -23,9 +23,9 @@ fn excerpt(s: &str) -> String {
 
 impl Core {
     pub async fn search_repos(&self, actor: &Actor, query: &str, limit: u32) -> Result<Vec<SearchHit>> {
-        if actor.is_anonymous() {
-            return Ok(Vec::new());
-        }
+        // Signed out sees public repositories only, filtered in SQL before paging so private
+        // rows are never even read for a stranger.
+        let only_public = if actor.is_anonymous() { "AND r.access_tier = 'public'" } else { "" };
         let q = clean(query);
         let want = limit.clamp(1, 1000) as usize;
         let like = format!("%{}%", util::like_escape(&q));
@@ -34,23 +34,24 @@ impl Core {
         let mut offset = 0i64;
         for _ in 0..5 {
             let rows: Vec<(RepoId, String, String)> = if q.is_empty() {
-                sqlx::query_as(
+                sqlx::query_as(&format!(
                     "SELECT r.id, u.username::text || '/' || r.name::text, r.description FROM repositories r JOIN users u ON u.id = r.owner_id
-                     ORDER BY r.updated_at DESC, r.id DESC LIMIT $1 OFFSET $2",
-                )
+                     WHERE true {only_public}
+                     ORDER BY r.updated_at DESC, r.id DESC LIMIT $1 OFFSET $2"
+                ))
                 .bind(batch)
                 .bind(offset)
                 .fetch_all(self.db())
                 .await?
             } else {
-                sqlx::query_as(
+                sqlx::query_as(&format!(
                     "SELECT r.id, u.username::text || '/' || r.name::text, r.description
                      FROM repositories r JOIN users u ON u.id = r.owner_id
-                     WHERE r.search @@ plainto_tsquery('simple', $1) OR r.name::text ILIKE $2 ESCAPE '\\' OR (u.username::text || '/' || r.name::text) ILIKE $2 ESCAPE '\\'
-                           OR r.name::text % $1 OR r.description ILIKE $2 ESCAPE '\\'
+                     WHERE (r.search @@ plainto_tsquery('simple', $1) OR r.name::text ILIKE $2 ESCAPE '\\' OR (u.username::text || '/' || r.name::text) ILIKE $2 ESCAPE '\\'
+                           OR r.name::text % $1 OR r.description ILIKE $2 ESCAPE '\\') {only_public}
                      ORDER BY (ts_rank(r.search, plainto_tsquery('simple', $1)) + similarity(r.name::text, $1)) DESC, r.updated_at DESC, r.id DESC
-                     LIMIT $3 OFFSET $4",
-                )
+                     LIMIT $3 OFFSET $4"
+                ))
                 .bind(&q)
                 .bind(&like)
                 .bind(batch)
@@ -60,7 +61,7 @@ impl Core {
             };
             let n = rows.len() as i64;
             offset += n;
-            let ok = self.readable(actor, rows.iter().map(|r| r.0).collect()).await?;
+            let ok = self.readable_at(actor, rows.iter().map(|r| r.0).collect(), Permission::View).await?;
             for (id, name, desc) in rows {
                 if ok.contains(&id) {
                     out.push(SearchHit { kind: "repo".into(), id: id.0, title: name, snippet: excerpt(&desc) });

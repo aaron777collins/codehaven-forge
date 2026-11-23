@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use ch_core::audit::{Outcome, action};
 use ch_core::error::{Error, Result};
 use ch_core::ids::*;
+use ch_core::live::Credential;
 use ch_core::model::{ClientInfo, SshIdentity};
 use ch_core::services::Authn;
 use ch_core::{Actor, AuthVia, JobPerms, Scopes};
@@ -318,4 +319,90 @@ impl Authn for AuthnService {
             .await?;
         Ok(deploy.map(|(repo_id, read_only)| SshIdentity::Deploy { repo_id: RepoId(repo_id), read_only }))
     }
+
+    async fn recheck(&self, credential: &Credential) -> Result<Option<Actor>> {
+        // Reads only: no last-seen, expiry or last-used update and no failure count, so a
+        // stream that asks every second neither keeps a session alive nor fills a budget.
+        let db = &self.core.db;
+        let user_id: Option<i64> = match credential {
+            Credential::Session { hash } => {
+                sqlx::query_scalar(
+                    "SELECT s.user_id FROM sessions s JOIN users u ON u.id = s.user_id
+                     WHERE s.token_hash = $1 AND NOT s.pending_2fa AND s.expires_at > now()
+                       AND s.created_at + interval '30 days' > now() AND u.suspended_at IS NULL AND u.kind = 'user'",
+                )
+                .bind(hash.as_slice())
+                .fetch_optional(db)
+                .await?
+            }
+            Credential::Basic { user_id, fingerprint } => {
+                let row: Option<(Option<String>, bool)> = sqlx::query_as(
+                    "SELECT password_hash, totp_enabled_at IS NOT NULL FROM users WHERE id = $1 AND suspended_at IS NULL AND kind = 'user'",
+                )
+                .bind(user_id.0)
+                .fetch_optional(db)
+                .await?;
+                match row {
+                    Some((Some(h), false)) if password_fingerprint_of(&h) == *fingerprint => Some(user_id.0),
+                    _ => None,
+                }
+            }
+            Credential::Token { token_id } => {
+                let row: Option<(i64, Vec<String>)> = sqlx::query_as(
+                    "SELECT t.user_id, t.scopes FROM personal_access_tokens t JOIN users u ON u.id = t.user_id
+                     WHERE t.id = $1 AND t.revoked_at IS NULL AND t.expires_at > now() AND u.suspended_at IS NULL AND u.kind = 'user'",
+                )
+                .bind(token_id.0)
+                .fetch_optional(db)
+                .await?;
+                return Ok(row.map(|(user_id, scopes)| Actor::Token {
+                    user_id: UserId(user_id),
+                    token_id: *token_id,
+                    scopes: Scopes::new(scopes),
+                }));
+            }
+            Credential::Job { job_id } => {
+                let row: Option<(i64, bool)> = sqlx::query_as(
+                    "SELECT j.repo_id, (r.event IN ('pull_request', 'pull_request_target') AND COALESCE(r.event_payload->>'fork', 'false') = 'true')
+                     FROM workflow_jobs j JOIN workflow_runs r ON r.id = j.run_id WHERE j.id = $1 AND j.status <> 'completed'",
+                )
+                .bind(job_id.0)
+                .fetch_optional(db)
+                .await?;
+                return Ok(row.map(|(repo_id, fork_pr)| Actor::Job {
+                    job_id: *job_id,
+                    repo_id: RepoId(repo_id),
+                    perms: JobPerms { contents_read: true, write_checks: !fork_pr },
+                }));
+            }
+            Credential::Runner { runner_id } => {
+                let live: Option<i64> = sqlx::query_scalar("SELECT id FROM runners WHERE id = $1 AND revoked_at IS NULL")
+                    .bind(runner_id.0)
+                    .fetch_optional(db)
+                    .await?;
+                return Ok(live.map(|_| Actor::Runner { runner_id: *runner_id }));
+            }
+            // An app opens `/mcp` only, which has no stream.
+            Credential::App { .. } => return Ok(None),
+        };
+        let Some(id) = user_id else { return Ok(None) };
+        let via = if matches!(credential, Credential::Basic { .. }) { AuthVia::Basic } else { AuthVia::Session };
+        match load_user(db, UserId(id)).await {
+            Ok(user) => Ok(Some(actor_for(&user, via))),
+            Err(Error::NotFound) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn password_fingerprint(&self, user: UserId) -> Result<Option<Vec<u8>>> {
+        let hash: Option<Option<String>> =
+            sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1").bind(user.0).fetch_optional(&self.core.db).await?;
+        Ok(hash.flatten().map(|h| password_fingerprint_of(&h)))
+    }
+}
+
+/// A fingerprint of a stored password hash. Any password change gives a new salt and so a new
+/// fingerprint, which ends a Basic credential's live check.
+fn password_fingerprint_of(stored_hash: &str) -> Vec<u8> {
+    tokens::sha256(stored_hash.as_bytes()).to_vec()
 }

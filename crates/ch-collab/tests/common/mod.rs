@@ -96,7 +96,7 @@ type RepoRowT = (
 impl FakeRepos {
     async fn load(&self, sql_where: &str, a: &str, b: &str, id: i64) -> Result<Repo> {
         let sql = format!(
-            "SELECT r.id, r.owner_id, u.username::text, r.name::text, r.description, r.visibility, r.default_branch, r.archived, r.is_empty, r.fork_parent_id, r.topics, r.pushed_at, r.created_at
+            "SELECT r.id, r.owner_id, u.username::text, r.name::text, r.description, r.access_tier, r.default_branch, r.archived, r.is_empty, r.fork_parent_id, r.topics, r.pushed_at, r.created_at
              FROM repositories r JOIN users u ON u.id = r.owner_id WHERE {sql_where}"
         );
         let mut q = sqlx::query_as::<_, RepoRowT>(&sql);
@@ -108,7 +108,7 @@ impl FakeRepos {
             owner_name: r.2,
             name: r.3,
             description: r.4,
-            visibility: if r.5 == "public" { Visibility::Public } else { Visibility::Private },
+            visibility: Visibility::parse(&r.5).unwrap_or(Visibility::Private),
             default_branch: r.6,
             archived: r.7,
             is_empty: r.8,
@@ -116,6 +116,7 @@ impl FakeRepos {
             topics: r.10,
             pushed_at: r.11,
             created_at: r.12,
+            contribution_policy: Default::default(),
         })
     }
 }

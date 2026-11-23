@@ -28,7 +28,7 @@ which order. When the two disagree, fix whichever is wrong in the same commit.
 | Background work | Postgres outbox for domain events plus a Postgres job queue (`FOR UPDATE SKIP LOCKED`) | No Redis, no broker. One less service to run |
 | Config | `codehaven.toml` plus `CODEHAVEN__SECTION__KEY` env overrides, loaded with `figment` | Secrets come from files, never from the TOML |
 | Exposure | Behind any reverse proxy chosen by `CODEHAVEN_PROXY`, no SSO needed, git over SSH published where `CODEHAVEN_SSH_BIND` says | People need to reach it, and the app secures itself. Section 2.4 |
-| Access | Invite-only. No open sign-up, ever. Signed-out visitors see the sign-in page, the invite page and static files, nothing else | Only invited, signed-in accounts can do anything. Section 7.3 |
+| Access | Invite-only. No open sign-up, ever. Signed-out visitors reach the sign-in page, the invite page, static files and public repositories, and nothing else; nothing signed out can write | Only a public repository's content is readable without an invited account. Section 7.3 |
 | First admin | Created by `codehaven admin create-user --admin` on the host. There is no web setup page | Nobody on the internet can claim a fresh instance. Section 7.5 |
 
 ## 2. Deployment
@@ -114,7 +114,7 @@ to the server)".
 | Who | How |
 | --- | --- |
 | Anyone with an account | `https://code.example.com` in a browser |
-| git over HTTPS | `git clone https://code.example.com/alice/demo.git` with a personal access token (or a password if the account has no two-factor) |
+| git over HTTPS | `git clone https://code.example.com/alice/demo.git` with a personal access token (or a password if the account has no two-factor). A public repository clones with no credentials |
 | git over SSH | `git clone ssh://git@127.0.0.1:2222/alice/demo.git`, against `CODEHAVEN_SSH_BIND`. When that is loopback it takes a tunnel first: `ssh -L 2222:127.0.0.1:2222 <the host>`. Only people with a login on the host can do this |
 | Docker registry | `docker login code.example.com` with a username and a token |
 | Operator | `ssh -L 3200:127.0.0.1:3200 <the host>` for API and git calls that skip the proxy. Browser forms only accept the public origin (section 7.6), so sign in through it |
@@ -124,7 +124,8 @@ to the server)".
 Codehaven is built to sit behind a reverse proxy, and it needs no SSO gate in
 front of it: a forge behind one cannot serve git clients (they cannot answer a
 two-factor prompt) or people who have no account on the SSO. Codehaven protects
-itself instead: invite-only, no anonymous read (section 7.3), rate limits and
+itself instead: invite-only, no anonymous read outside public repositories
+(section 7.3), rate limits and
 lockout (section 7.6). How the server is reached is one setting,
 `CODEHAVEN_PROXY`, in three modes, and `deploy/compose.sh` adds the compose
 file for the one in the env file:
@@ -160,7 +161,8 @@ else behind the same proxy either.
 
 Being on the proxy network means the other services on it can reach the server
 directly. That is acceptable because Codehaven treats every request the same
-way wherever it comes from: no session or token, no data.
+way wherever it comes from: no session or token, nothing beyond the public
+routes and public repositories (section 7.3).
 
 ### 2.5 Runner isolation
 
@@ -192,7 +194,7 @@ run on that daemon, and a job with the host socket is root on the host. Instead:
   `--cpus`, `--memory`, `--env`, `--workdir`, `--user` and `--shm-size`, each
   capped by the runner's limits. `--privileged`, volumes, devices, added
   capabilities and host networking fail validation with the line number.
-- The instance is public and every invited account can push, so workflows run
+- Every invited account can push, so workflows run
   only for repos owned by an account (or org) that a site admin has marked
   `can_run_ci`. Off by default. `ROADMAP.md` section 7.3.
 
@@ -284,25 +286,36 @@ pub enum Actor {
 }
 
 #[derive(PartialOrd, Ord)]
-pub enum Permission { None, Read, Triage, Write, Maintain, Admin }
+pub enum Permission { None, View, Read, Triage, Write, Maintain, Admin }
 ```
 
-`Anonymous` exists so the gate (section 7.3) has something to reject. The gate also limits
+`View` is reading that comes from the repository's tier, not from a grant: it is what a
+signed-out visitor gets on a public repository. It sits below `Read`, is never stored and
+never parsed, so any check written for `Read` refuses it. `Anonymous` is the signed-out
+caller: the gate (section 7.3) lets it read public repositories and nothing else. The gate also limits
 which credential opens which kind of route (`ch_core::access::actor_accepted`): a browser
 session opens pages and the API, Basic and personal access tokens open the API, git and the
 registry, a job token opens the runner API, git and the API, and a runner credential opens the
 runner API only. A credential that is valid but not accepted for a route is treated as no
 credential, so a token opens no web page and a session opens no git endpoint. No service
-method grants `Anonymous` anything: `Authz` returns `Permission::None` for it on
-every repo, public or not.
+method grants `Anonymous` a write: `Authz` returns `Permission::View` for `Anonymous` on a
+public repository while public repositories are allowed, and `Permission::None` everywhere
+else.
 
 ### 4.1a The public route list
 
-`ch_core::access::PUBLIC_ROUTES` is the complete list of routes a signed-out
-request may reach. It is a static table of method and path pattern, owned by
+`ch_core::access::PUBLIC_ROUTES` is the list of routes a signed-out request may
+reach other than the public-repository reads below. It is a static table of
+method and path pattern, owned by
 foundation, and every change to it is reviewed by Claude. The gate layer in the
 `codehaven` binary wraps the whole router and rejects any other request from
 `Anonymous` before a handler runs. Section 7.3 has the list.
+
+`ch_core::access::PUBLIC_REPO_ROUTES` lists what a signed-out visitor may read
+on public repositories. The gate admits such a request only when the switch is
+on and the repository or owner it names is public now; a layer inside the router
+checks the router chose the same route; `Authz` must still say `View`. Anything
+else gets the ordinary rejection.
 
 ### 4.2 Errors
 
@@ -384,9 +397,10 @@ foundation so `ch-collab`, `ch-notify` and `ch-render` agree on what a mention i
   redirect row.
 - Created with `git init --bare --initial-branch=<default>`. `core.hooksPath`
   points to the server's shared hooks directory, so hooks cannot be edited per repo.
-- Forks: a new bare repo with `objects/info/alternates` pointing to the root of
-  the fork network. Deleting a root with live forks is blocked until it is
-  re-parented by repacking one fork without alternates.
+- Forks: a new bare repo that fetches every ref from its source, so it copies
+  its objects and borrows nothing through `alternates`. A fork starts private
+  and can never be more visible than its source. Deleting a repository that
+  still has forks is refused.
 - Pull request refs in the base repo: `refs/pull/<n>/head` and `refs/pull/<n>/merge`.
 - Housekeeping job: `git gc --auto` after pushes, `git gc` weekly per active repo.
 
@@ -412,7 +426,7 @@ Extensions: `citext`, `pg_trgm`.
 | Accounts | `users` (`kind` user, org or bot; username, display name, password hash, is_admin, suspended_at, totp secret encrypted, invited_by, can_run_ci), `user_emails`, `sessions` (hash, user, created, last seen, absolute expiry, ip, user agent), `oidc_identities`, `personal_access_tokens` (hash, prefix, scopes, expiry, last used), `ssh_keys` (fingerprint unique), `totp_recovery_codes`, `user_settings` (theme, notification prefs) |
 | Access | `invites` (token hash, created_by, optional email, grants_admin, grants_ci, optional org and team to join, expires_at, used_at, used_by, revoked_at), `one_time_links` (hash, user, purpose `set_password` or `reset_password`, expires_at, used_at), `login_failures` (account or ip key, count, window start, locked_until) |
 | Orgs | `org_members` (role owner or member), `teams`, `team_members`, `team_repos` (permission) |
-| Repos | `repositories` (owner, name, visibility, default_branch, fork parent, archived, empty, flags, next_number), `repo_redirects`, `repo_collaborators`, `branch_protections`, `stars`, `watches`, `deploy_keys` |
+| Repos | `repositories` (owner, name, `access_tier`, with the legacy `visibility` column kept in step by a trigger for older binaries, default_branch, fork parent, archived, empty, flags, next_number), `repo_redirects`, `repo_collaborators`, `branch_protections`, `stars`, `watches`, `deploy_keys` |
 | Issues | `issues` (also the row for each PR, `is_pull`), `labels`, `issue_labels`, `milestones`, `issue_assignees`, `issue_comments`, `reactions`, `timeline_events`, `issue_subscriptions` |
 | Pull requests | `pull_requests` (head repo and ref, head sha, base ref, merge base, mergeable state, merge commit, merged by, draft), `review_requests`, `reviews`, `review_threads`, `review_comments` (path, side, line, start_line, original_line, commit, diff_hunk, outdated) |
 | Delivery | `notifications`, `webhooks` (scope repo or org, url, secret encrypted, events, active), `webhook_deliveries` |
@@ -462,10 +476,11 @@ POST /{owner}/{repo}(.git)/git-upload-pack
 POST /{owner}/{repo}(.git)/git-receive-pack
 ```
 
-The handler authenticates first, always. There is no anonymous clone, even of a
-repo marked public. With no credentials it answers `401` with
-`WWW-Authenticate: Basic realm="Codehaven"`, the same response whether the repo
-exists or not, so names cannot be probed. Basic auth takes a personal access
+A public repository can be cloned and fetched over HTTPS with no credentials:
+`info/refs` with exactly `service=git-upload-pack`, and `git-upload-pack`.
+Everything else authenticates first. With no credentials it answers `401` with
+`WWW-Authenticate: Basic realm="Codehaven"`, the same response for private,
+internal and missing repositories, so names cannot be probed. Basic auth takes a personal access
 token as the password, or the account password if the account has no two-factor.
 Failures count toward the same rate limits and lockout as the sign-in form. Then
 it checks `Authz` and pipes the request body into
@@ -580,9 +595,9 @@ signed-in browser session with two-factor.
 - direct collaborator permission
 - each team permission for teams the user belongs to
 - the org's base permission for members (default `Read`)
-- `Read` if the repo is public and the actor is a signed-in user. On this
-  instance "public" means "every account on this Codehaven", and the UI says so.
-  `Anonymous` gets `None` everywhere
+- `Read` if the repo is internal or public and the actor is a signed-in user
+- `View` for `Anonymous` if the repo is public and public repositories are
+  allowed; `None` otherwise
 
 then capped by the token's scopes (a `repo:read` token never writes) and by
 `archived` (writes fail with a clear message). Job tokens get `Read` on contents
@@ -604,8 +619,9 @@ runner registration tokens, suspend accounts, and read the audit log.
 
 ### 7.3 What a signed-out visitor can reach
 
-The instance is private as a whole. The gate layer (section 4.1a) lets a request
-with no valid session, token or runner credential reach only these routes:
+The instance is invite-only as a whole. The gate layer (section 4.1a) lets a
+request with no valid session, token or runner credential reach only these
+routes:
 
 | Route | Why |
 | --- | --- |
@@ -618,13 +634,22 @@ with no valid session, token or runner credential reach only these routes:
 | `GET /healthz` | Returns `ok` and nothing else |
 | `POST /api/runner/v1/register` | Rejects anything without a valid admin-issued registration token |
 
+While the site admin allows public repositories, a signed-out visitor can also
+read one: its pages, the REST reads listed in
+`ch_core::access::PUBLIC_REPO_ROUTES`, raw files, archives, releases, and
+`git clone` and `git fetch` over HTTPS. Nothing signed out can write. SSH still
+needs a key. Actions history, CI checks, the container registry, people search,
+code search and org members stay closed. Private, internal and missing
+repositories give the same rejection as anything else below.
+
 Everything else, for a signed-out request:
 
 - Web pages: `303` to `/login?next=<path>`, the same for paths that exist and
   paths that do not. `next` only accepts a local path.
-- `/api/v3/*`: `401` with `{"message": "Requires authentication"}`. No `/meta`,
-  no `/version`, no rate limit numbers.
-- git smart HTTP: `401` with a Basic challenge, identical for every repo name.
+- `/api/v3/*` outside `PUBLIC_REPO_ROUTES`: `401` with `{"message": "Requires
+  authentication"}`. No `/meta`, no `/version`, no rate limit numbers.
+- git smart HTTP outside a public repository: `401` with a Basic challenge, the
+  same for private, internal and missing repositories.
 - `/v2/` registry: `401` with a Bearer challenge. No anonymous pulls.
 - `/api/runner/v1/*` other than register: `401` unless a runner credential or
   job token is present.
@@ -640,7 +665,7 @@ A test in `crates/codehaven/tests/anonymous_surface.rs` walks every route the
 router has registered, sends each one a signed-out request, and fails if
 anything outside the table above returns anything but the rejection for its
 kind. A new route is private the moment it is added, and stays private unless
-someone edits `PUBLIC_ROUTES` on purpose.
+someone edits `PUBLIC_ROUTES` or `PUBLIC_REPO_ROUTES` on purpose.
 
 ### 7.4 Invites
 
@@ -1420,5 +1445,6 @@ a marketplace, service containers, reusable workflows, environments with
 approval, WebAuthn, more than one server instance, S3 storage. Each fits behind
 an existing boundary and is listed in `ROADMAP.md` under later work.
 
-Never, by design: open sign-up, anonymous read access, a web setup page for the
+Never, by design: open sign-up, anonymous writes, anonymous reads of anything
+that is not in a public repository, a web setup page for the
 first admin, and login by trusted proxy header.

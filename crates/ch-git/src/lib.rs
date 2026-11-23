@@ -20,7 +20,9 @@ pub mod read;
 pub mod repos;
 mod service;
 pub mod store;
+pub mod tier;
 pub mod transport;
+pub mod workspace;
 pub mod write;
 
 pub use core::{GitCore, audit_action};
@@ -78,7 +80,7 @@ pub fn build(b: &AppStateBuilder) -> Result<GitServices> {
         )));
     }
     let socket = store.run_dir.join(format!("hook-{}-{}.sock", std::process::id(), hex::encode(rand::random::<[u8; 4]>())));
-    let core = GitCore {
+    let core = Arc::new_cyclic(|me| GitCore {
         cfg: b.config.clone(),
         db: b.db.clone(),
         audit: b.audit.clone(),
@@ -90,8 +92,10 @@ pub fn build(b: &AppStateBuilder) -> Result<GitServices> {
         procs: tokio::sync::Semaphore::new(48),
         pushed: maintenance::Pushed::default(),
         diff_cache: moka::future::Cache::builder().max_capacity(256).time_to_live(std::time::Duration::from_secs(600)).build(),
-    };
-    Ok(GitServices { core: Arc::new(core) })
+        writes: tier::WriteGate::default(),
+        me: me.clone(),
+    });
+    Ok(GitServices { core })
 }
 
 /// Removes socket files nobody is listening on, left by a crashed server.

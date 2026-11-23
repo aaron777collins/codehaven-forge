@@ -1,0 +1,23 @@
+{% extends "admin/layout.html" %}
+{% import "components.html" as ui %}
+{% block admin_body %}
+<h1>Settings</h1>
+<section class="card stack">
+  <h2>Allow public repositories</h2>
+  <p>{{ text }}</p>
+  {% if !on %}
+  <form method="post" action="/admin/settings" class="inline">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="allow_public_repos" value="1">
+    <button class="btn btn-primary" type="submit">Allow public repositories</button>
+  </form>
+  {% else %}
+  <p>Public repositories are allowed.</p>
+  <form method="post" action="/admin/settings" class="inline" data-confirm="{{ public_count }} public repositories become internal now. Turning this on again will not make them public again.">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="allow_public_repos" value="0">
+    <button class="btn danger" type="submit">Turn off public repositories</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

@@ -251,7 +251,7 @@ impl Core {
     }
 
     pub async fn pull_view(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<PullView> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (issue, mut pull) = self.pull_pair(repo, number).await?;
         if pull.mergeable() == MergeableState::Unknown && issue.open {
             self.refresh_pull(&issue, &pull).await;
@@ -261,7 +261,7 @@ impl Core {
     }
 
     pub async fn pull_views(&self, actor: &Actor, repo: RepoId, filter: PullFilter) -> Result<Vec<PullView>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (offset, limit) = util::page(filter.issue.page, filter.issue.per_page);
         let head = filter.head.as_deref().map(|h| match h.split_once(':') {
             Some((o, b)) => (Some(o.to_string()), short_branch(b).to_string()),
@@ -292,7 +292,7 @@ impl Core {
         head_ref: &str,
         base_ref: &str,
     ) -> Result<Option<PullView>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let sql = format!(
             "SELECT {} FROM issues i JOIN pull_requests p ON p.issue_id = i.id
              WHERE p.repo_id = $1 AND COALESCE(p.head_repo_id, p.repo_id) = $2 AND p.head_ref = $3 AND p.base_ref = $4 AND i.open ORDER BY i.number DESC LIMIT 1",
@@ -326,7 +326,7 @@ impl Core {
     pub async fn pull_create(&self, actor: &Actor, new: NewPull, client: &ClientInfo) -> Result<PullView> {
         let user = writing_user(actor, new.repo_id)?;
         let base_repo = self.repo(new.repo_id).await.map_err(|_| Error::NotFound)?;
-        self.need_read(actor, base_repo.id).await?;
+        self.need_contribute(actor, base_repo.id).await?;
         Self::ensure_writable(&base_repo)?;
         if !base_repo.has_pulls {
             return Err(Error::invalid("PullRequest", "base", "Pull requests are turned off for this repository"));
@@ -506,7 +506,7 @@ impl Core {
 
     pub async fn pull_update(&self, actor: &Actor, repo: RepoId, number: i64, patch: PullPatch, _client: &ClientInfo) -> Result<PullView> {
         let user = writing_user(actor, repo)?;
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_contribute(actor, repo).await?;
         let rrow = self.repo(repo).await?;
         Self::ensure_writable(&rrow)?;
         let mut tx = self.db().begin().await?;
@@ -590,7 +590,7 @@ impl Core {
 
     pub async fn pull_set_draft(&self, actor: &Actor, repo: RepoId, number: i64, draft: bool, _client: &ClientInfo) -> Result<PullView> {
         let user = writing_user(actor, repo)?;
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_contribute(actor, repo).await?;
         Self::ensure_writable(&self.repo(repo).await?)?;
         let mut tx = self.db().begin().await?;
         let issue = self.issue_row_tx(&mut tx, repo, number).await?;
@@ -628,13 +628,13 @@ impl Core {
     }
 
     pub async fn pull_files(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Diff> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (issue, pull) = self.pull_pair(repo, number).await?;
         Ok(self.pull_compare(&issue, &pull).await?.diff)
     }
 
     pub async fn pull_commits(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Vec<CommitInfo>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (issue, pull) = self.pull_pair(repo, number).await?;
         Ok(self.pull_compare(&issue, &pull).await?.commits)
     }

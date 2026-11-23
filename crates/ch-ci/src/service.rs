@@ -4,6 +4,7 @@ use crate::ctx::Ctx;
 use crate::discovery::{self, repo_ci, to_files};
 use crate::logs::read_range;
 use crate::runs::{self, JobRow, RunRow, fetch_run};
+use crate::source::{CHOOSE_REF, branch_or_tag, is_branch_or_tag};
 use crate::triggers::{self, Trigger, find_workflow, user_login};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -145,16 +146,24 @@ impl Ci for CiImpl {
             CiAvailability::TurnedOff => return Err(Error::forbidden("Actions is turned off for this repository.")),
         }
         let wanted = if git_ref.trim().is_empty() { info.default_branch.clone() } else { git_ref.trim().to_string() };
-        let short = wanted.strip_prefix("refs/heads/").or_else(|| wanted.strip_prefix("refs/tags/")).unwrap_or(&wanted).to_string();
-        // Prefer a branch, then a tag, so `main` means the branch even if a tag shares the name.
-        let (full_ref, sha) = if wanted.starts_with("refs/") {
-            (wanted.clone(), self.ctx.source.resolve(repo, &wanted).await.map_err(|e| ref_missing(e, &wanted))?)
-        } else if let Ok(s) = self.ctx.source.resolve(repo, &format!("refs/heads/{short}")).await {
-            (format!("refs/heads/{short}"), s)
-        } else if let Ok(s) = self.ctx.source.resolve(repo, &format!("refs/tags/{short}")).await {
-            (format!("refs/tags/{short}"), s)
+        let candidates = if wanted.starts_with("refs/") {
+            if !is_branch_or_tag(&wanted) {
+                return Err(Error::invalid("Dispatch", "ref", CHOOSE_REF));
+            }
+            vec![wanted.clone()]
         } else {
-            return Err(Error::invalid("Dispatch", "ref", format!("No branch or tag named `{short}`.")));
+            // Prefer a branch, then a tag, so `main` means the branch even if a tag shares the name.
+            vec![format!("refs/heads/{wanted}"), format!("refs/tags/{wanted}")]
+        };
+        let mut named = None;
+        for full in candidates {
+            if let Some(sha) = branch_or_tag(self.ctx.source.as_ref(), repo, &full).await? {
+                named = Some((full, sha));
+                break;
+            }
+        }
+        let Some((full_ref, sha)) = named else {
+            return Err(Error::invalid("Dispatch", "ref", format!("No branch or tag named `{wanted}`.")));
         };
         let found = discovery::discover(&self.ctx, repo, &sha, info.read_github_workflows).await?;
         let rows = discovery::sync_rows(&self.ctx, repo, &found).await?;
@@ -216,7 +225,7 @@ impl Ci for CiImpl {
         require_ci(actor, repo)?;
         self.ctx.authz.require(actor, repo, Permission::Write).await?;
         self.run_in_repo(repo, run).await?;
-        runs::rerun(&self.ctx, run.0, failed_only).await
+        runs::rerun(&self.ctx, run.0, failed_only, actor.author_id()).await
     }
 
     /// `range` is in bytes of the job's log file, the same offsets the live stream reports.
@@ -383,13 +392,6 @@ fn require_ci(actor: &Actor, repo: RepoId) -> Result<()> {
         return Err(Error::forbidden("This connection was not given permission to run workflows on this repository"));
     }
     Ok(())
-}
-
-fn ref_missing(e: Error, r: &str) -> Error {
-    match e {
-        Error::NotFound => Error::invalid("Dispatch", "ref", format!("No such ref `{r}`.")),
-        o => o,
-    }
 }
 
 /// Unique enough to tell two manual runs apart. Not a secret.

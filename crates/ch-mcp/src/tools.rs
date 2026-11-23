@@ -30,6 +30,8 @@ pub struct ToolServices {
     pub authz: Arc<dyn Authz>,
     pub apps: Arc<dyn Apps>,
     pub audit: Arc<dyn Audit>,
+    /// The instance origin, for the noreply address on commits the connector makes.
+    pub external_url: String,
 }
 
 impl ToolServices {
@@ -47,6 +49,7 @@ impl ToolServices {
             authz: s.authz.clone(),
             apps: s.apps.clone(),
             audit: s.audit.clone(),
+            external_url: s.config.server.external_url.clone(),
         }
     }
 }
@@ -802,7 +805,11 @@ impl Ctx {
         let me = self.svc.apps.grant_of(&self.actor).await.map_err(|e| self.err(e))?;
         let author = Signature {
             name: me.display_name.clone(),
-            email: me.email.clone().unwrap_or_else(|| format!("{}@users.noreply.invalid", me.username)),
+            // The person behind the app. Account emails never go into history.
+            email: match &self.actor {
+                Actor::App { user_id, .. } => ch_core::noreply::noreply_email(user_id.0, &me.username, &self.svc.external_url),
+                _ => format!("{}@users.noreply.invalid", me.username),
+            },
             at: chrono::Utc::now(),
         };
         let mut changes: Vec<FileChange> = Vec::new();

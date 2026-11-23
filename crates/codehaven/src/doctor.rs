@@ -184,6 +184,24 @@ pub fn check_mcp(config: &Config) -> Check {
     }
 }
 
+/// The limits signed-out visitors get on public repositories.
+pub fn check_public_access(config: &Config) -> Check {
+    let p = &config.public_access;
+    Check::pass(
+        "public access limits",
+        format!(
+            "{} requests a minute per address; clones {} at once per address, {} for the instance; archives {} and {}; raw files {} and {}",
+            p.requests_per_minute,
+            p.git_per_address,
+            p.git_instance,
+            p.archive_per_address,
+            p.archive_instance,
+            p.raw_per_address,
+            p.raw_instance
+        ),
+    )
+}
+
 pub fn check_public_routes() -> Check {
     let list = PUBLIC_ROUTES.iter().map(|r| format!("{} {}", r.methods.join("/"), r.pattern)).collect::<Vec<_>>().join(", ");
     Check::pass("public routes", format!("{} routes a signed-out visitor can reach: {list}", PUBLIC_ROUTES.len()))
@@ -236,6 +254,7 @@ pub async fn run(config: &Config) -> bool {
     checks.push(check_disk(config));
     checks.extend(check_network_config(config));
     checks.push(check_mcp(config));
+    checks.push(check_public_access(config));
     checks.push(check_public_routes());
     checks.extend(check_database(config).await);
     let mut ok = true;
@@ -287,6 +306,14 @@ mod tests {
         let c = check_public_routes();
         assert!(c.detail.contains(&PUBLIC_ROUTES.len().to_string()));
         assert!(c.detail.contains("/healthz"));
+    }
+
+    #[test]
+    fn public_access_line_names_the_limits() {
+        let cfg = Config::for_tests();
+        let c = check_public_access(&cfg);
+        assert!(c.detail.contains("240 requests a minute per address"), "{}", c.detail);
+        assert!(c.detail.contains("clones 2 at once per address, 3 for the instance"), "{}", c.detail);
     }
 
     #[test]

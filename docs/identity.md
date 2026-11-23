@@ -7,8 +7,8 @@ for whoever integrates.
 ## The shape
 
 The instance is invite-only. There is no sign-up route, no setup page, no proxy-header login and
-no anonymous read. The first admin is made on the server with `codehaven admin create-user`, and
-every other account comes from an invite.
+no anonymous read outside public repositories. The first admin is made on the server with
+`codehaven admin create-user`, and every other account comes from an invite.
 
 | Crate | Owns |
 | --- | --- |
@@ -105,8 +105,9 @@ and no username or email name inside it.
 
 ## For git, collab and ci: using Authn and Authz
 
-- `Authz::repo_permission(actor, repo)` is the permission model of section 7.2. `Anonymous` is
-  `None` everywhere, public repo or not. A site admin only counts with a session and two-factor.
+- `Authz::repo_permission(actor, repo)` is the permission model of section 7.2. `Anonymous` gets
+  `View` on a public repository while public repositories are allowed, and `None` everywhere
+  else. A site admin only counts with a session and two-factor.
   A token is capped by its scopes. A job token reads its own repo only.
 - `Authz::require(actor, repo, needed)` is `NotFound` when the actor cannot read the repo and
   `Forbidden` when they can but lack `needed`. On an archived repo, `Triage`, `Write` and

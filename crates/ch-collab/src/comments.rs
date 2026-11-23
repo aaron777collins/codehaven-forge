@@ -49,7 +49,7 @@ impl Core {
     }
 
     pub async fn comment_views(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Vec<CommentView>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let row = self.issue_row(repo, number).await?;
         let sql = format!("SELECT {COMMENT_COLS} FROM issue_comments c WHERE c.issue_id = $1 ORDER BY c.created_at, c.id");
         let rows = sqlx::query_as::<_, CommentRow>(&sql).bind(row.id).fetch_all(self.db()).await?;
@@ -68,7 +68,7 @@ impl Core {
     }
 
     pub async fn comment_view(&self, actor: &Actor, repo: RepoId, comment: CommentId) -> Result<CommentView> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (c, _) = self.comment_in_repo(repo, comment).await?;
         self.comment_views_from(vec![c]).await?.into_iter().next().ok_or(Error::NotFound)
     }
@@ -79,7 +79,7 @@ impl Core {
 
     pub async fn issue_add_comment(&self, actor: &Actor, repo: RepoId, number: i64, body: &str, _client: &ClientInfo) -> Result<Comment> {
         let user = writing_user(actor, repo)?;
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_contribute(actor, repo).await?;
         let rrow = self.repo(repo).await?;
         Self::ensure_writable(&rrow)?;
         let body = util::required_body("IssueComment", "body", body)?;
@@ -118,7 +118,7 @@ impl Core {
         _client: &ClientInfo,
     ) -> Result<CommentView> {
         let user = writing_user(actor, repo)?;
-        let perm = self.need_read(actor, repo).await?;
+        let perm = self.need_contribute(actor, repo).await?;
         Self::ensure_writable(&self.repo(repo).await?)?;
         let (c, issue) = self.comment_in_repo(repo, comment).await?;
         if c.author_id != user && perm < Permission::Triage {
@@ -200,7 +200,7 @@ impl Core {
         _client: &ClientInfo,
     ) -> Result<ReactionRow> {
         let user = writing_user(actor, repo)?;
-        self.need_read(actor, repo).await?;
+        self.need_contribute(actor, repo).await?;
         Self::ensure_writable(&self.repo(repo).await?)?;
         if !ReactionCounts::is_valid(content) {
             return Err(Error::invalid(
@@ -224,7 +224,7 @@ impl Core {
     }
 
     pub async fn reactions(&self, actor: &Actor, repo: RepoId, target: ReactionTarget) -> Result<Vec<ReactionRow>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let (kind, subject) = self.reaction_subject(repo, target).await?;
         let rows: Vec<(i64, UserId, String, DateTime<Utc>)> = sqlx::query_as(
             "SELECT id, user_id, content, created_at FROM reactions WHERE subject_type = $1 AND subject_id = $2 ORDER BY created_at, id",
@@ -268,7 +268,7 @@ impl Core {
     /// Comments and events in time order. Cross references from repositories the viewer cannot
     /// read are left out, so a private repository's issue titles never leak through a link.
     pub async fn timeline(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Vec<TimelineItem>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let row = self.issue_row(repo, number).await?;
         let sql = format!("SELECT {COMMENT_COLS} FROM issue_comments c WHERE c.issue_id = $1 ORDER BY c.created_at, c.id");
         let comments = sqlx::query_as::<_, CommentRow>(&sql).bind(row.id).fetch_all(self.db()).await?;
@@ -340,7 +340,7 @@ impl Core {
     // ------------------------------------------------------------ templates
 
     pub async fn templates(&self, actor: &Actor, repo: RepoId) -> Result<Vec<IssueTemplate>> {
-        self.need_read(actor, repo).await?;
+        self.need_view(actor, repo).await?;
         let r = self.repo(repo).await?;
         let mut out = Vec::new();
         for dir in [".codehaven/ISSUE_TEMPLATE", ".github/ISSUE_TEMPLATE"] {

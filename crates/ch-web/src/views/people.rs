@@ -155,6 +155,9 @@ pub struct RepoCard {
     pub href: String,
     pub name: String,
     pub private: bool,
+    /// The chip: `Private`, `Internal` or `Public`, and its explanation.
+    pub tier: &'static str,
+    pub tier_title: &'static str,
     pub description: String,
     /// When it was last pushed to. Empty repositories have none.
     pub updated: Option<TimeView>,
@@ -167,6 +170,8 @@ pub fn repo_cards(repos: &[Repo]) -> Vec<RepoCard> {
             href: format!("/{}/{}", fmt::enc(&r.owner_name), fmt::enc(&r.name)),
             name: r.name.clone(),
             private: r.visibility == Visibility::Private,
+            tier: super::visibility::chip(r.visibility).0,
+            tier_title: super::visibility::chip(r.visibility).1,
             description: r.description.clone(),
             updated: fmt::time_opt(r.pushed_at),
         })
@@ -229,9 +234,9 @@ pub fn repo_name_error(name: &str) -> Option<&'static str> {
     None
 }
 
-/// Only an explicit "public" makes a repository public; anything else is private.
+/// The choice on the new repository form. Anything unknown is private.
 fn visibility_of(s: &str) -> Visibility {
-    if s == "public" { Visibility::Public } else { Visibility::Private }
+    Visibility::parse(s).unwrap_or(Visibility::Private)
 }
 
 /// The first letter uppercased, for words like "Read" and "Write".
@@ -325,7 +330,12 @@ struct ExplorePage {
 pub async fn explore(ctx: Ctx, Query(q): Query<Params>) -> WebResult<Response> {
     let qs = query_of(&q);
     let repos = hide_unavailable(ctx.state.search.repos(&ctx.actor, &qs, 30).await)?;
-    let users = hide_unavailable(ctx.state.people.list_users(&ctx.actor, if qs.is_empty() { None } else { Some(qs.as_str()) }, 30).await)?;
+    // No people search signed out: a stranger sees public repositories and nothing else.
+    let users = if ctx.actor.is_anonymous() {
+        None
+    } else {
+        hide_unavailable(ctx.state.people.list_users(&ctx.actor, if qs.is_empty() { None } else { Some(qs.as_str()) }, 30).await)?
+    };
     let c = ctx.chrome("Explore").await.nav("explore");
     ctx.page(&ExplorePage {
         c,
@@ -414,6 +424,8 @@ async fn org_by_name(ctx: &Ctx, name: &str) -> WebResult<User> {
 #[derive(Template)]
 #[template(path = "people/profile.html")]
 struct ProfilePage {
+    /// A signed-out visitor: no join date.
+    signed_out: bool,
     c: Chrome,
     login: String,
     login_enc: String,
@@ -428,11 +440,22 @@ struct ProfilePage {
 }
 
 pub async fn profile(ctx: Ctx, Path(owner): Path<String>) -> WebResult<Response> {
-    let user = ctx.state.accounts.get_by_username(&ctx.actor, &owner).await?;
+    // Signed out, an account exists only while it owns a public repository, and its page shows
+    // its names and its public repositories and nothing else: no join date, no organizations.
+    let signed_out = ctx.actor.is_anonymous();
+    let user = if signed_out {
+        ctx.state.accounts.get_by_username(&ch_core::Actor::System, &owner).await.map_err(|_| WebError::Core(Error::unauthorized()))?
+    } else {
+        ctx.state.accounts.get_by_username(&ctx.actor, &owner).await?
+    };
     let is_org = user.kind == UserKind::Org;
-    let org_owner = is_org && viewer_role(&ctx, OrgId(user.id.0)).await == Some(OrgRole::Owner);
-    let repos = repo_cards(&ctx.state.repos.list_for_owner(&ctx.actor, user.id).await?);
-    let orgs = if is_org {
+    let org_owner = !signed_out && is_org && viewer_role(&ctx, OrgId(user.id.0)).await == Some(OrgRole::Owner);
+    let listed = ctx.state.repos.list_for_owner(&ctx.actor, user.id).await?;
+    if signed_out && listed.is_empty() {
+        return Err(WebError::Core(Error::unauthorized()));
+    }
+    let repos = repo_cards(&listed);
+    let orgs = if is_org || signed_out {
         Vec::new()
     } else {
         hide_unavailable(ctx.state.people.orgs_of(&ctx.actor, user.id).await)?
@@ -453,6 +476,7 @@ pub async fn profile(ctx: Ctx, Path(owner): Path<String>) -> WebResult<Response>
         org_owner,
         org_id: user.id.0,
         joined: fmt::time(user.created_at),
+        signed_out,
         repos,
         orgs,
         login_enc,
@@ -932,7 +956,12 @@ struct NewRepoPage {
     owners: Vec<OwnerChoice>,
     name: String,
     description: String,
-    public: bool,
+    /// The chosen tier: `private`, `internal` or `public`.
+    tier: String,
+    switch_on: bool,
+    text_private: &'static str,
+    text_internal: &'static str,
+    text_public: &'static str,
     auto_init: bool,
     errors: FieldErrors,
 }
@@ -943,13 +972,29 @@ async fn new_repo_page(
     owners: Vec<OwnerChoice>,
     name: &str,
     description: &str,
-    public: bool,
+    tier: Visibility,
     auto_init: bool,
     errors: FieldErrors,
     status: StatusCode,
 ) -> WebResult<Response> {
     let c = ctx.chrome("New repository").await;
-    ctx.page_status(status, &NewRepoPage { c, owners, name: name.into(), description: description.into(), public, auto_init, errors })
+    let switch_on = ctx.state.repos.public_repos_allowed().await.unwrap_or(false);
+    ctx.page_status(
+        status,
+        &NewRepoPage {
+            c,
+            owners,
+            name: name.into(),
+            description: description.into(),
+            tier: tier.as_str().into(),
+            switch_on,
+            text_private: super::visibility::TEXT_PRIVATE,
+            text_internal: super::visibility::TEXT_INTERNAL,
+            text_public: super::visibility::TEXT_PUBLIC,
+            auto_init,
+            errors,
+        },
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -958,11 +1003,11 @@ async fn new_repo_again(
     owners: Vec<OwnerChoice>,
     name: &str,
     description: &str,
-    public: bool,
+    tier: Visibility,
     auto_init: bool,
     errors: FieldErrors,
 ) -> WebResult<Response> {
-    new_repo_page(ctx, owners, name, description, public, auto_init, errors, StatusCode::UNPROCESSABLE_ENTITY).await
+    new_repo_page(ctx, owners, name, description, tier, auto_init, errors, StatusCode::UNPROCESSABLE_ENTITY).await
 }
 
 pub async fn new_repo_get(ctx: Ctx, Query(q): Query<Params>) -> WebResult<Response> {
@@ -971,7 +1016,7 @@ pub async fn new_repo_get(ctx: Ctx, Query(q): Query<Params>) -> WebResult<Respon
     // the id is one of the viewer's choices.
     let picked = q.get("owner").and_then(|o| o.parse::<i64>().ok()).or(Some(uid.0));
     let owners = owner_choices(&ctx, uid, picked).await;
-    new_repo_page(&ctx, owners, "", "", false, false, FieldErrors::default(), StatusCode::OK).await
+    new_repo_page(&ctx, owners, "", "", Visibility::Private, false, FieldErrors::default(), StatusCode::OK).await
 }
 
 pub async fn new_repo_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
@@ -979,7 +1024,7 @@ pub async fn new_repo_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
     let picked = form.int("owner_id");
     let name = form.get("name").trim().to_string();
     let description = form.get("description").trim().to_string();
-    let public = form.get("visibility") == "public";
+    let public = visibility_of(form.get("visibility"));
     let auto_init = form.flag("auto_init");
     let owners = owner_choices(&ctx, uid, picked).await;
     let Some(owner) = owners.iter().find(|o| Some(o.id) == picked) else {
@@ -1001,11 +1046,16 @@ pub async fn new_repo_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
         owner_id: UserId(owner.id),
         name: name.clone(),
         description: description.clone(),
-        visibility: visibility_of(form.get("visibility")),
+        // Nothing is created public. A repository meant to be public is created private and
+        // the person lands on the page that checks it first.
+        visibility: public.min(Visibility::Internal),
         default_branch: None,
         auto_init,
     };
     match ctx.state.repos.create(&ctx.actor, new, &ctx.client).await {
+        Ok(repo) if public == Visibility::Public => {
+            Ok(ctx.redirect(&format!("/{}/{}/settings/visibility", fmt::enc(&repo.owner_name), fmt::enc(&repo.name))))
+        }
         Ok(repo) => Ok(ctx.redirect(&format!("/{}/{}", fmt::enc(&repo.owner_name), fmt::enc(&repo.name)))),
         Err(e) => match FieldErrors::from_error(&e) {
             Some(errors) => new_repo_again(&ctx, owners, &name, &description, public, auto_init, errors).await,
@@ -1207,8 +1257,10 @@ mod tests {
     #[test]
     fn visibility_defaults_to_private() {
         assert_eq!(visibility_of("public"), Visibility::Public);
+        assert_eq!(visibility_of("internal"), Visibility::Internal);
         assert_eq!(visibility_of("private"), Visibility::Private);
         assert_eq!(visibility_of(""), Visibility::Private);
+        assert_eq!(visibility_of("Internal"), Visibility::Private, "exact spelling only");
     }
 
     #[test]

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-theme="{{ theme }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<title>{{ title }}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{ css_app }}">
+<link rel="stylesheet" href="{{ assets }}/workspace.css">
+<link rel="stylesheet" href="{{ assets }}/changes.css">
+<link rel="stylesheet" href="{{ assets }}/runs.css">
+<link rel="stylesheet" href="{{ assets }}/terminal.css">
+<meta name="ws-key" content="{{ key }}">
+<meta name="ws-csrf" content="{{ csrf }}">
+<meta name="ws-base" content="{{ base }}">
+<meta name="ws-assets" content="{{ assets }}">
+<meta name="ws-repo" content="{{ full_name }}">
+<meta name="ws-branch" content="{{ branch }}">
+<meta name="ws-path" content="{{ path }}">
+<script type="module" src="{{ assets }}/workspace.js"></script>
+</head>
+<body class="ws-body">
+<a class="skip-link" href="#ws-main">Skip to the editor</a>
+<noscript><p class="ws-start">The editor needs JavaScript. Turn it on for {{ origin }} and reload.</p></noscript>
+<div id="ws-start" class="ws-start" role="status">Starting the editor for {{ full_name }}. If it does not start, open {{ origin }}{{ base }} in a current browser.</div>
+<div id="ws-root"></div>
+</body>
+</html>

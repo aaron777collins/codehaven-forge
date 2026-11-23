@@ -34,6 +34,7 @@ impl GitCore {
         if !self.store.exists(repo) {
             return;
         }
+        let Ok(_w) = self.writes.write(repo).await else { return };
         let cmd = self.git(repo).args(["-c", "gc.auto=6700", "gc", "--auto", "--quiet"]).timeout(Duration::from_secs(900));
         if let Err(e) = self.exec(cmd).await {
             tracing::warn!(repo = repo.0, error = %e, "git gc --auto failed");
@@ -45,8 +46,11 @@ impl GitCore {
         if !self.store.exists(repo) {
             return;
         }
+        let Ok(w) = self.writes.write(repo).await else { return };
         let cmd = self.git(repo).args(["-c", "gc.auto=6700", "gc", "--quiet"]).timeout(Duration::from_secs(1800));
-        if let Err(e) = self.exec(cmd).await {
+        let done = self.exec(cmd).await;
+        drop(w);
+        if let Err(e) = done {
             tracing::warn!(repo = repo.0, error = %e, "git gc failed");
             return;
         }
@@ -82,6 +86,7 @@ impl GitCore {
         for (id,) in due {
             self.gc_full(RepoId(id)).await;
         }
+        self.repair_and_sweep_prepublish();
         let gone = self.store.empty_trash();
         if gone > 0 {
             tracing::info!(removed = gone, "emptied the repository trash");
@@ -91,12 +96,19 @@ impl GitCore {
 
 /// Runs a pass every five minutes until cancelled, and once at start for the trash.
 pub async fn run(core: Arc<GitCore>, cancel: CancellationToken) {
+    // A store swap interrupted by a crash is put back before anything else reads it.
+    core.repair_and_sweep_prepublish();
+    let c = core.clone();
+    let detach = tokio::spawn(async move { c.detach_all_alternates().await });
     let mut first = true;
     loop {
         let wait = if first { Duration::from_secs(20) } else { Duration::from_secs(300) };
         first = false;
         tokio::select! {
-            _ = cancel.cancelled() => return,
+            _ = cancel.cancelled() => {
+                detach.abort();
+                return;
+            }
             _ = tokio::time::sleep(wait) => {}
         }
         core.housekeeping_pass().await;

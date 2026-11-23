@@ -19,6 +19,26 @@ Always go through `deploy/compose.sh` to talk to the instance (`deploy/compose.s
 env file, works out the host's public addresses, adds the proxy file for `CODEHAVEN_PROXY` and
 passes the project name. Calling `docker compose` on `deploy/compose.yml` directly skips all that.
 
+## Public repositories
+
+Public repositories are off until a site admin turns them on, at `/admin/settings` or with:
+
+```sh
+deploy/compose.sh exec server codehaven admin public-repos status
+deploy/compose.sh exec server codehaven admin public-repos on
+deploy/compose.sh exec server codehaven admin public-repos off
+```
+
+Turning the switch off lowers every public repository to internal: readable by the signed-in
+accounts of this server and nobody else. Turning it on makes nothing public by itself; each
+repository is widened by its owner on the repository's visibility settings page. When the
+three tiers arrived, repositories that used to be called public became internal; nothing
+became public on its own.
+
+Before any widening the server rebuilds the repository's git store from its refs, so deleted
+history can no longer be fetched. The old store is kept unreachable for 7 days under
+`data/git/_prepublish` and then removed.
+
 ## The proxy
 
 | `CODEHAVEN_PROXY` | What you get |

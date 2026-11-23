@@ -15,7 +15,7 @@ use ch_core::{Actor, DomainEvent, Error, Permission, RepoId, Result};
 
 /// Refs people may create, move and delete. Everything else (`refs/pull/*`, `refs/ch/*`) is
 /// written only by the server.
-fn namespace_allowed(name: &str) -> bool {
+pub(crate) fn namespace_allowed(name: &str) -> bool {
     name.starts_with("refs/heads/") || name.starts_with("refs/tags/")
 }
 
@@ -284,21 +284,38 @@ impl GitCore {
         if let Err(msg) = authorize(self, &ctx, std::slice::from_ref(&update)).await {
             return Err(Error::forbidden(msg));
         }
-        let mut cmd = self.git(repo.id).arg("update-ref");
-        cmd = if change.new.is_some() { cmd.args(["--", &change.name, &new, &old]) } else { cmd.args(["-d", "--", &change.name, &old]) };
-        match self.exec(cmd).await {
-            Ok(_) => {}
-            Err(e) => {
-                let text = e.stderr().to_string();
-                if text.contains("cannot lock ref") || text.contains("but expected") || text.contains("reference already exists") {
-                    return Err(Error::conflict("The reference changed while this was running. Reload and try again."));
+        // The ref move and its push event finish together in their own task. If the request
+        // were dropped between them, the branch would move with no event: no workflow would
+        // start and nobody would be told. Dropping the handle below leaves the task running.
+        let core = self.me.upgrade().ok_or_else(|| Error::unavailable("The server is shutting down."))?;
+        let ticket = self.writes.also(repo.id);
+        let deleting = change.new.is_none();
+        let task = tokio::spawn(async move {
+            let _ticket = ticket;
+            let mut cmd = core.git(ctx.repo).arg("update-ref");
+            cmd = if deleting { cmd.args(["-d", "--", &update.name, &old]) } else { cmd.args(["--", &update.name, &new, &old]) };
+            match core.exec(cmd).await {
+                Ok(_) => {}
+                Err(e) => {
+                    let text = e.stderr().to_string();
+                    if text.contains("cannot lock ref") || text.contains("but expected") || text.contains("reference already exists") {
+                        return Err(Error::conflict("The reference changed while this was running. Reload and try again."));
+                    }
+                    if text.contains("non-commit") || text.contains("not a valid SHA1") || text.contains("nonexistent object") {
+                        return Err(Error::invalid("Reference", "sha", "that is not a commit in this repository"));
+                    }
+                    return Err(e.into());
                 }
-                if text.contains("non-commit") || text.contains("not a valid SHA1") || text.contains("nonexistent object") {
-                    return Err(Error::invalid("Reference", "sha", "that is not a commit in this repository"));
-                }
-                return Err(e.into());
             }
+            let recorded = record(&core, &ctx, std::slice::from_ref(&update)).await;
+            if let Err(e) = &recorded {
+                tracing::error!(repo = ctx.repo.0, git_ref = %update.name, error = %e, "a ref moved but its push event was not recorded");
+            }
+            recorded
+        });
+        match task.await {
+            Ok(r) => r,
+            Err(e) => Err(Error::internal(anyhow::anyhow!("the ref update task failed: {e}"))),
         }
-        record(self, &ctx, std::slice::from_ref(&update)).await
     }
 }

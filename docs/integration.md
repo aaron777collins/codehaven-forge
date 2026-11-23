@@ -77,16 +77,18 @@ owner, which an admin sets.
 
 ## What public means
 
-Public means invite-only. There is no sign-up page and no sign-up route, and no proxy-header
+The instance is invite-only. There is no sign-up page and no sign-up route, and no proxy-header
 login: Codehaven checks every request itself, and an identity header from a proxy in front signs
 nobody in. A signed-out visitor gets the sign-in page, or a 401 from the API, git, the registry
-and the runner API. Nothing else is readable without an account.
+and the runner API. The one thing readable without an account is a public repository, and only
+while the site admin allows public repositories (`docs/operations.md`).
 
 ## Checking it from outside
 
 `bash deploy/dev/public-smoke.sh <base-url>` makes read-only requests and checks that TLS is
-valid, `/login` carries every security header, every repository, user, API, git, registry and
-runner URL refuses a signed-out caller, that no sign-up route exists in any spelling, and that an
+valid, `/login` carries every security header, every user, API, git, registry and
+runner URL and every repository that is not public refuses a signed-out caller, that no
+sign-up route exists in any spelling, and that an
 identity header signs nobody in. Against the server itself, with no proxy in front:
 `deploy/dev/public-smoke.sh http://127.0.0.1:3200`.
 

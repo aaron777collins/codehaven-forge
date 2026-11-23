@@ -124,8 +124,14 @@ impl GitCore {
     pub(crate) async fn do_create_ref(&self, actor: &Actor, repo_id: RepoId, name: &str, sha: &str, client: &ClientInfo) -> Result<()> {
         let repo = self.repo_row(repo_id).await?;
         self.require(actor, &repo, Permission::Write).await?;
+        let _w = self.writes.write(repo.id).await?;
         let full = if name.starts_with("refs/") { name.to_string() } else { format!("refs/heads/{name}") };
         check_rev(&full)?;
+        // The namespace first: `ensure_object` may copy a commit in from another repository of
+        // the fork network, and a request that is refused anyway must not get that far.
+        if !crate::pipeline::namespace_allowed(&full) && !actor.is_system() {
+            return Err(Error::invalid("Reference", "ref", "only refs/heads/ and refs/tags/ can be changed"));
+        }
         self.ensure_object(Some(actor), repo_id, sha).await?;
         let existing = self.read_refs(repo_id, Some(&full)).await?.into_iter().any(|r| r.name == full);
         if existing {
@@ -138,6 +144,7 @@ impl GitCore {
     pub(crate) async fn do_delete_ref(&self, actor: &Actor, repo_id: RepoId, name: &str, client: &ClientInfo) -> Result<()> {
         let repo = self.repo_row(repo_id).await?;
         self.require(actor, &repo, Permission::Write).await?;
+        let _w = self.writes.write(repo.id).await?;
         let full = if name.starts_with("refs/") { name.to_string() } else { format!("refs/heads/{name}") };
         check_rev(&full)?;
         let current = self.read_refs(repo_id, Some(&full)).await?.into_iter().find(|r| r.name == full).ok_or(Error::NotFound)?;
@@ -159,8 +166,14 @@ impl GitCore {
     ) -> Result<()> {
         let repo = self.repo_row(repo_id).await?;
         self.require(actor, &repo, Permission::Write).await?;
+        let _w = self.writes.write(repo.id).await?;
         let full = if name.starts_with("refs/") { name.to_string() } else { format!("refs/heads/{name}") };
         check_rev(&full)?;
+        // The namespace first: `ensure_object` may copy a commit in from another repository of
+        // the fork network, and a request that is refused anyway must not get that far.
+        if !crate::pipeline::namespace_allowed(&full) && !actor.is_system() {
+            return Err(Error::invalid("Reference", "ref", "only refs/heads/ and refs/tags/ can be changed"));
+        }
         self.ensure_object(Some(actor), repo_id, sha).await?;
         let raw = self.exec_any(self.git(repo_id).args(["rev-parse", "--verify", "--quiet", &full])).await?;
         if raw.code != 0 {
@@ -178,6 +191,7 @@ impl GitCore {
     pub(crate) async fn do_commit_file_change(&self, actor: &Actor, req: CommitFileChange, client: &ClientInfo) -> Result<String> {
         let repo = self.repo_row(req.repo_id).await?;
         self.require(actor, &repo, Permission::Write).await?;
+        let _w = self.writes.write(repo.id).await?;
         if req.changes.is_empty() {
             return Err(Error::invalid("Commit", "changes", "nothing to commit"));
         }
@@ -195,10 +209,23 @@ impl GitCore {
         if base.is_none() && !(repo.is_empty && req.new_branch.is_none()) {
             return Err(Error::NotFound);
         }
+        // A commit to a new branch may start from an older head of `branch`, as long as it is
+        // still in that branch's history: "commit to a new branch from where I started".
+        let mut base = base;
         if let (Some(expected), Some(current)) = (&req.expected_sha, &base)
             && expected != current
         {
-            return Err(Error::conflict("The branch has changed since you opened this file. Reload and try again."));
+            let older_start = req.new_branch.is_some()
+                && is_sha(expected)
+                && self
+                    .exec_any(self.git(req.repo_id).args(["merge-base", "--is-ancestor", expected.as_str(), current.as_str()]))
+                    .await
+                    .map(|o| o.code == 0)
+                    .unwrap_or(false);
+            if !older_start {
+                return Err(Error::conflict("The branch has changed since you opened this file. Reload and try again."));
+            }
+            base = Some(expected.clone());
         }
 
         // Existing modes, so editing an executable keeps it executable.
@@ -223,6 +250,18 @@ impl GitCore {
             }
         }
 
+        // A symlink or a submodule is never written over: its bytes mean something else. A
+        // rename out of one is refused too: its mode would follow to the new path.
+        for c in req.changes.iter().filter(|c| c.content.is_some()) {
+            let path = check_edit_path(&c.path)?;
+            let from = c.renamed_from.as_deref().map(check_edit_path).transpose()?;
+            if matches!(modes.get(&path).map(String::as_str), Some("120000" | "160000"))
+                || matches!(from.as_deref().and_then(|f| modes.get(f)).map(String::as_str), Some("120000" | "160000"))
+            {
+                return Err(Error::invalid("File", "path", "a link or a submodule cannot be edited here"));
+            }
+        }
+
         // A private index file: nothing here touches the repository's own state.
         let scratch = tempfile::tempdir().map_err(|e| Error::internal(anyhow::anyhow!(e)))?;
         let index = scratch.path().join("index");
@@ -233,15 +272,16 @@ impl GitCore {
         if let Some(b) = &base {
             self.refuse_file_folder_clashes(req.repo_id, b, &req.changes).await?;
         }
-        let mut info = Vec::new();
+        let mut removals = Vec::new();
+        let mut puts = Vec::new();
         for c in &req.changes {
             let path = check_edit_path(&c.path)?;
             if let Some(from) = &c.renamed_from {
                 let from = check_edit_path(from)?;
-                info.push(format!("0 {ZERO_SHA}\t{from}\n"));
+                removals.push(format!("0 {ZERO_SHA}\t{from}\0"));
             }
             match &c.content {
-                None => info.push(format!("0 {ZERO_SHA}\t{path}\n")),
+                None => removals.push(format!("0 {ZERO_SHA}\t{path}\0")),
                 Some(bytes) => {
                     let blob = self
                         .exec(self.git(req.repo_id).args(["hash-object", "-w", "--stdin"]).stdin_bytes(bytes.clone()))
@@ -249,14 +289,23 @@ impl GitCore {
                         .stdout_str();
                     let from_mode = c.renamed_from.as_ref().and_then(|f| modes.get(f.trim_matches('/')));
                     let mode = modes.get(&path).or(from_mode).cloned().unwrap_or_else(|| "100644".into());
-                    info.push(format!("{mode} {blob}\t{path}\n"));
+                    puts.push(format!("{mode} {blob}\t{path}\0"));
                 }
             }
         }
-        let update =
-            with_index(self.git(req.repo_id).args(["update-index", "--add", "--index-info"]).stdin_bytes(info.concat().into_bytes()));
+        // Removals first, so one commit can delete a file `a` and add `a/b`. With `-z` the
+        // paths are taken literally instead of C-unquoted, and git's own HFS and NTFS checks
+        // refuse the spellings those filesystems fold to `.git`.
+        let update = with_index(
+            self.git(req.repo_id)
+                .args(["-c", "core.protectHFS=true", "-c", "core.protectNTFS=true", "update-index", "-z", "--add", "--index-info"])
+                .stdin_bytes([removals.concat(), puts.concat()].concat().into_bytes()),
+        );
         if let Err(e) = self.exec(update).await {
             let s = e.stderr().to_string();
+            if s.contains("invalid path") {
+                return Err(Error::invalid("File", "path", "that file name is not allowed"));
+            }
             if s.contains("both as a file and as a directory") || s.contains("conflict") {
                 return Err(Error::conflict("A file and a folder cannot share a name."));
             }
@@ -301,20 +350,39 @@ impl GitCore {
         if specs.is_empty() {
             return Ok(());
         }
+        // Paths this commit removes, so a file can become a folder of the same name in one step.
+        let removed: std::collections::HashSet<String> = changes
+            .iter()
+            .filter_map(|c| {
+                if c.content.is_none() {
+                    check_edit_path(&c.path).ok()
+                } else {
+                    c.renamed_from.as_deref().and_then(|f| check_edit_path(f).ok())
+                }
+            })
+            .collect();
+        // `%(objecttype)` prints exactly `blob`, `tree` or `commit` for a found object and
+        // `<input> missing` for a missing one. Splitting on spaces would read a type word out
+        // of a path such as `absent tree`.
         let out = self
-            .exec(self.git(repo).args(["cat-file", "--batch-check"]).stdin_bytes(format!("{}\n", specs.join("\n")).into_bytes()))
+            .exec(
+                self.git(repo)
+                    .args(["cat-file", "--batch-check=%(objecttype)"])
+                    .stdin_bytes(format!("{}\n", specs.join("\n")).into_bytes()),
+            )
             .await?;
         let text = out.stdout_str();
         let lines: Vec<&str> = text.lines().collect();
         let mut i = 0;
         for c in changes.iter().filter(|c| c.content.is_some()) {
             let path = check_edit_path(&c.path)?;
-            let depth = path.split('/').count();
+            let parts: Vec<&str> = path.split('/').collect();
+            let depth = parts.len();
             for level in 0..depth {
-                let kind = lines.get(i).and_then(|l| l.split_whitespace().nth(1)).unwrap_or("missing");
+                let kind = lines.get(i).copied().unwrap_or("missing");
                 i += 1;
                 let is_leaf = level + 1 == depth;
-                if (!is_leaf && kind == "blob") || (is_leaf && kind == "tree") {
+                if (!is_leaf && kind == "blob" && !removed.contains(&parts[..level + 1].join("/"))) || (is_leaf && kind == "tree") {
                     return Err(Error::conflict("A file and a folder cannot share a name."));
                 }
             }
@@ -336,6 +404,7 @@ impl GitCore {
     }
 
     pub(crate) async fn do_test_merge(&self, repo: RepoId, base_ref: &str, head_repo: RepoId, head_ref: &str) -> Result<MergeableState> {
+        let _w = self.writes.write(repo).await?;
         let base = self.read_resolve(repo, base_ref).await?;
         let head = self.read_resolve(head_repo, head_ref).await?;
         if head_repo != repo {
@@ -354,6 +423,7 @@ impl GitCore {
     pub(crate) async fn do_merge(&self, actor: &Actor, req: MergeRequest, client: &ClientInfo) -> Result<MergeOutcome> {
         let repo = self.repo_row(req.repo_id).await?;
         self.require(actor, &repo, Permission::Write).await?;
+        let _w = self.writes.write(repo.id).await?;
         let base_ref = format!("refs/heads/{}", req.base_ref.trim_start_matches("refs/heads/"));
         check_rev(&base_ref)?;
         let raw =

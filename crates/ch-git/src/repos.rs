@@ -7,6 +7,7 @@
 
 use crate::command::check_rev;
 use crate::core::{GitCore, REPO_SELECT, RepoRow, audit_action};
+use crate::tier::alternates_of;
 use ch_core::actor::Scopes;
 use ch_core::audit::{AuditEvent, Outcome, action};
 use ch_core::model::*;
@@ -45,10 +46,7 @@ fn is_unique_violation(e: &sqlx::Error) -> bool {
 }
 
 fn vis_str(v: Visibility) -> &'static str {
-    match v {
-        Visibility::Public => "public",
-        Visibility::Private => "private",
-    }
+    v.as_str()
 }
 
 fn client_audit(actor: &Actor, client: &ClientInfo, action: &str, repo: &Repo, details: serde_json::Value) -> AuditEvent {
@@ -96,18 +94,20 @@ impl GitCore {
 
     pub(crate) async fn do_create_repo(&self, actor: &Actor, new: NewRepo, client: &ClientInfo) -> Result<Repo> {
         self.may_create_under(actor, new.owner_id).await?;
-        // A repository a connected app makes is private, whatever it asked for.
+        // A repository a connected app makes is private, whatever it asked for. Nothing is
+        // created public: public is a second step, in the browser, after the store is checked.
         let mut new = new;
         if actor.is_app() {
             new.visibility = Visibility::Private;
         }
+        new.visibility = new.visibility.min(Visibility::Internal);
         check_repo_name(&new.name)?;
         let branch = new.default_branch.clone().unwrap_or_else(|| "main".into());
         self.check_branch_name(&branch).await?;
         let (_, owner_name) = self.user_kind(new.owner_id).await?;
 
         let inserted: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(
-            "INSERT INTO repositories (owner_id, name, description, visibility, default_branch) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            "INSERT INTO repositories (owner_id, name, description, access_tier, default_branch) VALUES ($1, $2, $3, $4, $5) RETURNING id",
         )
         .bind(new.owner_id.0)
         .bind(&new.name)
@@ -191,14 +191,14 @@ impl GitCore {
         if actor.is_system() {
             return Ok(repo);
         }
-        self.authz.require(actor, repo.id, Permission::Read).await?;
+        self.authz.require(actor, repo.id, Permission::View).await?;
         Ok(repo)
     }
 
     pub(crate) async fn do_get(&self, actor: &Actor, id: RepoId) -> Result<Repo> {
         let repo = self.repo_row(id).await?;
         if !actor.is_system() {
-            self.authz.require(actor, id, Permission::Read).await?;
+            self.authz.require(actor, id, Permission::View).await?;
         }
         Ok(repo)
     }
@@ -209,7 +209,7 @@ impl GitCore {
         let mut out = Vec::new();
         for r in rows {
             let repo = r.into_repo();
-            if actor.is_system() || self.authz.repo_permission(actor, repo.id).await?.allows(Permission::Read) {
+            if actor.is_system() || self.authz.repo_permission(actor, repo.id).await?.allows(Permission::View) {
                 out.push(repo);
             }
         }
@@ -218,12 +218,29 @@ impl GitCore {
 
     /// Every repository the actor can read, most recently pushed first (at most 2000).
     pub(crate) async fn accessible_all(&self, actor: &Actor) -> Result<Vec<Repo>> {
+        if actor.is_anonymous() {
+            // Signed out: public repositories while the switch is on, and nothing else.
+            let rows: Vec<RepoRow> = sqlx::query_as(&format!(
+                "{REPO_SELECT} WHERE r.access_tier = 'public' AND (SELECT s.allow_public_repos FROM visibility_settings s) \
+                 ORDER BY r.pushed_at DESC NULLS LAST, r.id DESC LIMIT 2000"
+            ))
+            .fetch_all(&self.db)
+            .await?;
+            let mut out = Vec::new();
+            for r in rows {
+                let repo = r.into_repo();
+                if self.authz.repo_permission(actor, repo.id).await?.allows(Permission::View) {
+                    out.push(repo);
+                }
+            }
+            return Ok(out);
+        }
         let Some(user) = actor.author_id() else {
             return if actor.is_system() { self.all_repos().await } else { Ok(Vec::new()) };
         };
         // A cheap pre-filter in SQL; the permission service has the last word on each row.
         let rows: Vec<RepoRow> = sqlx::query_as(&format!(
-            "{REPO_SELECT} WHERE r.visibility = 'public' OR r.owner_id = $1 \
+            "{REPO_SELECT} WHERE r.access_tier <> 'private' OR r.owner_id = $1 \
              OR EXISTS (SELECT 1 FROM repo_collaborators c WHERE c.repo_id = r.id AND c.user_id = $1) \
              OR EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = r.owner_id AND m.user_id = $1) \
              OR EXISTS (SELECT 1 FROM team_repos tr JOIN team_members tm ON tm.team_id = tr.team_id WHERE tr.repo_id = r.id AND tm.user_id = $1) \
@@ -235,7 +252,7 @@ impl GitCore {
         let mut out = Vec::new();
         for r in rows {
             let repo = r.into_repo();
-            if self.authz.repo_permission(actor, repo.id).await?.allows(Permission::Read) {
+            if self.authz.repo_permission(actor, repo.id).await?.allows(Permission::View) {
                 out.push(repo);
             }
         }
@@ -304,6 +321,10 @@ impl GitCore {
     pub(crate) async fn do_transfer(&self, actor: &Actor, id: RepoId, new_owner: UserId, client: &ClientInfo) -> Result<Repo> {
         let repo = self.repo_row(id).await?;
         self.authz.require(actor, id, Permission::Admin).await?;
+        // Only the current account owner (or an owner of the owning org, or a site admin) moves
+        // a repository. A collaborator with admin could otherwise move it to their own account
+        // and publish it there.
+        self.must_be_account_owner(actor, &repo).await?;
         self.may_create_under(actor, new_owner).await?;
         if repo.owner_id == new_owner {
             return Ok(repo);
@@ -363,7 +384,10 @@ impl GitCore {
         let repo = self.repo_row(id).await?;
         self.authz.require(actor, id, Permission::Admin).await?;
         let (forks,): (i64,) =
-            sqlx::query_as("SELECT count(*) FROM repositories WHERE fork_root_id = $1").bind(id.0).fetch_one(&self.db).await?;
+            sqlx::query_as("SELECT count(*) FROM repositories WHERE (fork_root_id = $1 OR fork_parent_id = $1) AND id <> $1")
+                .bind(id.0)
+                .fetch_one(&self.db)
+                .await?;
         if forks > 0 {
             return Err(Error::conflict("This repository has forks that share its storage. Delete or detach the forks first."));
         }
@@ -380,8 +404,9 @@ impl GitCore {
         Ok(())
     }
 
-    /// A fork shares the root repository's objects through `objects/info/alternates`, then
-    /// copies the refs it needs.
+    /// A fork copies the branches and tags of its source and every object they need. It borrows
+    /// nothing, so it holds exactly what its own readers may see. It starts private unless
+    /// `visibility` asks for more, never above the source and never public.
     pub(crate) async fn do_fork(
         &self,
         actor: &Actor,
@@ -390,8 +415,27 @@ impl GitCore {
         new_name: Option<&str>,
         client: &ClientInfo,
     ) -> Result<Repo> {
+        self.do_fork_as(actor, id, into, new_name, Visibility::Private, client).await
+    }
+
+    pub(crate) async fn do_fork_as(
+        &self,
+        actor: &Actor,
+        id: RepoId,
+        into: UserId,
+        new_name: Option<&str>,
+        visibility: Visibility,
+        client: &ClientInfo,
+    ) -> Result<Repo> {
         let source = self.repo_row(id).await?;
         self.authz.require(actor, id, Permission::Read).await?;
+        if visibility > source.visibility || visibility == Visibility::Public {
+            return Err(if visibility == Visibility::Public {
+                Error::forbidden(crate::tier::MAKE_PUBLIC_IN_BROWSER)
+            } else {
+                Error::invalid("Repository", "visibility", crate::tier::FORK_CAP)
+            });
+        }
         self.may_create_under(actor, into).await?;
         let name = new_name.unwrap_or(&source.name).to_string();
         check_repo_name(&name)?;
@@ -399,16 +443,13 @@ impl GitCore {
             sqlx::query_as("SELECT fork_root_id FROM repositories WHERE id = $1").bind(id.0).fetch_one(&self.db).await?;
         let root_id = RepoId(root.unwrap_or(id.0));
         let inserted: std::result::Result<(i64,), sqlx::Error> = sqlx::query_as(
-            "INSERT INTO repositories (owner_id, name, description, visibility, default_branch, fork_parent_id, fork_root_id, is_empty) \
+            "INSERT INTO repositories (owner_id, name, description, access_tier, default_branch, fork_parent_id, fork_root_id, is_empty) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
         )
         .bind(into.0)
         .bind(&name)
         .bind(&source.description)
-        .bind(match source.visibility {
-            Visibility::Public => "public",
-            Visibility::Private => "private",
-        })
+        .bind(visibility.as_str())
         .bind(&source.default_branch)
         .bind(id.0)
         .bind(root_id.0)
@@ -420,7 +461,7 @@ impl GitCore {
             Err(e) if is_unique_violation(&e) => return Err(already_exists()),
             Err(e) => return Err(e.into()),
         };
-        let made = self.populate_fork(&source, new_id, root_id).await;
+        let made = self.populate_fork(&source, new_id).await;
         if let Err(e) = made {
             let _ = sqlx::query("DELETE FROM repositories WHERE id = $1").bind(new_id.0).execute(&self.db).await;
             let _ = self.store.trash(new_id);
@@ -436,17 +477,11 @@ impl GitCore {
         Ok(repo)
     }
 
-    async fn populate_fork(&self, source: &Repo, new_id: RepoId, root_id: RepoId) -> Result<()> {
+    async fn populate_fork(&self, source: &Repo, new_id: RepoId) -> Result<()> {
         self.store.init_bare(new_id, &source.default_branch).await?;
         if source.is_empty {
             return Ok(());
         }
-        let alternates = self.store.repo_path(new_id).join("objects/info/alternates");
-        if let Some(dir) = alternates.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| Error::internal(anyhow::anyhow!(e)))?;
-        }
-        let root_objects = self.store.repo_path(root_id).join("objects");
-        std::fs::write(&alternates, format!("{}\n", root_objects.display())).map_err(|e| Error::internal(anyhow::anyhow!(e)))?;
         let src = self.store.repo_path(source.id);
         let fetch = self
             .git(new_id)
@@ -455,11 +490,22 @@ impl GitCore {
             .args(["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"])
             .timeout(std::time::Duration::from_secs(600));
         self.exec(fetch).await?;
-        if source.id != root_id {
-            // The source had objects of its own. Drop the ones the root already holds.
-            self.exec(self.git(new_id).args(["repack", "-a", "-d", "-l", "-q"]).timeout(std::time::Duration::from_secs(600))).await?;
+        if alternates_of(&self.store.repo_path(new_id)).is_some() {
+            return Err(Error::internal(anyhow::anyhow!("a new fork must not borrow objects")));
         }
         Ok(())
+    }
+
+    /// The personal owner, an owner of the owning org, or a site admin with two-factor.
+    pub(crate) async fn must_be_account_owner(&self, actor: &Actor, repo: &Repo) -> Result<()> {
+        if actor.is_system() || actor.is_site_admin() || (actor.user_id() == Some(repo.owner_id) && !actor.is_app()) {
+            return Ok(());
+        }
+        let (kind, _) = self.user_kind(repo.owner_id).await?;
+        if kind == UserKind::Org && self.authz.org_role(actor, OrgId(repo.owner_id.0)).await? == Some(OrgRole::Owner) {
+            return Ok(());
+        }
+        Err(Error::forbidden("Only the owner of this repository's account can do that."))
     }
 
     // ----------------------------------------------------------------- collaborators
@@ -666,19 +712,26 @@ impl GitCore {
         {
             return Err(Error::invalid("Repository", "description", "keep it under 1000 characters"));
         }
+        // The tier changes only through `set_tier`, which has its own rules and audit. A
+        // narrowing goes first, so it holds even if the rest fails. A widening goes last.
+        let tier = u.visibility.filter(|v| *v != repo.visibility);
+        if let Some(v) = tier
+            && v < repo.visibility
+        {
+            self.do_set_tier(actor, id, v, client).await?;
+        }
         let mut tx = self.db.begin().await?;
         sqlx::query(
             "UPDATE repositories SET description = COALESCE($2, description), website = COALESCE($3, website), \
-             visibility = COALESCE($4, visibility), default_branch = COALESCE($5, default_branch), archived = COALESCE($6, archived), \
-             topics = COALESCE($7, topics), has_issues = COALESCE($8, has_issues), has_pulls = COALESCE($9, has_pulls), \
-             has_actions = COALESCE($10, has_actions), allow_merge_commit = COALESCE($11, allow_merge_commit), \
-             allow_squash_merge = COALESCE($12, allow_squash_merge), allow_rebase_merge = COALESCE($13, allow_rebase_merge), \
-             delete_branch_on_merge = COALESCE($14, delete_branch_on_merge), updated_at = now() WHERE id = $1",
+             default_branch = COALESCE($4, default_branch), archived = COALESCE($5, archived), \
+             topics = COALESCE($6, topics), has_issues = COALESCE($7, has_issues), has_pulls = COALESCE($8, has_pulls), \
+             has_actions = COALESCE($9, has_actions), allow_merge_commit = COALESCE($10, allow_merge_commit), \
+             allow_squash_merge = COALESCE($11, allow_squash_merge), allow_rebase_merge = COALESCE($12, allow_rebase_merge), \
+             delete_branch_on_merge = COALESCE($13, delete_branch_on_merge), updated_at = now() WHERE id = $1",
         )
         .bind(id.0)
         .bind(u.description.as_deref())
         .bind(u.website.as_deref())
-        .bind(u.visibility.map(vis_str))
         .bind(new_default.as_deref())
         .bind(u.archived)
         .bind(topics.as_deref())
@@ -691,13 +744,6 @@ impl GitCore {
         .bind(u.delete_branch_on_merge)
         .execute(&mut *tx)
         .await?;
-        if let Some(v) = u.visibility
-            && v != repo.visibility
-        {
-            self.audit
-                .record(&mut tx, client_audit(actor, client, action::REPO_VISIBILITY, &repo, serde_json::json!({"to": vis_str(v)})))
-                .await?;
-        }
         if let Some(a) = u.archived
             && a != repo.archived
         {
@@ -714,6 +760,11 @@ impl GitCore {
         tx.commit().await?;
         if let Some(b) = new_default {
             self.exec(self.git(id).args(["symbolic-ref", "HEAD", &format!("refs/heads/{b}")])).await?;
+        }
+        if let Some(v) = tier
+            && v > repo.visibility
+        {
+            self.do_set_tier(actor, id, v, client).await?;
         }
         self.repo_row(id).await
     }

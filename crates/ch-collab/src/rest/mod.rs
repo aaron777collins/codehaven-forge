@@ -156,11 +156,15 @@ fn link_header(uri: &Uri, ext_url: &str, paging: Paging, has_next: bool) -> Opti
 }
 
 /// Finds the repository for `owner/name` as the caller. `NotFound` for one they cannot read.
+/// A signed-out caller reaches this only through the gate's public list, and then only for a
+/// repository `Authz` says is public now.
 pub async fn repo_of(state: &AppState, actor: &Actor, owner: &str, name: &str) -> Result<(Repo, Ctx)> {
-    if actor.is_anonymous() {
-        return Err(Error::unauthorized());
-    }
-    let repo = state.repos.get_by_name(actor, owner, name).await?;
+    let repo = match state.repos.get_by_name(actor, owner, name).await {
+        Ok(r) => r,
+        // Signed out, anything that is not public is the gate's rejection, never a 404.
+        Err(Error::NotFound) if actor.is_anonymous() => return Err(Error::unauthorized()),
+        Err(e) => return Err(e),
+    };
     let ctx = Ctx::new(&state.config.server.external_url, &repo.owner_name, &repo.name);
     Ok((repo, ctx))
 }
@@ -233,7 +237,7 @@ pub async fn repository_dto(s: &AppState, repo: &Repo) -> Result<ch_api_types::r
         name: repo.name.clone(),
         full_name: repo.full_name(),
         owner,
-        private: repo.visibility == ch_core::model::Visibility::Private,
+        private: repo.visibility.is_private_flag(),
         html_url: ctx.html(""),
         description: if repo.description.is_empty() { None } else { Some(repo.description.clone()) },
         fork: repo.fork_parent_id.is_some(),
@@ -241,7 +245,8 @@ pub async fn repository_dto(s: &AppState, repo: &Repo) -> Result<ch_api_types::r
         clone_url: format!("{base}/{}/{}.git", repo.owner_name, repo.name),
         ssh_url: format!("ssh://git@{}/{}/{}.git", s.config.ssh.external, repo.owner_name, repo.name),
         default_branch: repo.default_branch.clone(),
-        visibility: if repo.visibility == ch_core::model::Visibility::Private { "private" } else { "public" }.into(),
+        visibility: repo.visibility.as_str().into(),
+        contribution_policy: repo.contribution_policy.as_str().into(),
         archived: repo.archived,
         disabled: false,
         topics: repo.topics.clone(),

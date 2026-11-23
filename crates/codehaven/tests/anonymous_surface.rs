@@ -9,6 +9,8 @@
 
 #![allow(clippy::unwrap_used, clippy::type_complexity)]
 
+mod common;
+
 use async_trait::async_trait;
 use axum::Router;
 use axum::body::Body;
@@ -41,6 +43,8 @@ impl Authn for FakeAuthn {
     async fn from_session(&self, cookie: &str, _c: &ClientInfo) -> ch_core::Result<Actor> {
         Ok(match cookie {
             "good-session" => Actor::User { id: UserId(1), is_admin: false, has_2fa: false, via: AuthVia::Session },
+            // What the real service answers for a suspended account: nobody at all.
+            "suspended-session" => Actor::Anonymous,
             _ => Actor::Anonymous,
         })
     }
@@ -595,5 +599,115 @@ async fn api_meta_needs_a_signed_in_caller() {
         assert_eq!(get_(&app, p).await.status, StatusCode::UNAUTHORIZED, "{p}");
         let r = send(&app, Method::GET, p, &[("authorization", "Bearer chp_good")], None).await;
         assert_eq!(r.status, StatusCode::OK, "{p}");
+    }
+}
+
+// ------------------------------------------------------------------ the browser workspace
+
+/// Every workspace row the two tables know: the eighteen routes and the two admin ones.
+fn all_workspace_rows() -> Vec<(&'static str, &'static str)> {
+    let mut rows: Vec<(&'static str, &'static str)> = common::WORKSPACE_ROUTES.iter().map(|&(m, p, _, _)| (m, p)).collect();
+    rows.extend_from_slice(common::ADMIN_WORKSPACE_ROUTES);
+    rows
+}
+
+#[test]
+fn workspace_routes_table_matches_the_router() {
+    // The router's own workspace rows, and the two tables the access suites check against.
+    let mut router_rows: Vec<(&str, &str)> =
+        ch_web::routes::route_table().into_iter().filter(|(_, path)| path.contains("/workspace")).collect();
+    router_rows.sort();
+    let mut table: Vec<(&str, &str)> = common::WORKSPACE_ROUTES.iter().map(|&(m, p, _, _)| (m, p)).collect();
+    table.extend_from_slice(common::ADMIN_WORKSPACE_ROUTES);
+    table.sort();
+    assert_eq!(router_rows, table, "the router and the tables disagree");
+
+    // None of it is public, by either door: the fixed public table or the public repository routes.
+    for &(m, pattern) in &table {
+        let method = Method::from_bytes(m.as_bytes()).unwrap();
+        let path = common::path_for(pattern, "alice", "demo");
+        assert!(!is_public(&method, &path), "{m} {path} is public");
+        // `/admin/workspace` has the shape of `/{owner}/{repo}`, but `admin` is a reserved name
+        // that no account or repository can have, so only the repository rows are checked here.
+        if pattern.starts_with("/{owner}/{repo}/workspace") {
+            assert!(ch_core::access::public_repo_route(&method, &path, None).is_none(), "{m} {path} is a public repository route");
+        }
+    }
+}
+
+#[tokio::test]
+async fn signed_out_workspace_requests_learn_nothing() {
+    let app = app(config(&[]), true);
+    let mut checked = 0;
+    for (_m, pattern) in all_workspace_rows() {
+        for method in METHODS {
+            let path = common::path_for(pattern, "alice", "demo");
+            let missing = common::path_for(pattern, "nobody-here", "missing");
+            let r = send(&app, method.clone(), &path, &[], None).await;
+            assert!(
+                r.status == StatusCode::SEE_OTHER || r.status == StatusCode::UNAUTHORIZED,
+                "{method} {path} answered {} to a signed-out request",
+                r.status
+            );
+            let cache = r.headers.get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()).unwrap_or("");
+            assert!(cache.contains("no-store"), "{method} {path}: cache-control {cache:?}");
+            if r.status == StatusCode::SEE_OTHER {
+                assert!(r.body.is_empty(), "{method} {path}: {}", r.body);
+            }
+            // A repository that is not there answers the same as one that is.
+            let other = send(&app, method.clone(), &missing, &[], None).await;
+            assert_eq!((r.status, &r.body), (other.status, &other.body), "{method} {path} vs {missing}");
+            checked += 1;
+        }
+    }
+    assert!(checked > 100, "the sweep covered only {checked} requests");
+}
+
+#[tokio::test]
+async fn a_suspended_session_is_signed_out() {
+    let app = app(config(&[]), true);
+    let hdrs = [("cookie", "__Host-ch_session=suspended-session")];
+    for (m, pattern) in all_workspace_rows() {
+        let path = common::path_for(pattern, "alice", "demo");
+        let missing = common::path_for(pattern, "nobody-here", "missing");
+        let r = send(&app, Method::GET, &path, &hdrs, None).await;
+        assert!(
+            r.status == StatusCode::SEE_OTHER || r.status == StatusCode::UNAUTHORIZED,
+            "{m} {path} answered {} to a suspended session",
+            r.status
+        );
+        let cache = r.headers.get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()).unwrap_or("");
+        assert!(cache.contains("no-store"), "{m} {path}: cache-control {cache:?}");
+        if r.status == StatusCode::SEE_OTHER {
+            assert!(r.body.is_empty(), "{m} {path}: {}", r.body);
+        }
+        let other = send(&app, Method::GET, &missing, &hdrs, None).await;
+        assert_eq!((r.status, &r.body), (other.status, &other.body), "{m} {path} vs {missing}");
+    }
+}
+
+#[tokio::test]
+async fn tokens_basic_jobs_and_runners_open_no_workspace_route() {
+    let app = app(config(&[]), true);
+    for (m, pattern) in all_workspace_rows() {
+        let path = common::path_for(pattern, "alice", "demo");
+        for (name, credential) in [
+            ("a token", "Bearer chp_good"),
+            ("a job token", "Bearer job_good"),
+            ("a runner token", "Bearer runner_good"),
+            ("basic auth", "Basic YWxpY2U6cHc="), // alice:pw
+        ] {
+            let hdrs = [("authorization", credential)];
+            let r = send(&app, Method::GET, &path, &hdrs, None).await;
+            assert!(
+                r.status == StatusCode::SEE_OTHER || r.status == StatusCode::UNAUTHORIZED,
+                "{name} on {m} {path} answered {}",
+                r.status
+            );
+            assert!(!matches!(r.status.as_u16(), 200 | 404 | 409), "{name} on {m} {path}");
+            if r.status == StatusCode::SEE_OTHER {
+                assert!(r.headers[header::LOCATION].to_str().unwrap().starts_with("/login"), "{name} on {m} {path}");
+            }
+        }
     }
 }

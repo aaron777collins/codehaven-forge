@@ -55,6 +55,17 @@ pub trait Authn: Send + Sync {
         Err(Error::unauthorized())
     }
     async fn from_ssh_key(&self, fingerprint: &str) -> Result<Option<SshIdentity>>;
+    /// The actor a credential resolves to right now, or `None` when it no longer signs anyone
+    /// in. Unlike `from_session` it never moves a session's last-seen time or expiry, and it
+    /// counts no failure, so a long stream can call it every second. Fails closed by default.
+    async fn recheck(&self, _credential: &crate::live::Credential) -> Result<Option<Actor>> {
+        Ok(None)
+    }
+    /// The fingerprint of a user's current password hash, for `Credential::Basic`. `None`
+    /// when the account has no password. Fails closed by default.
+    async fn password_fingerprint(&self, _user: UserId) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
 }
 
 #[async_trait]
@@ -80,12 +91,19 @@ pub enum OrgRole {
 
 #[async_trait]
 pub trait Authz: Send + Sync {
-    /// The permission model of ARCHITECTURE.md section 7.2. `Anonymous` is always `None`.
+    /// The permission model of ARCHITECTURE.md section 7.2. `Anonymous` gets `View` on a
+    /// public repository while the instance allows public repositories, and `None` otherwise.
     async fn repo_permission(&self, actor: &Actor, repo: RepoId) -> Result<Permission>;
     async fn org_role(&self, actor: &Actor, org: OrgId) -> Result<Option<OrgRole>>;
-    /// `Error::NotFound` when the actor has no read access at all, `Error::Forbidden` when
-    /// they can see the repo but lack `needed`.
+    /// `Error::NotFound` when the actor cannot see the repo at all (below `View`),
+    /// `Error::Forbidden` when they can see it but lack `needed`.
     async fn require(&self, actor: &Actor, repo: RepoId, needed: Permission) -> Result<()>;
+    /// True when the actor's access to the repository comes from a grant (ownership, org
+    /// ownership or base permission, a collaborator or team row, site admin), not only from
+    /// the repository's tier. The contribution setting asks this.
+    async fn has_grant(&self, actor: &Actor, repo: RepoId) -> Result<bool> {
+        Ok(self.repo_permission(actor, repo).await? >= Permission::Read)
+    }
 }
 
 #[async_trait]
@@ -163,6 +181,48 @@ pub trait Repos: Send + Sync {
         let _ = (actor, page, per_page);
         Err(Error::unavailable("list_accessible is not built yet"))
     }
+    /// The one way a repository's tier changes (epic ch-4pn). Public needs a browser session of
+    /// the account owner and the instance switch; widening rebuilds the git store first.
+    async fn set_tier(&self, actor: &Actor, id: RepoId, to: Visibility, client: &ClientInfo) -> Result<Repo> {
+        let _ = (actor, id, to, client);
+        Err(Error::unavailable("set_tier is not built yet"))
+    }
+    /// A fork at a chosen tier: private by default, never above the source, never public.
+    async fn fork_as(&self, actor: &Actor, id: RepoId, into: UserId, visibility: Visibility, client: &ClientInfo) -> Result<Repo> {
+        let _ = visibility;
+        self.fork(actor, id, into, client).await
+    }
+    /// Who may contribute without a grant. Repo admin, owner rule as for the tier.
+    async fn set_contribution_policy(&self, actor: &Actor, id: RepoId, policy: ContributionPolicy, client: &ClientInfo) -> Result<Repo> {
+        let _ = (actor, id, policy, client);
+        Err(Error::unavailable("set_contribution_policy is not built yet"))
+    }
+    /// What making the repository public would expose. Repo admin.
+    async fn publish_summary(&self, actor: &Actor, id: RepoId) -> Result<PublishSummary> {
+        let _ = (actor, id);
+        Err(Error::unavailable("publish_summary is not built yet"))
+    }
+    /// The instance switch for public repositories.
+    async fn public_repos_allowed(&self) -> Result<bool> {
+        Ok(false)
+    }
+    /// Turns the switch on or off. Site admin with two-factor, or `System`. Off lowers every
+    /// public repository to internal in the same transaction; on raises none. Returns how many
+    /// repositories were lowered.
+    async fn set_public_repos_allowed(&self, actor: &Actor, on: bool, client: &ClientInfo) -> Result<u64> {
+        let _ = (actor, on, client);
+        Err(Error::unavailable("set_public_repos_allowed is not built yet"))
+    }
+    /// The workspace switches. `WorkspaceSettings::default()` when never set.
+    async fn workspace_settings(&self) -> Result<WorkspaceSettings> {
+        Ok(WorkspaceSettings::default())
+    }
+    /// Stores the workspace switches. Site admin with two-factor, or `System`; anyone else gets
+    /// `NotFound`. Audited as `instance.workspace_changed`.
+    async fn set_workspace_settings(&self, actor: &Actor, settings: WorkspaceSettings, client: &ClientInfo) -> Result<()> {
+        let _ = (actor, settings, client);
+        Err(Error::unavailable("set_workspace_settings is not built yet"))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -192,6 +252,56 @@ pub trait GitService: Send + Sync {
     /// Computes mergeability without writing refs.
     async fn test_merge(&self, repo: RepoId, base_ref: &str, head_repo: RepoId, head_ref: &str) -> Result<MergeableState>;
     async fn merge(&self, actor: &Actor, req: MergeRequest, client: &ClientInfo) -> Result<MergeOutcome>;
+    // ---- Browser workspace (spec sections 5 and 8). Reads take no actor: the caller checked
+    // read access. Every read is pinned to one commit id the caller already checked with
+    // `workspace_is_ancestor`.
+
+    /// The commit `refs/heads/<branch>` points at, by exact name: never a tag, a short id or
+    /// revision syntax. `None` when there is no such branch.
+    async fn workspace_branch_head(&self, repo: RepoId, branch: &str) -> Result<Option<String>> {
+        let _ = (repo, branch);
+        Err(Error::unavailable("workspace_branch_head is not built yet"))
+    }
+    /// True when `sha` is a full commit id (40 or 64 lower-case hex) of a commit that is `head`
+    /// or an ancestor of it. Anything else, including an unknown object, is `false`.
+    async fn workspace_is_ancestor(&self, repo: RepoId, sha: &str, head: &str) -> Result<bool> {
+        let _ = (repo, sha, head);
+        Err(Error::unavailable("workspace_is_ancestor is not built yet"))
+    }
+    /// Every entry of the tree at `sha`, recursively, streamed and cut at `limits`.
+    async fn workspace_tree(&self, repo: RepoId, sha: &str, limits: WorkspaceTreeLimits) -> Result<WorkspaceTree> {
+        let _ = (repo, sha, limits);
+        Err(Error::unavailable("workspace_tree is not built yet"))
+    }
+    /// The raw bytes of the blob at `path` (raw bytes, not decoded) in commit `sha`. The size is
+    /// checked before reading: past `max_bytes` the bytes are empty and `too_large` is set.
+    async fn workspace_blob(&self, repo: RepoId, sha: &str, path: &[u8], max_bytes: u64) -> Result<WorkspaceBlob> {
+        let _ = (repo, sha, path, max_bytes);
+        Err(Error::unavailable("workspace_blob is not built yet"))
+    }
+    /// Literal, case-insensitive search of text files at `sha`, cut at `limits`.
+    async fn workspace_search(&self, repo: RepoId, sha: &str, text: &str, limits: WorkspaceSearchLimits) -> Result<WorkspaceSearch> {
+        let _ = (repo, sha, text, limits);
+        Err(Error::unavailable("workspace_search is not built yet"))
+    }
+    /// Every regular file under `prefix` (raw path bytes of a folder, empty for the whole tree)
+    /// at commit `sha`, with its bytes, cut at `limits`: over a cap nothing is read.
+    async fn workspace_snapshot(
+        &self,
+        repo: RepoId,
+        sha: &str,
+        prefix: &[u8],
+        limits: WorkspaceSnapshotLimits,
+    ) -> Result<WorkspaceSnapshot> {
+        let _ = (repo, sha, prefix, limits);
+        Err(Error::unavailable("workspace_snapshot is not built yet"))
+    }
+    /// Whether branch protection lets this actor commit straight to `branch` from the web.
+    async fn workspace_direct_commit_allowed(&self, actor: &Actor, repo: RepoId, branch: &str) -> Result<bool> {
+        let _ = (actor, repo, branch);
+        Err(Error::unavailable("workspace_direct_commit_allowed is not built yet"))
+    }
+
     /// Moves an existing ref to `sha`. Without `force` the move must be a fast-forward.
     /// Goes through the same protection checks and events as a push. Added by the git stream.
     async fn update_ref(&self, actor: &Actor, repo: RepoId, name: &str, sha: &str, force: bool, client: &ClientInfo) -> Result<()> {

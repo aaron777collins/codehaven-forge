@@ -31,8 +31,10 @@
       </div>
       <fieldset class="field">
         <legend>Visibility</legend>
-        <label class="choice"><input type="radio" name="visibility" value="private"{% if !public %} checked{% endif %}> <strong>Private.</strong> Only people you give access to can see it.</label>
-        <label class="choice"><input type="radio" name="visibility" value="public"{% if public %} checked{% endif %}> <strong>Public.</strong> Every account on this server can read it. Nobody else can.</label>
+        <label class="choice"><input type="radio" name="visibility" value="private"{% if tier == "private" %} checked{% endif %}> <strong>Private.</strong> {{ text_private }}</label>
+        <label class="choice"><input type="radio" name="visibility" value="internal"{% if tier == "internal" %} checked{% endif %}> <strong>Internal.</strong> {{ text_internal }}</label>
+        <label class="choice"><input type="radio" name="visibility" value="public"{% if tier == "public" %} checked{% endif %}{% if !switch_on %} disabled{% endif %}> <strong>Public.</strong> {{ text_public }}{% if !switch_on %} <span class="hint">Public repositories are off on this server.</span>{% endif %}</label>
+        <p class="hint">A public repository is created private first, then you confirm it on the next page.</p>
       </fieldset>
       <label class="choice"><input type="checkbox" name="auto_init" value="1"{% if auto_init %} checked{% endif %}> Add a README file</label>
       <div class="inline">
