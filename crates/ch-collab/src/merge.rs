@@ -304,6 +304,7 @@ impl Core {
             author,
             committer,
             expected_base_sha: pull.base_sha.clone(),
+            update_branch: false,
         };
         let outcome = self.d.git.merge(actor, req, client).await?;
         let sha = match outcome {
@@ -532,6 +533,13 @@ impl Core {
         if !allowed {
             return Err(Error::forbidden("You need write access to the head branch to update it"));
         }
+        // The update is a direct write into the head branch, with no merge gate in front of it, so
+        // a head branch that refuses direct pushes refuses this too (ch-jnm). Fail closed when the
+        // protections cannot be read. The git layer checks the same rule again.
+        let head_rules = protect::rules_for(&self.d.repos.protections(&Actor::System, head_repo).await?, &pull.head_ref);
+        if head_rules.is_some_and(|r| !r.allow_direct_push) {
+            return Err(Error::forbidden(format!("Branch '{}' is protected. Open a pull request to change it.", pull.head_ref)));
+        }
         let base_sha = self.d.git.resolve(repo, &full_branch(&pull.base_ref)).await?;
         let head_sha = self.d.git.resolve(head_repo, &full_branch(&pull.head_ref)).await?;
         let (name, email) = self.identity(user).await?;
@@ -547,6 +555,7 @@ impl Core {
             author: sig.clone(),
             committer: sig,
             expected_base_sha: head_sha.clone(),
+            update_branch: true,
         };
         match self.d.git.merge(actor, req, client).await? {
             MergeOutcome::Merged { sha } => {

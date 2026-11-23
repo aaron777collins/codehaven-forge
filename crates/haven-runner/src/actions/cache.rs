@@ -62,7 +62,7 @@ pub async fn run(ctx: &ActionCtx<'_>, mode: CacheMode) -> Result<ActionOutput> {
         .hit;
     match hit {
         Some(h) => {
-            let archive = ctx.dirs.tmp.join(format!("cache-{}.tar.gz", h.id));
+            let archive = ctx.dirs.private.join(format!("cache-{}.tar.gz", h.id));
             ctx.client.cache_download(&ctx.payload.token, h.id, &archive).await.map_err(|e| anyhow!("cache download failed: {e}"))?;
             let ws = ctx.dirs.workspace.clone();
             let a2 = archive.clone();
@@ -102,7 +102,7 @@ pub async fn save(ctx: &ActionCtx<'_>, key: &str, version: &str, patterns: &[Str
         ctx.warn("Path validation: nothing matched the cache paths, so no cache is being saved.").await;
         return Ok(());
     }
-    let archive = ctx.dirs.tmp.join(format!("save-{}.tar.gz", rand::random::<u32>()));
+    let archive = ctx.dirs.private.join(format!("save-{}.tar.gz", rand::random::<u32>()));
     let (ws, a2) = (ctx.dirs.workspace.clone(), archive.clone());
     let (count, size) = tokio::task::spawn_blocking(move || pack(&ws, &files, &a2)).await.map_err(|e| anyhow!("{e}"))??;
     let result = async {
@@ -132,8 +132,10 @@ pub fn pack(root: &Path, files: &[std::path::PathBuf], archive: &Path) -> Result
     let mut n = 0;
     for rel in files {
         let full = root.join(rel);
-        // A file that vanished or cannot be read is left out, not fatal.
-        match tar.append_path_with_name(&full, rel) {
+        // A file that vanished or cannot be read is left out, not fatal. It is opened without
+        // following any link, so nothing outside the workspace lands in the cache (ch-ctk.1).
+        let added = crate::safefs::open_regular(root, &full).and_then(|mut f| tar.append_file(rel, &mut f));
+        match added {
             Ok(()) => n += 1,
             Err(e) => tracing::debug!("cache: skipping {}: {e}", rel.display()),
         }

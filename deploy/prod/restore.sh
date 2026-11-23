@@ -7,6 +7,7 @@
 # a new, empty location (a new CODEHAVEN_PROJECT with its own CODEHAVEN_DATA_DIR and
 # CODEHAVEN_SECRETS_DIR in the env file), then run deploy/prod/up.sh. The env file of the backup is
 # unpacked beside the archive as codehaven.env.restored for you to compare; it is not applied.
+# It checks the archive against its SHA256SUMS first and stops on any mismatch, before anything is written.
 set -euo pipefail
 CH_SCRIPT=restore
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/env.sh"
@@ -30,6 +31,12 @@ work="$(mktemp -d)"; chmod 700 "$work"
 trap 'rm -rf "$work"' EXIT
 tar -xzf "$archive" -C "$work"
 for f in MANIFEST pg.dump data.tar compose-secrets.tar codehaven.env; do [ -e "$work/$f" ] || ch_die "the archive has no $f. Not a backup from backup.sh."; done
+
+if [ -f "$work/SHA256SUMS" ]; then
+  (cd "$work" && sha256sum --quiet -c SHA256SUMS) || ch_die "the archive does not match its checksums (SHA256SUMS). It is damaged; nothing was restored."
+else
+  echo "restore: this archive has no SHA256SUMS (made before checksums were added), so it cannot be checked." >&2
+fi
 
 mkdir -p "$CODEHAVEN_DATA_DIR"/{postgres,git,blobs,logs,secrets,dind} "$CODEHAVEN_SECRETS_DIR"
 tar -C "$CODEHAVEN_DATA_DIR" -xf "$work/data.tar"

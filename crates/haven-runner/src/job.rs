@@ -213,7 +213,7 @@ impl<'a> Engine<'a> {
             Ok(o) => o.unwrap_or_default(),
             Err(e) => {
                 log.line(0, &format!("##[error]{e}")).await;
-                remove_dir(&dirs.root);
+                let _ = dirs.remove();
                 return JobResult { conclusion: "failure".into(), outputs: BTreeMap::new() };
             }
         };
@@ -221,7 +221,7 @@ impl<'a> Engine<'a> {
         let image = cfg.image_for(&payload.runs_on, payload.container.as_ref().map(|c| c.image.as_str()));
 
         let event_path = dirs.runner.join("event.json");
-        let _ = std::fs::write(&event_path, serde_json::to_vec(&payload.context.event).unwrap_or_default());
+        let _ = dirs.write_file(&event_path, &serde_json::to_vec(&payload.context.event).unwrap_or_default(), 0o644);
         let debug = cfg.runner.debug
             || payload.vars.get("ACTIONS_STEP_DEBUG").is_some_and(|v| v == "true")
             || payload.secrets.get("ACTIONS_STEP_DEBUG").is_some_and(|v| v == "true");
@@ -495,9 +495,7 @@ impl<'a> Engine<'a> {
                 tracing::warn!(job_id = self.payload.job_id, "cannot remove container {id}: {e:#}");
             }
         }
-        if let Err(e) = std::fs::remove_dir_all(&self.dirs.root)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
+        if let Err(e) = self.dirs.remove() {
             tracing::warn!(job_id = self.payload.job_id, "cannot remove {}: {e}", self.dirs.root.display());
         }
     }
@@ -773,11 +771,10 @@ impl<'a> Engine<'a> {
         };
 
         let script_path = self.dirs.script_path(n, plan.ext);
-        if let Err(e) = std::fs::write(&script_path, format!("{script}\n")) {
+        if let Err(e) = self.dirs.write_file(&script_path, format!("{script}\n").as_bytes(), 0o644) {
             self.log.line(n, &format!("##[error]Cannot write the step's script: {e}")).await;
             return StepRun::failed();
         }
-        let _ = set_readable(&script_path);
         self.log.line(n, &format!("##[group]Run {}", crate::fmt_first_line(&script))).await;
         for l in script.lines() {
             self.log.line(n, l).await;
@@ -1100,7 +1097,7 @@ impl<'a> Engine<'a> {
 
     /// Reads `$GITHUB_OUTPUT`, `$GITHUB_ENV`, `$GITHUB_PATH` and `$GITHUB_STEP_SUMMARY` after a step.
     async fn collect_files(&mut self, n: i32, files: &StepFiles, run: &mut StepRun) {
-        if let Ok(t) = std::fs::read_to_string(&files.output) {
+        if let Ok(t) = self.dirs.read_file(&files.output) {
             match commands::parse_env_file(&t) {
                 Ok(pairs) => {
                     for (k, v) in pairs {
@@ -1115,7 +1112,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        if let Ok(t) = std::fs::read_to_string(&files.env) {
+        if let Ok(t) = self.dirs.read_file(&files.env) {
             match commands::parse_env_file(&t) {
                 Ok(pairs) => {
                     for (k, v) in pairs {
@@ -1134,12 +1131,12 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        if let Ok(t) = std::fs::read_to_string(&files.path) {
+        if let Ok(t) = self.dirs.read_file(&files.path) {
             for p in commands::parse_path_file(&t) {
                 self.extra_path.insert(0, p);
             }
         }
-        if let Ok(t) = std::fs::read_to_string(&files.summary)
+        if let Ok(t) = self.dirs.read_file(&files.summary)
             && !t.trim().is_empty()
         {
             self.log.line(n, "##[group]Step summary").await;
@@ -1227,19 +1224,4 @@ fn owner_of(p: &std::path::Path) -> Option<(u32, u32)> {
 #[cfg(not(unix))]
 fn owner_of(_p: &std::path::Path) -> Option<(u32, u32)> {
     None
-}
-
-#[cfg(unix)]
-fn set_readable(p: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o644))
-}
-
-#[cfg(not(unix))]
-fn set_readable(_p: &std::path::Path) -> std::io::Result<()> {
-    Ok(())
-}
-
-fn remove_dir(p: &std::path::Path) {
-    let _ = std::fs::remove_dir_all(p);
 }

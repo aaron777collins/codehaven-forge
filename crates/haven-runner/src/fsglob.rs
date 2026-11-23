@@ -96,7 +96,8 @@ pub fn expand(root: &Path, patterns: &[String]) -> Result<Vec<PathBuf>, GlobErro
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    for entry in walkdir::WalkDir::new(root).follow_links(false).sort_by_file_name() {
+    // Not even the root is followed when it is a link: the job can swap its workspace for one.
+    for entry in walkdir::WalkDir::new(root).follow_links(false).follow_root_links(false).sort_by_file_name() {
         let entry = match entry {
             Ok(e) => e,
             // A file that vanishes mid-walk, or a directory we cannot read, is not fatal.
@@ -145,7 +146,9 @@ pub fn hash_files(root: &Path, patterns: &[String]) -> Result<String, GlobError>
     }
     let mut outer = Sha256::new();
     for f in files {
-        let mut file = std::fs::File::open(root.join(&f)).map_err(|e| GlobError::Io(format!("{}: {e}", f.display())))?;
+        // Opened one directory at a time without following links, so a link swapped in after
+        // the walk cannot point the hash at a file outside the workspace (ch-ctk.1).
+        let mut file = crate::safefs::open_regular(root, &root.join(&f)).map_err(|e| GlobError::Io(format!("{}: {e}", f.display())))?;
         let mut h = Sha256::new();
         std::io::copy(&mut file, &mut h).map_err(|e| GlobError::Io(format!("{}: {e}", f.display())))?;
         outer.update(h.finalize());
@@ -242,6 +245,15 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn a_root_that_is_a_link_is_not_walked() {
+        let out = tree();
+        let d = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(out.path(), d.path().join("ws")).unwrap();
+        assert!(expand(&d.path().join("ws"), &pats(&["**"])).unwrap().is_empty());
+        assert_eq!(hash_files(&d.path().join("ws"), &pats(&["**"])).unwrap(), "");
+    }
+
     #[test]
     fn symlinks_are_never_followed() {
         let d = tree();

@@ -1303,8 +1303,12 @@ The server opens two listeners:
   reachable, data dir writable, internal listener only).
 - Prometheus metrics at `/metrics` on the internal listener only.
 - Security headers on every response, listed in section 7.6.
-- Backups (M4): `codehaven admin backup` writes `pg_dump` plus a tar of
-  `data/git` and `data/blobs` to a target directory.
+- Backups: `deploy/prod/backup.sh` (run as root on the host) writes one archive with a
+  `pg_dump`, `data/git`, `data/blobs`, `data/logs`, the master key in `data/secrets`, the
+  database credentials and the env file, plus `SHA256SUMS`. `deploy/prod/backup-timer.sh` runs it
+  daily with retention and a disk guard; `deploy/prod/restore.sh` restores into an empty
+  project. There is no `codehaven admin backup`: it would need the same root and Docker access.
+  See docs/operations.md.
 
 ## 15. Build and test workflow
 

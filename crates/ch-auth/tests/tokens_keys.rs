@@ -207,7 +207,9 @@ async fn job_fixture(c: &Ctx, secret: &str, fork: bool) -> (RepoId, i64) {
     let repo = c.env.repo(owner, "demo").await;
     let run: i64 = sqlx::query_scalar("INSERT INTO workflow_runs (repo_id, run_number, event, head_sha, event_payload) VALUES ($1, 1, 'pull_request', 'abc', $2) RETURNING id")
         .bind(repo.0)
-        .bind(serde_json::json!({"fork": fork}))
+        // The shape ch-ci's join_payload stores: the event, then the run's meta. The fork flag is
+        // meta.fork; a flat {"fork": true} is not what production writes (ch-x12).
+        .bind(serde_json::json!({"event": {"action": "opened"}, "meta": {"workflow_path": ".codehaven/workflows/ci.yml", "workflow_name": "ci", "fork": fork}}))
         .fetch_one(&c.pool)
         .await
         .unwrap();
@@ -249,6 +251,17 @@ async fn job_tokens_live_until_the_job_ends_and_fork_jobs_cannot_write(pool: PgP
     let (_, _) = job_fixture(&c, "chj_forkjob000000000000000000000000000000", true).await;
     match c.state.authn.from_bearer("chj_forkjob000000000000000000000000000000", &c1()).await.unwrap() {
         Actor::Job { perms, .. } => assert!(perms.contents_read && !perms.write_checks),
+        other => panic!("{other:?}"),
+    }
+    // A flat top-level flag is ignored: only meta.fork counts, so the old wrong path cannot come back.
+    let (_, flat_job) = job_fixture(&c, "chj_flatjob000000000000000000000000000000", false).await;
+    sqlx::query("UPDATE workflow_runs SET event_payload = event_payload || '{\"fork\": true}'::jsonb WHERE id = (SELECT run_id FROM workflow_jobs WHERE id = $1)")
+        .bind(flat_job)
+        .execute(&c.pool)
+        .await
+        .unwrap();
+    match c.state.authn.from_bearer("chj_flatjob000000000000000000000000000000", &c1()).await.unwrap() {
+        Actor::Job { perms, .. } => assert!(perms.write_checks),
         other => panic!("{other:?}"),
     }
 }

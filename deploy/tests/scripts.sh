@@ -431,6 +431,192 @@ d_refuse prod-x test-x
 d_refuse test-x latest
 d_refuse test- test-x
 
+# --- section E: the e2e harness never drives an instance it was not pointed at --------------
+# e2e_full.py has no default target (127.0.0.1:3200 is the real instance on its host), and the
+# address it is given must belong to the throwaway project it checks for accounts (ch-5q8). The
+# fake docker here knows one project, e2e-x, whose only container has the address 10.9.8.7.
+
+if command -v python3 >/dev/null 2>&1; then
+  EBIN="$T/e2ebin"
+  mkdir "$EBIN"
+  cat > "$EBIN/docker" <<'FAKE'
+#!/usr/bin/env bash
+case "$1 $*" in
+  "ps "*label=com.docker.compose.project=e2e-x*) echo c0ffee ;;
+  "ps "*) ;;
+  "inspect "*c0ffee*) echo "10.9.8.7 " ;;
+  "compose "*) echo "should not be reached" >&2; exit 3 ;;
+esac
+exit 0
+FAKE
+  chmod +x "$EBIN/docker"
+  e2e() (
+    unset_test_env
+    unset E2E_BASE E2E_PUBLIC E2E_PROJECT E2E_CLI
+    PATH="$EBIN:$PATH"
+    export E2E_PUBLIC=https://code.example.com E2E_PROJECT=e2e-x
+    export E2E_CLI="docker compose -p e2e-x -f deploy/compose.e2e.yml exec -T server codehaven"
+    for kv in "$@"; do export "${kv?}"; done
+    python3 "$TREE/tests/e2e/e2e_full.py" 2>&1
+  )
+  e_refused() {
+    local name="$1" want="$2" out; shift 2
+    out=$(e2e "$@"); local rc=$?
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "$want" && ! printf '%s' "$out" | grep -q 'should not be reached'; then
+      ok "E: $name"
+    else
+      bad "E: $name (rc=$rc: $(printf '%s' "$out" | tail -1))"
+    fi
+  }
+  e_refused 'no E2E_BASE is refused, there is no default' 'set E2E_BASE'
+  e_refused 'the live loopback port is refused' 'is not the address of a container' E2E_BASE=http://127.0.0.1:3200
+  e_refused 'another host is refused' 'is not the address of a container' E2E_BASE=http://10.9.8.8:3200
+  e_refused 'a CLI that is not the project is refused' 'E2E_CLI must address' E2E_BASE=http://10.9.8.7:3200 E2E_CLI=codehaven
+  # With the right address the guard goes on to count accounts through E2E_CLI, which the fake
+  # refuses: proof that the address check passed and nothing else was reached first.
+  out=$(e2e E2E_BASE=http://10.9.8.7:3200); rc=$?
+  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'could not list the accounts'; then
+    ok "E: the project's own container address passes the address check"
+  else
+    bad "E: the project's own container address passes the address check (rc=$rc: $(printf '%s' "$out" | tail -1))"
+  fi
+else
+  skip 'E: python3 is missing'
+fi
+
+# --- section F: the daily backup schedule ---------------------------------------------------
+# backup-prune.py keeps the newest archive of each of the last N days and M ISO weeks; the
+# disk guard in backup-daily.sh skips a run that would fill the disk; backup-timer.sh
+# refuses an unknown verb. F3 to F5 run scripts that insist on root, so they skip
+# themselves here when this is a normal user.
+
+if command -v python3 >/dev/null 2>&1; then
+  PRUNE="$TREE/deploy/prod/backup-prune.py"
+
+  # F1: the prune rules over 40 days plus a second archive on the last day, beside files
+  # that must never be touched.
+  F1="$T/f1"
+  mkdir "$F1"
+  for day in $(python3 -c 'import datetime as d; [print((d.date(2026,10,1)+d.timedelta(i)).strftime("%Y%m%d")) for i in range(40)]'); do
+    : > "$F1/codehaven-test-x-$day"T040000Z.tar.gz
+  done
+  : > "$F1/codehaven-test-x-20261109T120000Z.tar.gz"
+  # None of these four may be touched or printed.
+  : > "$F1/pre-deploy-test-x-20261001T000000Z-abc.dump"
+  : > "$F1/codehaven-other-20261001T040000Z.tar.gz"
+  : > "$F1/notes.txt"
+  mkdir "$F1/codehaven-test-x-20261002T040000Z.tar.gz.d"
+  python3 "$PRUNE" --dir "$F1" --project test-x --apply >/dev/null
+  got=$(cd "$F1" && ls -1 codehaven-test-x-*.tar.gz | LC_ALL=C sort)
+  want=$(printf '%s\n' \
+    codehaven-test-x-20261025T040000Z.tar.gz \
+    codehaven-test-x-20261101T040000Z.tar.gz \
+    codehaven-test-x-20261103T040000Z.tar.gz \
+    codehaven-test-x-20261104T040000Z.tar.gz \
+    codehaven-test-x-20261105T040000Z.tar.gz \
+    codehaven-test-x-20261106T040000Z.tar.gz \
+    codehaven-test-x-20261107T040000Z.tar.gz \
+    codehaven-test-x-20261108T040000Z.tar.gz \
+    codehaven-test-x-20261109T120000Z.tar.gz)
+  if [ "$got" = "$want" ]; then
+    ok 'F: prune keeps the newest of 7 days and of 4 ISO weeks'
+  else
+    bad 'F: prune keeps the newest of 7 days and of 4 ISO weeks'
+  fi
+  if [ -f "$F1/pre-deploy-test-x-20261001T000000Z-abc.dump" ] \
+    && [ -f "$F1/codehaven-other-20261001T040000Z.tar.gz" ] \
+    && [ -f "$F1/notes.txt" ] \
+    && [ -d "$F1/codehaven-test-x-20261002T040000Z.tar.gz.d" ]; then
+    ok 'F: prune leaves every other file alone'
+  else
+    bad 'F: prune leaves every other file alone'
+  fi
+
+  # F2: without --apply nothing is deleted. Ten days from a Monday (2026-10-05 is one), so
+  # the two rules keep seven of them and name the other three.
+  F2="$T/f2"
+  mkdir "$F2"
+  for day in $(python3 -c 'import datetime as d; [print((d.date(2026,10,5)+d.timedelta(i)).strftime("%Y%m%d")) for i in range(10)]'); do
+    : > "$F2/codehaven-test-x-$day"T040000Z.tar.gz
+  done
+  out=$(python3 "$PRUNE" --dir "$F2" --project test-x)
+  f2_files=$(ls -1 "$F2" | wc -l | tr -d ' ')
+  f2_names=$(printf '%s\n' "$out" | grep -c . || true)
+  if [ "$f2_files" -eq 10 ] && [ "$f2_names" -eq 3 ]; then
+    ok 'F: prune without --apply deletes nothing'
+  else
+    bad 'F: prune without --apply deletes nothing'
+  fi
+
+  # The fake backup command for F3 and F4: it records that it ran, makes one archive and
+  # prints its path, which is the contract backup.sh has with backup-daily.sh.
+  cat > "$T/fakebackup.sh" <<FAKE
+#!/usr/bin/env bash
+printf 'ran\n' >> "$T/fakebackup.calls"
+archive="\$CODEHAVEN_BACKUP_DIR/codehaven-test-x-\$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+printf 'x' > "\$archive"
+printf '%s\n' "\$archive"
+FAKE
+
+  # F3: with the free-space floor far above any disk, the run skips itself.
+  printf 'CODEHAVEN_PROJECT=test-x\nCODEHAVEN_BACKUP_DIR=%s\nCODEHAVEN_BACKUP_MIN_FREE_MB=999999999\n' "$T/f3" > "$T/f3.env"
+  if [ "$(id -u)" = 0 ]; then
+    f3_rc=0
+    (
+      unset_test_env
+      CH_ENV_FILE="$T/f3.env" CH_BACKUP_CMD="bash $T/fakebackup.sh" \
+        bash "$TREE/deploy/prod/backup-daily.sh" > "$T/f3.out" 2>&1
+    ) || f3_rc=$?
+    if [ "$f3_rc" = 0 ] && [ ! -e "$T/fakebackup.calls" ] && grep -q 'SKIPPED' "$T/f3/backup-daily.log"; then
+      ok 'F: too little free space skips the backup and logs it'
+    else
+      bad 'F: too little free space skips the backup and logs it'
+    fi
+  else
+    skip 'F: the disk guard (needs root)'
+  fi
+
+  # F4: with the floor at 1 MB the backup runs, is logged, and prune keeps its one archive.
+  printf 'CODEHAVEN_PROJECT=test-x\nCODEHAVEN_BACKUP_DIR=%s\nCODEHAVEN_BACKUP_MIN_FREE_MB=1\n' "$T/f4" > "$T/f4.env"
+  rm -f "$T/fakebackup.calls"
+  if [ "$(id -u)" = 0 ]; then
+    f4_rc=0
+    (
+      unset_test_env
+      CH_ENV_FILE="$T/f4.env" CH_BACKUP_CMD="bash $T/fakebackup.sh" \
+        bash "$TREE/deploy/prod/backup-daily.sh" > "$T/f4.out" 2>&1
+    ) || f4_rc=$?
+    f4_runs=$(grep -c '^ran$' "$T/fakebackup.calls" 2>/dev/null || true)
+    f4_archives=$(ls -1 "$T/f4"/codehaven-test-x-*.tar.gz 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$f4_rc" = 0 ] && [ "$f4_runs" = 1 ] && [ "$f4_archives" = 1 ] && grep -q 'OK:' "$T/f4/backup-daily.log"; then
+      ok 'F: a normal run backs up and logs it'
+    else
+      bad 'F: a normal run backs up and logs it'
+    fi
+  else
+    skip 'F: a normal run (needs root)'
+  fi
+
+  # F5: an unknown verb is refused with exit 2, after the settings checks passed.
+  printf 'CODEHAVEN_PROJECT=test-x\nCODEHAVEN_BUILD_ROOT=%s\nCODEHAVEN_BACKUP_DIR=%s\n' "$T/f5" "$T/f5b" > "$T/f5.env"
+  if [ "$(id -u)" = 0 ]; then
+    f5_rc=0
+    (
+      unset_test_env
+      CH_ENV_FILE="$T/f5.env" bash "$TREE/deploy/prod/backup-timer.sh" bogus > "$T/f5.out" 2>&1
+    ) || f5_rc=$?
+    if [ "$f5_rc" = 2 ]; then
+      ok 'F: backup-timer.sh refuses an unknown verb'
+    else
+      bad 'F: backup-timer.sh refuses an unknown verb'
+    fi
+  else
+    skip 'F: backup-timer usage (needs root)'
+  fi
+else
+  skip 'F: python3 is missing'
+fi
+
 # --- the count -----------------------------------------------------------------------------
 
 printf '\n# %d passed, %d failed, %d skipped\n' "$passed" "$failed" "$skipped"

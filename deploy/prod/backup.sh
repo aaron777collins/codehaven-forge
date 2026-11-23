@@ -6,7 +6,10 @@
 # holds everything needed to bring the instance back on a new host: a pg_dump of the database, the
 # git repositories, blobs and logs, the server's master key (data/secrets), the database
 # credentials, and the env file. That makes it as sensitive as the instance itself: keep it
-# somewhere only you can read, and encrypt it before it leaves the host.
+# somewhere only you can read, and encrypt it before it leaves the host. SHA256SUMS in the archive
+# lists a checksum for every other member, and the archive is unpacked and checked against it
+# before the script reports success. This script is the supported backup command: a
+# `codehaven admin backup` would need the same root and Docker access and would add nothing.
 #
 # The server is stopped for the time the files are copied, so the database and the repositories
 # match, and is started again by a trap whatever happens. Nothing else is stopped.
@@ -22,6 +25,7 @@ case "$(cd "$CODEHAVEN_BACKUP_DIR" && pwd)/" in "$dir"/*) ch_die "CODEHAVEN_BACK
 C="$dir/deploy/compose.sh"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 stage="$CODEHAVEN_BACKUP_DIR/.staging-$stamp"
+verify=""
 archive="$CODEHAVEN_BACKUP_DIR/codehaven-$CODEHAVEN_PROJECT-$stamp.tar.gz"
 umask 077
 mkdir -p "$stage"
@@ -31,7 +35,7 @@ cleanup() {
   rc=$?
   set +e
   [ "$server_was_up" = 0 ] || bash "$C" start server >/dev/null 2>&1
-  rm -rf "$stage"
+  rm -rf "$stage" "${verify:-}"
   [ "$rc" = 0 ] || { rm -f "$archive"; echo "backup: failed, nothing was kept" >&2; }
   exit "$rc"
 }
@@ -45,8 +49,14 @@ tar -C "$CODEHAVEN_DATA_DIR" -cf "$stage/data.tar" git blobs logs secrets
 tar -C "$CODEHAVEN_SECRETS_DIR" -cf "$stage/compose-secrets.tar" .
 cp "$CH_ENV_LOADED" "$stage/codehaven.env"
 printf 'project=%s\ntag=%s\ncreated=%s\n' "$CODEHAVEN_PROJECT" "${CODEHAVEN_TAG:-unknown}" "$stamp" > "$stage/MANIFEST"
-tar -C "$stage" -czf "$archive" MANIFEST pg.dump data.tar compose-secrets.tar codehaven.env
+(cd "$stage" && sha256sum MANIFEST pg.dump data.tar compose-secrets.tar codehaven.env > SHA256SUMS)
+tar -C "$stage" -czf "$archive" MANIFEST pg.dump data.tar compose-secrets.tar codehaven.env SHA256SUMS
 chmod 600 "$archive"
-tar -tzf "$archive" >/dev/null
+# Check the finished archive against its checksums in a scratch copy beside it (same disk, mode
+# 0700, removed by the trap if anything fails).
+verify="$(mktemp -d "$CODEHAVEN_BACKUP_DIR/.verify-XXXXXX")"
+tar -xzf "$archive" -C "$verify"
+(cd "$verify" && sha256sum --quiet -c SHA256SUMS) || { rm -rf "$verify"; ch_die "the archive does not match its own checksums"; }
+rm -rf "$verify"
 if [ "$server_was_up" = 1 ]; then bash "$C" start server >/dev/null; server_was_up=0; fi
 echo "$archive"

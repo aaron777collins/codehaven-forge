@@ -497,7 +497,10 @@ impl GitCore {
         };
 
         let change = RefChange { name: base_ref, old: Some(base), new: Some(new_sha.clone()) };
-        match self.apply_ref_change(actor, &repo, change, Origin::PullRequestMerge, client).await {
+        // "Update branch" writes into a pull request's head branch, past no merge gate, so it is a
+        // direct write as far as branch protection goes (ch-jnm).
+        let origin = if req.update_branch { Origin::Web } else { Origin::PullRequestMerge };
+        match self.apply_ref_change(actor, &repo, change, origin, client).await {
             Ok(()) => Ok(MergeOutcome::Merged { sha: new_sha }),
             Err(Error::Conflict(_)) => {
                 let current = self.read_resolve(req.repo_id, &req.base_ref).await.unwrap_or_default();

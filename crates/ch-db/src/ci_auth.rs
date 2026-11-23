@@ -34,13 +34,35 @@ pub async fn job_from_token(pool: &PgPool, token: &str) -> Result<Option<(JobId,
     if !token.starts_with(JOB_TOKEN_PREFIX) {
         return Ok(None);
     }
-    let row: Option<(i64, i64, bool)> = sqlx::query_as(
-        "SELECT j.id, j.repo_id, COALESCE((r.event_payload->'meta'->>'fork')::boolean, false)
+    let row: Option<(i64, i64, bool)> = sqlx::query_as(&format!(
+        "SELECT j.id, j.repo_id, {FORK_FLAG}
          FROM workflow_jobs j JOIN workflow_runs r ON r.id = j.run_id
-         WHERE j.token_hash = $1 AND j.status = 'in_progress' AND r.status <> 'completed'",
-    )
+         WHERE j.token_hash = $1 AND j.status = 'in_progress' AND r.status <> 'completed'"
+    ))
     .bind(hash_token(token))
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|(job, repo, fork)| (JobId(job), RepoId(repo), JobPerms { contents_read: true, write_checks: !fork })))
+    Ok(row.map(|(job, repo, fork)| (JobId(job), RepoId(repo), job_perms(fork))))
+}
+
+/// The same answer for a job already identified by id (a live stream checking that its
+/// credential still holds). Same conditions as `job_from_token`.
+pub async fn job_by_id(pool: &PgPool, job: JobId) -> Result<Option<(RepoId, JobPerms)>> {
+    let row: Option<(i64, bool)> = sqlx::query_as(&format!(
+        "SELECT j.repo_id, {FORK_FLAG}
+         FROM workflow_jobs j JOIN workflow_runs r ON r.id = j.run_id
+         WHERE j.id = $1 AND j.status = 'in_progress' AND r.status <> 'completed'"
+    ))
+    .bind(job.0)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(repo, fork)| (RepoId(repo), job_perms(fork))))
+}
+
+/// Where ch-ci's `join_payload` keeps the fork flag: `{event, meta: {fork}}` (ch-x12). Reading a
+/// top-level `fork` instead made every fork job a writer.
+const FORK_FLAG: &str = "COALESCE((r.event_payload->'meta'->>'fork')::boolean, false)";
+
+fn job_perms(fork: bool) -> JobPerms {
+    JobPerms { contents_read: true, write_checks: !fork }
 }

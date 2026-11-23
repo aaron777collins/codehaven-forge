@@ -117,8 +117,10 @@ impl OrgsService {
     }
 
     /// Owner or site admin. Others who can see the org get `Forbidden`, everyone else `NotFound`.
+    /// A personal access token also needs the admin:org scope (ch-84u).
     async fn require_owner(&self, actor: &Actor, org: OrgId) -> Result<()> {
         self.org_exists(org).await?;
+        require_admin_org_scope(actor)?;
         match self.role(actor, org).await? {
             Some(OrgRole::Owner) => Ok(()),
             Some(OrgRole::Member) => Err(Error::forbidden("Only organization owners can do that.")),
@@ -147,6 +149,18 @@ impl OrgsService {
             .bind(org.0)
             .fetch_one(&mut *tx)
             .await?)
+    }
+}
+
+/// Managing an org with a personal access token needs admin:org, whatever the person's role.
+/// Other kinds of caller are unaffected: a session is the person, and an app or a job has no org
+/// role at all, so `require_owner` refuses it anyway.
+fn require_admin_org_scope(actor: &Actor) -> Result<()> {
+    match actor {
+        Actor::Token { scopes, .. } if !token_has_scope(scopes, "admin:org") => {
+            Err(Error::forbidden("This token needs the admin:org scope"))
+        }
+        _ => Ok(()),
     }
 }
 
@@ -322,6 +336,7 @@ impl Orgs for OrgsService {
         if actor.user_id() != Some(user) {
             self.require_owner(actor, org).await?;
         } else {
+            require_admin_org_scope(actor)?;
             self.require_member(actor, org).await?;
         }
         let mut tx = self.core.db.begin().await?;
@@ -512,7 +527,9 @@ impl Orgs for OrgsService {
         if permission == Permission::None {
             return Err(Error::Validation(vec![FieldError::custom("Team", "permission", "Use remove to take access away.")]));
         }
-        // Admin on the repository, which an org owner has on every repo of the org.
+        // Admin on the repository, which an org owner has on every repo of the org. This changes a
+        // team, so a token also needs admin:org.
+        require_admin_org_scope(actor)?;
         self.authz.require(actor, repo, Permission::Admin).await?;
         let owner: Option<i64> =
             sqlx::query_scalar("SELECT owner_id FROM repositories WHERE id = $1").bind(repo.0).fetch_optional(&self.core.db).await?;
@@ -546,6 +563,7 @@ impl Orgs for OrgsService {
 
     async fn remove_team_repo(&self, actor: &Actor, team: TeamId, repo: RepoId, client: &ClientInfo) -> Result<()> {
         self.team_org(team).await?;
+        require_admin_org_scope(actor)?;
         self.authz.require(actor, repo, Permission::Admin).await?;
         let mut tx = self.core.db.begin().await?;
         let n = sqlx::query("DELETE FROM team_repos WHERE team_id = $1 AND repo_id = $2")

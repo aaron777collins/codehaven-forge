@@ -199,7 +199,7 @@ pub async fn handle_event(ctx: &Ctx, ev: &StoredEvent) -> Result<Vec<RunId>> {
     }
 }
 
-type PullRow = (String, i64, bool, Option<i64>, String, String, String, String, bool);
+type PullRow = (String, i64, bool, Option<i64>, bool, String, String, String, String, bool);
 
 async fn pull_request(
     ctx: &Ctx,
@@ -215,18 +215,23 @@ async fn pull_request(
         return Ok(Vec::new());
     }
     let row: Option<PullRow> = sqlx::query_as(
-        "SELECT i.title, i.author_id, i.open, pr.head_repo_id, pr.head_ref, pr.head_sha, pr.base_ref, pr.base_sha, pr.draft
+        "SELECT i.title, i.author_id, i.open, pr.head_repo_id, pr.from_fork, pr.head_ref, pr.head_sha, pr.base_ref, pr.base_sha, pr.draft
          FROM pull_requests pr JOIN issues i ON i.id = pr.issue_id WHERE pr.issue_id = $1 AND pr.repo_id = $2",
     )
     .bind(pull_id)
     .bind(repo.0)
     .fetch_optional(&ctx.db)
     .await?;
-    let Some((title, author, open, head_repo, head_ref, head_sha, base_ref, base_sha, draft)) = row else { return Ok(Vec::new()) };
+    let Some((title, author, open, head_repo, from_fork, head_ref, head_sha, base_ref, base_sha, draft)) = row else {
+        return Ok(Vec::new());
+    };
     if !open {
         return Ok(Vec::new());
     }
-    let fork = head_repo != Some(repo.0);
+    // A branch of this repository is stored with no head repository (NULL), as ch-collab does;
+    // that is not a fork. `from_fork` stays set after a fork is deleted and its head_repo_id
+    // goes to NULL, so such a pull request still runs as a fork (migration 0122).
+    let fork = from_fork || head_repo.is_some_and(|h| h != repo.0);
     let author_id = UserId(author);
     let login = user_login(ctx, author_id).await?.unwrap_or_default();
     // A fork's code runs only after someone with write access says so, unless its author

@@ -596,6 +596,67 @@ async fn nonroot_checkout_then_root_steps_then_runner_side_actions_all_work_toge
     drop(keep);
 }
 
+/// The reviewer's escape on the real topology (ch-ctk.1): root in the job container leaves a
+/// process running that appends a smudge filter to any `.git/config` that appears in the
+/// workspace, and the repository's `.gitattributes` names that filter. The runner (uid 10001)
+/// must never run it, because its checkout reads no config the job can write.
+#[tokio::test]
+async fn nonroot_a_job_process_cannot_add_a_filter_to_the_runners_checkout() {
+    let Some(b) = daemon().await else { return };
+    let (keep, dir) = work_for_child_or_new();
+    if rerun_as_runner_user("nonroot_a_job_process_cannot_add_a_filter_to_the_runners_checkout", &dir) {
+        drop(keep);
+        return;
+    }
+    let repo = dir.join("filter-src");
+    let bare = dir.join("filter.git");
+    std::fs::create_dir_all(repo.join("docs")).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join(".gitattributes"), "*.txt filter=evil\n").unwrap();
+    for i in 0..40 {
+        std::fs::write(repo.join(format!("docs/n{i}.txt")), format!("n{i}\n")).unwrap();
+    }
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "init"]);
+    git(&dir, &["clone", "-q", "--bare", repo.to_str().unwrap(), bare.to_str().unwrap()]);
+    let sha = git(&repo, &["rev-parse", "HEAD"]);
+    // Only the runner's side can see this directory; the filter would make the mark as the runner.
+    let marks = dir.join("filter-marks");
+    std::fs::create_dir_all(&marks).unwrap();
+    let m = marks.display();
+    let inject = format!(
+        r#"W="$GITHUB_WORKSPACE"
+(
+  while [ -d "$W" ] && [ ! -e "$W/stop-injector" ]; do
+    c="$W/.git/config"
+    if [ -f "$c" ] && ! grep -q evil "$c" 2>/dev/null; then
+      printf '[filter "evil"]\n\tsmudge = "touch {m}/smudge-ran; cat"\n' >> "$c"
+    fi
+  done
+) >/dev/null 2>&1 </dev/null &
+echo "injector started as uid $(id -u)"
+"#
+    );
+    let h = real(b, &dir).await;
+    let s2 = sha.clone();
+    let job = TestJob::new(9055)
+        .clone_url(&format!("file://{}", bare.display()))
+        .context(move |c| c.sha = s2)
+        .run(&inject)
+        .uses("actions/checkout@v4", &[])
+        .run("touch stop-injector; git rev-parse HEAD; cat docs/n7.txt")
+        .build();
+    let r = h.run(job).await;
+    let ran: Vec<String> = std::fs::read_dir(&marks).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(ran.is_empty(), "the runner ran a filter a job process wrote: {ran:?}");
+    assert_eq!(r.conclusion, "success", "{}", h.server.log_text(9055));
+    assert!(h.server.step_log(9055, 1).contains("uid 0"), "{}", h.server.step_log(9055, 1));
+    let l = h.server.step_log(9055, 3);
+    assert!(l.contains(&sha) && l.contains("n7"), "{l}");
+    assert!(h.leftovers().is_empty());
+    drop(keep);
+}
+
 #[tokio::test]
 async fn nonroot_a_container_user_option_can_write_the_workspace() {
     let Some(b) = daemon().await else { return };

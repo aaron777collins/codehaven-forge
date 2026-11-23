@@ -72,6 +72,25 @@ workspace from outside the container. The rules for what they may touch:
   nothing outside the workspace. Zips are unpacked with `enclosed_name` and a byte count.
 - `checkout` sends the job token only to the server's own origin (`http.<origin>/.extraheader`),
   and masks both the token and its base64 form.
+- `checkout` never runs anything the job left behind or writes while it works. A process from an
+  earlier step can still be running, so git never touches the workspace: it fetches and checks
+  out into a new repository in the runner's private directory, with `--git-dir` and
+  `--work-tree` on every call. The finished tree, `.git` included, is then moved into the
+  workspace one directory at a time without following a link, replacing whatever the job left at
+  those names (an old `.git` too). After that the `.git` is the job's, and the runner never runs
+  git on it again. Every git call also runs with `core.hooksPath=/dev/null`,
+  `core.fsmonitor=false`, `protocol.ext.allow=never`, no credential helper, and no global or
+  system config.
+- The runner's own files in the job directory (step scripts, `$GITHUB_OUTPUT`, `$GITHUB_ENV`,
+  `$GITHUB_PATH`, `$GITHUB_STEP_SUMMARY`, `event.json`) are written and read one directory at a
+  time without following a symbolic link. A link the job put at one of those names is replaced, a
+  link on the way to them stops the step, and only regular files are read back. Archives the
+  runner builds or downloads live in a private directory beside the job's, which the job cannot
+  reach.
+
+These rules keep one job's files from reaching the runner. They are not a sandbox: a job still
+runs in a container on a shared Docker daemon. Jobs in virtual machines (ch-ctk.3) are the
+stronger option if Codehaven ever runs code from people it does not trust.
 
 ### Logs
 

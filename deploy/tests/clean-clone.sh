@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # deploy/tests/clean-clone.sh NAME: the stranger test. From a clean copy of the checkout to a first
-# admin, a runner, a backup, a restore into a second empty project, an upgrade and a rollback, on
-# one Linux host with Docker, using images that already exist. Run as root.
+# admin, a runner, a backup (checked against its SHA256SUMS), a restore into a second empty project
+# (every table's row count and git fsck of every repository compared), an upgrade, a rollback, and
+# a failed deploy that rolls the server back, on one Linux host with Docker, using images that
+# already exist. Run as root.
 #
 #   bash deploy/tests/clean-clone.sh test-cc
 #
@@ -58,6 +60,17 @@ set_env() {
 
 # users <envfile>: how many accounts `codehaven admin users` lists for that project.
 users() { ch_run "$1" bash "$CO/deploy/compose.sh" exec -T server codehaven admin users 2>/dev/null | grep -c . || true; }
+
+# table_counts <envfile>: "table count" for every table in the public schema, sorted by name.
+table_counts() {
+  ch_run "$1" bash "$CO/deploy/compose.sh" exec -T postgres psql -U codehaven -d codehaven -At -c \
+    "SELECT format('SELECT %L || '' '' || count(*) FROM public.%I;', table_name, table_name) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name" \
+    | ch_run "$1" bash "$CO/deploy/compose.sh" exec -T postgres psql -U codehaven -d codehaven -At
+}
+# repos_in <data-dir>: every bare repository under <data-dir>/git, one path per line, sorted.
+repos_in() { find "$1/git" -type d -name objects -prune 2>/dev/null | sed 's,/objects$,,' | while IFS= read -r d; do [ -f "$d/HEAD" ] && printf '%s\n' "$d"; done | sort; }
+# refs_of <repo>: its refs and commit ids.
+refs_of() { git -c safe.directory='*' --git-dir="$1" for-each-ref --format='%(refname) %(objectname)' 2>/dev/null; }
 
 # wait_healthy <envfile>: block until compose ps shows the server healthy, or give up after 3 min.
 wait_healthy() {
@@ -116,6 +129,9 @@ cleanup() {
     [ -f "$f" ] && ch_run "$f" bash "$CO/deploy/compose.sh" --profile ci down -v --remove-orphans >/dev/null 2>&1
   done
   docker network rm "$NET" >/dev/null 2>&1
+  # The image tags this script's own checks leave behind. Removing a tag never removes an image
+  # that another tag still names.
+  docker rmi "codehaven-server:$NAME-broken" "codehaven-runner:$NAME-broken" "codehaven-server:$NAME-previous" "codehaven-server:$NAME-r-previous" >/dev/null 2>&1
   rm -rf "$BASE"
   exit "$rc"
 }
@@ -230,6 +246,22 @@ run_out "$SCRATCH/admin2.out" "$ENV_MAIN" bash "$CO/deploy/prod/first-admin.sh" 
 wantfail "$RC" "a second first-admin.sh run is refused"
 [ "$(users "$ENV_MAIN")" = 1 ] && ok "still exactly 1 account" || bad "the account count moved"
 
+# --- 5b. data to back up ----------------------------------------------------------------------------
+
+bobpw="$(head -c 18 /dev/urandom | base64 | tr -d '/+=')"
+printf '%s\n' "$bobpw" | ch_run "$ENV_MAIN" bash "$CO/deploy/compose.sh" exec -T server codehaven admin create-user --username bob --email bob@example.com --password-stdin >"$SCRATCH/bob.out" 2>&1
+want0 "$?" "a second account, bob, is created with a password"
+auth="Authorization: Basic $(printf 'bob:%s' "$bobpw" | base64 | tr -d '\n')"
+code="$(curl -s -o "$SCRATCH/repo.out" -w '%{http_code}' -H "$auth" -H 'content-type: application/json' -d '{"name":"demo","private":true}' "http://127.0.0.1:$HTTP1/api/v3/user/repos")"
+[ "$code" = 201 ] && ok "bob creates the repository bob/demo over the API" || bad "creating bob/demo answered $code"
+work="$SCRATCH/demo"; mkdir -p "$work"
+( cd "$work" && git init -q -b main && printf 'hello\n' > README.md && git add README.md \
+  && git -c user.name=Bob -c user.email=bob@example.com commit -q -m first \
+  && git -c credential.helper= -c http.extraHeader="$auth" push -q "http://127.0.0.1:$HTTP1/bob/demo.git" main ) >"$SCRATCH/push.out" 2>&1
+want0 "$?" "a commit is pushed to bob/demo over HTTP"
+[ "$(users "$ENV_MAIN")" = 2 ] && ok "admin users lists 2 accounts" || bad "admin users does not list 2 accounts"
+ACCOUNTS=2
+
 # --- 6. the runner --------------------------------------------------------------------------------
 
 tok="$(ch_run "$ENV_MAIN" bash "$CO/deploy/compose.sh" exec -T server codehaven admin runner-token 2>/dev/null | tail -1)"
@@ -250,9 +282,17 @@ check "dind answers docker info" ch_run "$ENV_MAIN" bash "$CO/deploy/compose.sh"
 
 # --- 7. backup -------------------------------------------------------------------------------------
 
+# The server is stopped first, so the table counts are taken with nothing writing. backup.sh
+# leaves a server it found stopped, stopped, so this script starts it again itself.
+ch_run "$ENV_MAIN" bash "$CO/deploy/compose.sh" stop server >/dev/null 2>&1
+table_counts "$ENV_MAIN" >"$SCRATCH/counts-main.txt" 2>"$SCRATCH/counts-main.err"
+[ "$(grep -c . "$SCRATCH/counts-main.txt")" -gt 10 ] && ok "the main database lists $(grep -c . "$SCRATCH/counts-main.txt") tables" || bad "could not count the main database's tables"
 # stdout only: the path is the one thing the script prints there. Compose writes its progress to stderr.
 ch_run "$ENV_MAIN" bash "$CO/deploy/prod/backup.sh" >"$SCRATCH/backup.out" 2>"$SCRATCH/backup.err"; RC=$?
 want0 "$RC" "backup.sh exits 0"
+table_counts "$ENV_MAIN" >"$SCRATCH/counts-main2.txt" 2>/dev/null
+cmp -s "$SCRATCH/counts-main.txt" "$SCRATCH/counts-main2.txt" && ok "nothing changed in the database while the backup ran" || bad "the database changed while the backup ran"
+ch_run "$ENV_MAIN" bash "$CO/deploy/compose.sh" start server >/dev/null 2>&1
 archive="$(tail -n 1 "$SCRATCH/backup.out")"
 [ "$(grep -c . "$SCRATCH/backup.out")" = 1 ] && ok "backup.sh prints one path" || bad "backup.sh did not print exactly one path"
 [ -f "$archive" ] && ok "the archive exists" || bad "the archive does not exist"
@@ -262,9 +302,12 @@ case "$archive" in
   *) bad "the archive is not under \$BASE/backups ($archive)" ;;
 esac
 listing="$(tar -tzf "$archive" 2>/dev/null)"
-for f in MANIFEST pg.dump data.tar compose-secrets.tar codehaven.env; do
+for f in MANIFEST pg.dump data.tar compose-secrets.tar codehaven.env SHA256SUMS; do
   printf '%s\n' "$listing" | grep -qx "$f" && ok "the archive lists $f" || bad "the archive has no $f"
 done
+rm -rf "$SCRATCH/unpacked"; mkdir -p "$SCRATCH/unpacked"
+tar -xzf "$archive" -C "$SCRATCH/unpacked" && (cd "$SCRATCH/unpacked" && sha256sum --quiet -c SHA256SUMS) \
+  && ok "every member of the archive matches SHA256SUMS" || bad "the archive does not match SHA256SUMS"
 check "the server is healthy again after the backup" wait_healthy "$ENV_MAIN"
 
 cp "$ENV_MAIN" "$SCRATCH/env-incheck.env"
@@ -287,17 +330,49 @@ set_env "$ENV_REST" CODEHAVEN_PROXY none
 set_env "$ENV_REST" CODEHAVEN_TRUSTED_PROXIES "'[]'"
 [ -f "$BASE/pools-restore.yml" ] && set_env "$ENV_REST" CODEHAVEN_COMPOSE_EXTRA "$BASE/pools-restore.yml"
 
+# A tampered archive must be refused before anything is written.
+tdir="$SCRATCH/unpacked"   # already unpacked in section 7
+printf '#tampered\n' >> "$tdir/codehaven.env"
+tar -C "$tdir" -czf "$SCRATCH/tampered.tar.gz" MANIFEST pg.dump data.tar compose-secrets.tar codehaven.env SHA256SUMS
+run_out "$SCRATCH/restore-tampered.out" "$ENV_REST" bash "$CO/deploy/prod/restore.sh" "$SCRATCH/tampered.tar.gz"
+wantfail "$RC" "a tampered archive is refused"
+grep -q checksums "$SCRATCH/restore-tampered.out" && ok "the refusal names the checksums" || bad "the refusal does not mention the checksums"
+[ ! -e "$BASE/r/data/postgres" ] && ok "the refused restore wrote nothing" || bad "the refused restore wrote $BASE/r/data/postgres"
+
 run_out "$SCRATCH/restore1.out" "$ENV_REST" bash "$CO/deploy/prod/restore.sh" "$archive"
 want0 "$RC" "restore.sh exits 0 into the empty project ${NAME}-r"
+# restore.sh stopped postgres when it finished, so it comes up again to compare the restored
+# database and repositories with what was backed up. The up.sh run below starts the rest.
+ch_run "$ENV_REST" bash "$CO/deploy/compose.sh" up -d postgres >/dev/null 2>&1
+for i in $(seq 1 40); do ch_run "$ENV_REST" bash "$CO/deploy/compose.sh" exec -T postgres pg_isready -U codehaven -d codehaven >/dev/null 2>&1 && break; sleep 2; done
+table_counts "$ENV_REST" >"$SCRATCH/counts-restored.txt" 2>"$SCRATCH/counts-restored.err"
+if cmp -s "$SCRATCH/counts-main.txt" "$SCRATCH/counts-restored.txt"; then
+  ok "every table has the same row count after the restore ($(grep -c . "$SCRATCH/counts-restored.txt") tables)"
+else
+  bad "row counts differ after the restore"; diff "$SCRATCH/counts-main.txt" "$SCRATCH/counts-restored.txt" | head -n 20 | sed 's/^/      counts: /'
+fi
+repos_in "$BASE/data" >"$SCRATCH/repos-main.txt"; repos_in "$BASE/r/data" >"$SCRATCH/repos-restored.txt"
+n_repos="$(grep -c . "$SCRATCH/repos-restored.txt")"
+[ "$n_repos" -ge 1 ] && [ "$n_repos" = "$(grep -c . "$SCRATCH/repos-main.txt")" ] && ok "the restore has the same $n_repos repositories" || bad "the restored repository count ($n_repos) is wrong"
+fsck_bad=0; refs_bad=0
+while IFS= read -r r; do
+  git -c safe.directory='*' --git-dir="$r" fsck --full --strict >"$SCRATCH/fsck.out" 2>&1 || fsck_bad=$((fsck_bad + 1))
+  rel="${r#"$BASE/r/data/"}"
+  [ "$(refs_of "$r")" = "$(refs_of "$BASE/data/$rel")" ] || refs_bad=$((refs_bad + 1))
+done <"$SCRATCH/repos-restored.txt"
+[ "$fsck_bad" = 0 ] && ok "git fsck --full --strict passes on every restored repository" || bad "git fsck failed on $fsck_bad restored repositories"
+[ "$refs_bad" = 0 ] && ok "every restored repository has the same refs as the original" || bad "$refs_bad restored repositories have different refs"
 run_out "$SCRATCH/up-r.out" "$ENV_REST" bash "$CO/deploy/prod/up.sh"
 want0 "$RC" "up.sh exits 0 on the restored project"
+[ "$RC" -eq 0 ] || tail -n 25 "$SCRATCH/up-r.out" | sed 's/^/      up.sh: /'
+[ "$RC" -eq 0 ] || cat "$BASE/run/up-smoke.log" 2>/dev/null | grep '^FAIL' | sed 's/^/      smoke: /'
 check "the restored server is healthy" wait_healthy "$ENV_REST"
-[ "$(users "$ENV_REST")" = 1 ] && ok "the restored instance lists 1 account" || bad "the restored instance does not list 1 account"
+[ "$(users "$ENV_REST")" = "$ACCOUNTS" ] && ok "the restored instance lists $ACCOUNTS accounts" || bad "the restored instance does not list $ACCOUNTS accounts"
 run_out "$SCRATCH/restore2.out" "$ENV_REST" bash "$CO/deploy/prod/restore.sh" "$archive"
 wantfail "$RC" "a second restore into the same project is refused"
 run_out "$SCRATCH/restore3.out" "$ENV_MAIN" bash "$CO/deploy/prod/restore.sh" "$archive"
 wantfail "$RC" "a restore into the first project is refused"
-[ "$(users "$ENV_MAIN")" = 1 ] && ok "the first instance still lists exactly 1 account" || bad "the first instance's account count moved"
+[ "$(users "$ENV_MAIN")" = "$ACCOUNTS" ] && ok "the first instance still lists exactly $ACCOUNTS accounts" || bad "the first instance's account count moved"
 [ "$(sha256sum "$BASE/r/secrets/pg_password" 2>/dev/null | awk '{print $1}')" = "$sha_first" ] \
   && ok "the restored credentials are the ones the backup carried" || bad "the restored pg_password differs from the first one's"
 
@@ -306,7 +381,7 @@ wantfail "$RC" "a restore into the first project is refused"
 run_out "$SCRATCH/up2.out" "$ENV_MAIN" bash "$CO/deploy/prod/up.sh"
 want0 "$RC" "up.sh with nothing to do exits 0"
 check "the server stays healthy" wait_healthy "$ENV_MAIN"
-[ "$(users "$ENV_MAIN")" = 1 ] && ok "still exactly 1 account after the upgrade pass" || bad "the account count moved after the upgrade pass"
+[ "$(users "$ENV_MAIN")" = "$ACCOUNTS" ] && ok "still exactly $ACCOUNTS accounts after the upgrade pass" || bad "the account count moved after the upgrade pass"
 
 run_out "$SCRATCH/up-nomigrate.out" "$ENV_MAIN" env CODEHAVEN_NO_MIGRATE=1 bash "$CO/deploy/prod/up.sh"
 want0 "$RC" "CODEHAVEN_NO_MIGRATE=1 up.sh exits 0"
@@ -328,6 +403,32 @@ if [ -n "$cid" ]; then
 else
   bad "no server container to inspect for --migrate"
 fi
+
+# --- 9b. a failed deploy rolls the server back ----------------------------------------------------
+
+docker tag "codehaven-runner:$NAME" "codehaven-runner:$NAME-broken"
+printf 'FROM codehaven-server:%s\nENTRYPOINT ["/nonexistent"]\n' "$NAME" | docker build -q -t "codehaven-server:$NAME-broken" - >"$SCRATCH/broken-build.out" 2>&1
+want0 "$?" "a broken server image is built for the test"
+good_id="$(docker image inspect --format '{{.Id}}' "codehaven-server:$NAME")"
+newest_before="$(ls -1t "$BASE/backups"/pre-deploy-"$NAME"-*.dump 2>/dev/null | head -n 1)"
+# A short wait: the broken server never becomes healthy, so there is nothing to wait for.
+run_out "$SCRATCH/up-broken.out" "$ENV_MAIN" env CODEHAVEN_DEPLOY_WAIT=60 bash "$CO/deploy/prod/up.sh" "$NAME-broken"
+wantfail "$RC" "up.sh with a server that never becomes healthy exits non-zero"
+grep -q "rolled back" "$SCRATCH/up-broken.out" && ok "up.sh says it rolled back" || { bad "up.sh does not say it rolled back"; tail -n 15 "$SCRATCH/up-broken.out" | sed 's/^/      up.sh: /'; }
+check "the rolled back server is healthy" wait_healthy "$ENV_MAIN"
+cid="$(ch_run "$ENV_MAIN" bash "$CO/deploy/compose.sh" ps -q server 2>/dev/null)"
+[ -n "$cid" ] && [ "$(docker inspect --format '{{.Image}}' "$cid")" = "$good_id" ] && ok "the server runs the previous image again" || bad "the server does not run the previous image"
+docker image inspect "codehaven-server:$NAME-previous" >/dev/null 2>&1 && ok "the previous image is kept as codehaven-server:$NAME-previous" || bad "codehaven-server:$NAME-previous is missing"
+newest="$(ls -1t "$BASE/backups"/pre-deploy-"$NAME"-*.dump 2>/dev/null | head -n 1)"
+case "$newest" in
+  *-"$NAME-broken".dump) [ "$newest" != "$newest_before" ] && ok "a pre-deploy dump was taken before the broken deploy" || bad "no new pre-deploy dump" ;;
+  *) bad "no pre-deploy dump was taken before the broken deploy" ;;
+esac
+[ -n "$newest" ] && [ "$(stat -c %a "$newest")" = 600 ] && ok "the pre-deploy dump is mode 600" || bad "the pre-deploy dump is not mode 600"
+[ "$(users "$ENV_MAIN")" = "$ACCOUNTS" ] && ok "still exactly $ACCOUNTS accounts after the rollback" || bad "the account count moved after the rollback"
+run_out "$SCRATCH/up-after.out" "$ENV_MAIN" bash "$CO/deploy/prod/up.sh"
+want0 "$RC" "a normal up.sh after the rollback exits 0"
+check "the server is healthy on its own tag again" wait_healthy "$ENV_MAIN"
 
 # --- 10. config errors name the missing key ------------------------------------------------------------
 

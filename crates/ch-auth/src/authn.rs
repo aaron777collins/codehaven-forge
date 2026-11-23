@@ -21,7 +21,7 @@ use ch_core::ids::*;
 use ch_core::live::Credential;
 use ch_core::model::{ClientInfo, SshIdentity};
 use ch_core::services::Authn;
-use ch_core::{Actor, AuthVia, JobPerms, Scopes};
+use ch_core::{Actor, AuthVia, Scopes};
 use ch_db::tokens;
 use chrono::{DateTime, Utc};
 use serde_json::json;
@@ -71,27 +71,15 @@ impl AuthnService {
         Ok(Some(Actor::Token { user_id: UserId(row.user_id), token_id: TokenId(row.id), scopes: Scopes::new(row.scopes) }))
     }
 
+    /// A job token. The lookup is ch_db::ci_auth::job_from_token, the one the CI stream uses
+    /// too, so both read the fork flag where ch-ci's join_payload writes it (`meta.fork`). A
+    /// fork pull request's job reads contents and writes nothing (ARCHITECTURE.md section 7.2,
+    /// ch-x12). The token only works while its job is in progress.
     async fn job_actor(&self, secret: &str) -> Result<Option<Actor>> {
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            id: i64,
-            repo_id: i64,
-            fork_pr: bool,
-        }
-        // `workflow_runs.event_payload.fork = true` marks a pull request from a fork. Those
-        // jobs read contents and write nothing (ARCHITECTURE.md section 7.2).
-        let row: Option<Row> = sqlx::query_as(
-            "SELECT j.id, j.repo_id, (r.event IN ('pull_request', 'pull_request_target') AND COALESCE(r.event_payload->>'fork', 'false') = 'true') AS fork_pr
-             FROM workflow_jobs j JOIN workflow_runs r ON r.id = j.run_id
-             WHERE j.token_hash = $1 AND j.status <> 'completed'",
-        )
-        .bind(tokens::hash_token(secret))
-        .fetch_optional(&self.core.db)
-        .await?;
-        Ok(row.map(|r| Actor::Job {
-            job_id: JobId(r.id),
-            repo_id: RepoId(r.repo_id),
-            perms: JobPerms { contents_read: true, write_checks: !r.fork_pr },
+        Ok(ch_db::ci_auth::job_from_token(&self.core.db, secret).await?.map(|(job_id, repo_id, perms)| Actor::Job {
+            job_id,
+            repo_id,
+            perms,
         }))
     }
 
@@ -362,17 +350,10 @@ impl Authn for AuthnService {
                 }));
             }
             Credential::Job { job_id } => {
-                let row: Option<(i64, bool)> = sqlx::query_as(
-                    "SELECT j.repo_id, (r.event IN ('pull_request', 'pull_request_target') AND COALESCE(r.event_payload->>'fork', 'false') = 'true')
-                     FROM workflow_jobs j JOIN workflow_runs r ON r.id = j.run_id WHERE j.id = $1 AND j.status <> 'completed'",
-                )
-                .bind(job_id.0)
-                .fetch_optional(db)
-                .await?;
-                return Ok(row.map(|(repo_id, fork_pr)| Actor::Job {
+                return Ok(ch_db::ci_auth::job_by_id(db, *job_id).await?.map(|(repo_id, perms)| Actor::Job {
                     job_id: *job_id,
-                    repo_id: RepoId(repo_id),
-                    perms: JobPerms { contents_read: true, write_checks: !fork_pr },
+                    repo_id,
+                    perms,
                 }));
             }
             Credential::Runner { runner_id } => {

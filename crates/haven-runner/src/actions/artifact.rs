@@ -64,7 +64,7 @@ pub async fn upload(ctx: &ActionCtx<'_>) -> Result<ActionOutput> {
     let root = fsglob::common_ancestor(&files);
     ctx.info(format!("With the provided path, there will be {} file(s) uploaded", files.len())).await;
 
-    let zip_path = ctx.dirs.tmp.join(format!("artifact-{}.zip", rand::random::<u32>()));
+    let zip_path = ctx.dirs.private.join(format!("artifact-{}.zip", rand::random::<u32>()));
     let (ws, zp, rt, fl) = (ctx.dirs.workspace.clone(), zip_path.clone(), root.clone(), files.clone());
     let size = tokio::task::spawn_blocking(move || zip_files(&ws, &rt, &fl, &zp)).await.map_err(|e| anyhow!("{e}"))??;
     let result = ctx.client.upload_artifact(&ctx.payload.token, ctx.payload.job_id, &name, &zip_path, retention).await;
@@ -95,7 +95,8 @@ pub fn zip_files(workspace: &Path, root: &Path, files: &[PathBuf], out: &Path) -
             opts = opts.unix_permissions(meta.permissions().mode() & 0o777);
         }
         z.start_file(entry, opts)?;
-        let mut src = std::fs::File::open(&full).with_context(|| format!("reading {}", full.display()))?;
+        // Opened without following any link, so a link swapped in after the walk is refused.
+        let mut src = crate::safefs::open_regular(workspace, &full).with_context(|| format!("reading {}", full.display()))?;
         std::io::copy(&mut src, &mut z)?;
     }
     let mut f = z.finish()?;
@@ -107,14 +108,14 @@ pub async fn download(ctx: &ActionCtx<'_>) -> Result<ActionOutput> {
     let name = ctx.input("name").ok_or_else(|| anyhow!("download-artifact needs a `name`"))?.to_string();
     check_name(&name)?;
     let dest = inside_workspace(&ctx.dirs.workspace, ctx.input("path").unwrap_or("."))?;
-    let zip_path = ctx.dirs.tmp.join(format!("download-{}.zip", rand::random::<u32>()));
+    let zip_path = ctx.dirs.private.join(format!("download-{}.zip", rand::random::<u32>()));
     let got = ctx.client.download_artifact(&ctx.payload.token, ctx.payload.job_id, &name, &zip_path).await;
     if let Err(e) = got {
         let _ = std::fs::remove_file(&zip_path);
         return Err(anyhow!("downloading the artifact {name:?} failed: {e}"));
     }
-    let (zp, d) = (zip_path.clone(), dest.clone());
-    let n = tokio::task::spawn_blocking(move || unzip(&zp, &d)).await.map_err(|e| anyhow!("{e}"))?;
+    let (zp, root, d) = (zip_path.clone(), ctx.dirs.root.clone(), dest.clone());
+    let n = tokio::task::spawn_blocking(move || unzip(&zp, &root, &d)).await.map_err(|e| anyhow!("{e}"))?;
     let _ = std::fs::remove_file(&zip_path);
     let n = n?;
     ctx.info(format!("Downloaded {name}: {n} file(s) into {}", dest.display())).await;
@@ -123,15 +124,18 @@ pub async fn download(ctx: &ActionCtx<'_>) -> Result<ActionOutput> {
     Ok(out)
 }
 
-/// Extracts a zip into `dest`. Entries that would land outside it, links, and anything past the
-/// size and count limits are refused.
-pub fn unzip(zip_path: &Path, dest: &Path) -> Result<usize> {
+/// Extracts a zip into `dest`, which lies inside `root` (the job root). Entries that would land
+/// outside it, links, and anything past the size and count limits are refused. Every directory
+/// and file is made with `safefs`, so a link the job planted anywhere between `root` and an
+/// entry is an error, never a way out (ch-ctk.1).
+pub fn unzip(zip_path: &Path, root: &Path, dest: &Path) -> Result<usize> {
     let f = std::fs::File::open(zip_path)?;
     let mut z = zip::ZipArchive::new(f).context("the artifact is not a valid zip file")?;
     if z.len() > MAX_UNZIP_ENTRIES {
         bail!("the artifact has too many files");
     }
-    std::fs::create_dir_all(dest)?;
+    let refused = |p: &Path, e: std::io::Error| anyhow!("cannot unpack the artifact at {}: {e}", p.display());
+    crate::safefs::create_dir_all(root, dest, 0o755).map_err(|e| refused(dest, e))?;
     let mut total = 0u64;
     let mut written = 0u64;
     let mut files = 0;
@@ -145,9 +149,14 @@ pub fn unzip(zip_path: &Path, dest: &Path) -> Result<usize> {
         if e.is_symlink() {
             continue;
         }
+        // Spelled with plain names only, so safefs can walk it from `root`.
+        let rel: PathBuf = rel.components().filter(|c| matches!(c, std::path::Component::Normal(_))).collect();
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
         let target = dest.join(&rel);
         if e.is_dir() {
-            std::fs::create_dir_all(&target)?;
+            crate::safefs::create_dir_all(root, &target, 0o755).map_err(|e| refused(&target, e))?;
             continue;
         }
         total = total.saturating_add(e.size());
@@ -155,16 +164,11 @@ pub fn unzip(zip_path: &Path, dest: &Path) -> Result<usize> {
             bail!("the artifact is too large to unpack");
         }
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-            // A directory in the way that is really a link would send the write elsewhere.
-            if std::fs::symlink_metadata(parent).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
-                bail!("{} is a symbolic link, so the artifact cannot be unpacked there", parent.display());
-            }
+            crate::safefs::create_dir_all(root, parent, 0o755).map_err(|e| refused(parent, e))?;
         }
-        if std::fs::symlink_metadata(&target).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
-            std::fs::remove_file(&target)?;
-        }
-        let mut out = std::fs::File::create(&target)?;
+        let mode = e.unix_mode().map_or(0o644, |m| m & 0o777);
+        // Whatever the job left at this name, a link included, is replaced, never written through.
+        let mut out = crate::safefs::create_new(root, &target, mode).map_err(|e| refused(&target, e))?;
         let mut buf = [0u8; 64 * 1024];
         loop {
             let n = e.read(&mut buf)?;
@@ -178,11 +182,7 @@ pub fn unzip(zip_path: &Path, dest: &Path) -> Result<usize> {
             }
             out.write_all(&buf[..n])?;
         }
-        #[cfg(unix)]
-        if let Some(mode) = e.unix_mode() {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode & 0o777));
-        }
+        out.flush()?;
         files += 1;
     }
     Ok(files)
@@ -234,7 +234,7 @@ mod tests {
         let zip = ws.path().join("o.zip");
         zip_files(ws.path(), &fsglob::common_ancestor(&files), &files, &zip).unwrap();
         let dest = tempfile::tempdir().unwrap();
-        assert_eq!(unzip(&zip, dest.path()).unwrap(), 2);
+        assert_eq!(unzip(&zip, dest.path(), dest.path()).unwrap(), 2);
         assert_eq!(std::fs::read_to_string(dest.path().join("x.bin")).unwrap(), "payload");
         assert_eq!(std::fs::read_to_string(dest.path().join("y/z.txt")).unwrap(), "zed");
     }
@@ -255,7 +255,8 @@ mod tests {
             z.finish().unwrap();
         }
         let dest = t.path().join("dest");
-        let n = unzip(&zp, &dest).unwrap();
+        std::fs::create_dir_all(&dest).unwrap();
+        let n = unzip(&zp, &dest, &dest).unwrap();
         assert_eq!(n, 1);
         assert!(!t.path().join("escape.txt").exists());
         assert!(!Path::new("/abs.txt").exists());
@@ -278,8 +279,74 @@ mod tests {
             z.write_all(b"x").unwrap();
             z.finish().unwrap();
         }
-        assert!(unzip(&zp, &dest).is_err());
+        assert!(unzip(&zp, &dest, &dest).is_err());
         assert!(!outside.join("file.txt").exists());
+    }
+
+    /// ch-ctk.1: a link two directories up from the file, as the review planted (dl/a pointing
+    /// at the runner's home, an entry a/sub/PWNED_ART.txt), and a download path that is itself a
+    /// link. Neither may write outside the workspace.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_higher_up_or_at_the_download_path_is_refused() {
+        let t = tempfile::tempdir().unwrap();
+        let ws = t.path().join("ws");
+        let outside = t.path().join("home");
+        std::fs::create_dir_all(ws.join("dl")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, ws.join("dl/a")).unwrap();
+        std::os::unix::fs::symlink(&outside, ws.join("linked")).unwrap();
+        let zp = t.path().join("a.zip");
+        {
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&zp).unwrap());
+            z.add_directory("a/sub/", SimpleFileOptions::default()).unwrap();
+            z.start_file("a/sub/PWNED_ART.txt", SimpleFileOptions::default()).unwrap();
+            z.write_all(b"x").unwrap();
+            z.finish().unwrap();
+        }
+        assert!(unzip(&zp, &ws, &ws.join("dl")).is_err());
+        assert!(!outside.join("sub").exists(), "no directory was made through the link");
+        assert!(unzip(&zp, &ws, &ws.join("linked")).is_err());
+        assert!(!outside.join("a").exists());
+        // A file entry whose own directory is not in the zip takes the same path.
+        let zp2 = t.path().join("b.zip");
+        {
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&zp2).unwrap());
+            z.start_file("a/sub/deeper/f.txt", SimpleFileOptions::default()).unwrap();
+            z.write_all(b"x").unwrap();
+            z.finish().unwrap();
+        }
+        assert!(unzip(&zp2, &ws, &ws.join("dl")).is_err());
+        assert!(std::fs::read_dir(&outside).unwrap().next().is_none(), "nothing was written outside");
+    }
+
+    /// A file the job left where an artifact file goes is replaced, and a link there is
+    /// replaced instead of written through.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_file_or_link_at_the_target_is_replaced() {
+        let t = tempfile::tempdir().unwrap();
+        let ws = t.path().join("ws");
+        let outside = t.path().join("secret");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(&outside, "keep").unwrap();
+        std::fs::write(ws.join("old.txt"), "old contents that are longer").unwrap();
+        std::os::unix::fs::symlink(&outside, ws.join("l.txt")).unwrap();
+        let zp = t.path().join("a.zip");
+        {
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&zp).unwrap());
+            z.start_file("old.txt", SimpleFileOptions::default().unix_permissions(0o600)).unwrap();
+            z.write_all(b"new").unwrap();
+            z.start_file("l.txt", SimpleFileOptions::default()).unwrap();
+            z.write_all(b"mine").unwrap();
+            z.finish().unwrap();
+        }
+        assert_eq!(unzip(&zp, &ws, &ws).unwrap(), 2);
+        assert_eq!(std::fs::read_to_string(ws.join("old.txt")).unwrap(), "new");
+        assert_eq!(std::fs::read_to_string(ws.join("l.txt")).unwrap(), "mine");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(ws.join("old.txt")).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
     #[test]
@@ -287,6 +354,6 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let p = t.path().join("x.zip");
         std::fs::write(&p, b"nope").unwrap();
-        assert!(unzip(&p, t.path()).is_err());
+        assert!(unzip(&p, t.path(), t.path()).is_err());
     }
 }

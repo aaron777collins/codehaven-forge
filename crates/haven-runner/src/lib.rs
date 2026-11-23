@@ -16,6 +16,7 @@ pub mod logs;
 pub mod mask;
 pub mod options;
 pub mod runner;
+pub mod safefs;
 pub mod shell;
 
 /// The first line of a script, cut to a length that reads well in a group header.

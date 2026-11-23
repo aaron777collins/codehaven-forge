@@ -512,6 +512,10 @@ pub struct MergeRequest {
     /// The base sha the caller based its decision on. The ref update is compare-and-swap
     /// on it, so a concurrent push fails the merge instead of losing commits.
     pub expected_base_sha: String,
+    /// True for "update branch", which writes into a pull request's head branch. That write has
+    /// passed no merge gate, so branch protection treats it as a direct push (ch-jnm).
+    #[serde(default)]
+    pub update_branch: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

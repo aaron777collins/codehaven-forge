@@ -93,7 +93,12 @@ one_left "after the Rust harness"
 
 # --- b. the Python harness, same target ----------------------------------------------------------------
 
-E2E_PUBLIC=https://code.example.com E2E_BASE=http://127.0.0.1:1 E2E_PROJECT="$PROJECT" \
+# The harness only talks to an E2E_BASE that is one of the project's own container addresses, so
+# the account check is reached with the server's address. A loopback address (where live listens on
+# this host) is refused before any request.
+SERVER_IP="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$(cc ps -q server)" 2>/dev/null | awk '{print $1}')"
+[ -n "$SERVER_IP" ] && ok "the throwaway server has an address" || bad "the throwaway server has no address"
+E2E_PUBLIC=https://code.example.com E2E_BASE="http://$SERVER_IP:3200" E2E_PROJECT="$PROJECT" \
   E2E_CLI="$CLI_THIS" E2E_STEPS=0-1 python3 "$SRC/tests/e2e/e2e_full.py" >"$SCRATCH/py-holds.out" 2>&1
 rc=$?
 if [ "$rc" -ne 0 ] && grep -q 'already holds' "$SCRATCH/py-holds.out"; then
@@ -102,6 +107,16 @@ else
   bad "the python harness did not refuse (rc=$rc)"
 fi
 one_left "after the python harness"
+
+E2E_PUBLIC=https://code.example.com E2E_BASE=http://127.0.0.1:3200 E2E_PROJECT="$PROJECT" \
+  E2E_CLI="$CLI_THIS" E2E_STEPS=0-1 python3 "$SRC/tests/e2e/e2e_full.py" >"$SCRATCH/py-loop.out" 2>&1
+rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'is not the address of a container' "$SCRATCH/py-loop.out"; then
+  ok "the python harness refuses an E2E_BASE that is not the project's own server"
+else
+  bad "the python harness accepted a loopback E2E_BASE (rc=$rc)"
+fi
+one_left "after the python harness with a loopback E2E_BASE"
 
 # --- c. the Python harness pointed at a project that is not a throwaway one ---------------------------------------------------
 

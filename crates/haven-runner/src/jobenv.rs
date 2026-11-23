@@ -14,8 +14,13 @@ use std::path::{Path, PathBuf};
 /// <root>/_runner/scripts    one script file per `run:` step
 /// <root>/_runner/files      per step: output, env, path, summary
 /// <root>/_runner/pids       per step: the pid file the kill-on-timeout reads
-/// <root>/_runner/tmp        scratch for archives built by the built-in actions
+/// <root>/_runner/tmp        scratch the job may use
+/// <root>.private            the runner's own scratch (archives it builds and downloads),
+///                           mode 0700, beside the tree and never mounted into the container
 /// ```
+///
+/// The job can change anything under `<root>`, including the runner's part, so the runner reads
+/// and writes there only through `crate::safefs`, which never follows a link (ch-ctk.1).
 #[derive(Debug, Clone)]
 pub struct JobDirs {
     pub root: PathBuf,
@@ -26,6 +31,7 @@ pub struct JobDirs {
     pub files: PathBuf,
     pub pids: PathBuf,
     pub tmp: PathBuf,
+    pub private: PathBuf,
 }
 
 impl JobDirs {
@@ -42,12 +48,31 @@ impl JobDirs {
         for dir in [&d.root, &d.workspace, &d.runner, &d.temp, &d.scripts, &d.files, &d.pids, &d.tmp] {
             set_mode(dir, 0o777)?;
         }
+        std::fs::create_dir(&d.private)?;
+        set_mode(&d.private, 0o700)?;
         Ok(d)
+    }
+
+    /// Removes the tree and the runner's private scratch. `remove_dir_all` does not follow links.
+    pub fn remove(&self) -> std::io::Result<()> {
+        let private = std::fs::remove_dir_all(&self.private);
+        let tree = std::fs::remove_dir_all(&self.root);
+        for r in [tree, private] {
+            if let Err(e) = r
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(e);
+            }
+        }
+        Ok(())
     }
 
     fn at(root: PathBuf) -> JobDirs {
         let runner = root.join("_runner");
+        let mut private = root.clone().into_os_string();
+        private.push(".private");
         JobDirs {
+            private: PathBuf::from(private),
             workspace: root.join("workspace"),
             temp: runner.join("temp"),
             scripts: runner.join("scripts"),
@@ -59,17 +84,27 @@ impl JobDirs {
         }
     }
 
-    /// The four per-step files, created empty and writable by anyone.
+    /// The four per-step files, created empty and writable by anyone. Whatever the job left at
+    /// these names is replaced, and a link on the way stops the step (ch-ctk.1).
     pub fn step_files(&self, step: i32) -> std::io::Result<StepFiles> {
         let dir = self.files.join(format!("step-{step}"));
-        std::fs::create_dir_all(&dir)?;
-        set_mode(&dir, 0o777)?;
+        crate::safefs::fresh_dir(&self.root, &dir, 0o777)?;
         let f = StepFiles { output: dir.join("output"), env: dir.join("env"), path: dir.join("path"), summary: dir.join("summary") };
         for p in [&f.output, &f.env, &f.path, &f.summary] {
-            std::fs::write(p, b"")?;
-            set_mode(p, 0o666)?;
+            crate::safefs::create_new(&self.root, p, 0o666)?;
         }
         Ok(f)
+    }
+
+    /// Writes a file the runner makes in the job tree (a step's script, the event), replacing
+    /// whatever the job left there and following no link.
+    pub fn write_file(&self, path: &Path, data: &[u8], mode: u32) -> std::io::Result<()> {
+        crate::safefs::write_new(&self.root, path, data, mode)
+    }
+
+    /// Reads a file the job may have written, refusing links and anything but a regular file.
+    pub fn read_file(&self, path: &Path) -> std::io::Result<String> {
+        crate::safefs::read_to_string(&self.root, path)
     }
 
     pub fn script_path(&self, step: i32, ext: &str) -> PathBuf {
@@ -296,6 +331,9 @@ mod tests {
         assert!(f.output.exists() && f.env.exists() && f.path.exists() && f.summary.exists());
         assert_eq!(std::fs::read_to_string(&f.output).unwrap(), "");
         assert_ne!(JobDirs::create(w.path(), 3).unwrap().root, d.root, "two runs of one job never share a directory");
+        assert!(d.private.is_dir() && !d.private.starts_with(&d.root), "the runner's scratch is outside the mounted tree");
+        d.remove().unwrap();
+        assert!(!d.root.exists() && !d.private.exists());
     }
 
     #[test]

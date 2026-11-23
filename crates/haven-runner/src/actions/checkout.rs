@@ -6,7 +6,7 @@
 use super::{ActionCtx, ActionOutput, inside_workspace};
 use anyhow::{Result, anyhow, bail};
 use base64::Engine;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -78,16 +78,76 @@ pub fn header_scope(clone_url: &str) -> Option<String> {
     })
 }
 
-async fn git(ctx: &ActionCtx<'_>, dir: &Path, global: &[String], args: &[&str]) -> Result<String> {
+/// Settings on every git command the checkout runs. The repository is out of the job's reach
+/// (see `Stage`), so these are a second wall (ch-ctk.1): they outrank the repository's own
+/// config, and `-c` reaches the git processes these start (submodules) too. No hooks and no
+/// fsmonitor run, and no helper or ext transport is used.
+pub const SAFE_CONFIG: &[&str] = &[
+    "core.hooksPath=/dev/null",
+    "core.fsmonitor=false",
+    "core.untrackedCache=false",
+    "protocol.ext.allow=never",
+    "credential.helper=",
+    "safe.bareRepository=explicit",
+];
+
+pub fn safe_config_args() -> Vec<String> {
+    SAFE_CONFIG.iter().flat_map(|kv| ["-c".to_string(), (*kv).to_string()]).collect()
+}
+
+/// Where git works: a repository in the runner's private directory, which no job process can
+/// reach (ch-ctk.1). The job can write anywhere in its own tree, the workspace included, and a
+/// process it started in an earlier step keeps running while the checkout works. So no git
+/// command of the runner's ever reads a config, hook, attribute or `.git` file there, or writes a
+/// file there: git fetches and checks out here, and the finished tree, `.git` included, is then
+/// moved into the workspace. From then on it is the job's, and the runner never runs git on it.
+struct Stage {
+    work: PathBuf,
+    git_dir: PathBuf,
+}
+
+impl Stage {
+    fn new(private: &Path) -> Result<Stage> {
+        let work = private.join(format!("checkout-{:08x}", rand::random::<u32>()));
+        std::fs::create_dir(&work).map_err(|e| anyhow!("cannot make the checkout's private directory: {e}"))?;
+        Ok(Stage { git_dir: work.join(".git"), work })
+    }
+
+    /// `--git-dir` and `--work-tree` on every command, so git never looks anywhere else for a
+    /// repository.
+    fn args(&self) -> Vec<String> {
+        vec![format!("--git-dir={}", self.git_dir.display()), format!("--work-tree={}", self.work.display())]
+    }
+}
+
+impl Drop for Stage {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.work);
+    }
+}
+
+async fn git(ctx: &ActionCtx<'_>, stage: &Stage, global: &[String], args: &[&str]) -> Result<String> {
     let mut cmd = Command::new("git");
-    cmd.current_dir(dir)
-        .args(global)
-        .args(args)
+    cmd.current_dir(&stage.work).args(safe_config_args()).args(global);
+    // `init` makes the repository, so it takes the path instead.
+    if args.first() != Some(&"init") {
+        cmd.args(stage.args());
+    }
+    cmd.args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_CONFIG_GLOBAL", ctx.dirs.runner.join("gitconfig"))
+        // No global or system config: the old global file lived in the job's directory, where
+        // the job could write hooks and commands into it.
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_ATTR_NOSYSTEM", "1")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_CONFIG_PARAMETERS")
+        .env_remove("GIT_CONFIG_COUNT")
+        .env_remove("GIT_EXEC_PATH")
+        .env_remove("GIT_TEMPLATE_DIR")
+        .env_remove("GIT_ASKPASS")
+        .env_remove("SSH_ASKPASS")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -129,7 +189,9 @@ pub async fn run(ctx: &ActionCtx<'_>) -> Result<ActionOutput> {
     let token = &ctx.payload.token;
     let sub = ctx.input("path").unwrap_or(".");
     let dir = inside_workspace(&ctx.dirs.workspace, sub)?;
-    std::fs::create_dir_all(&dir)?;
+    // No link on the way from the job root, so the checkout lands in the workspace and nowhere
+    // else (ch-ctk.1).
+    crate::safefs::create_dir_all(&ctx.dirs.root, &dir, 0o755).map_err(|e| anyhow!("cannot use {sub:?} for the checkout: {e}"))?;
     let depth: u32 = match ctx.input("fetch-depth") {
         None => 1,
         Some(d) => d.trim().parse().map_err(|_| anyhow!("fetch-depth must be a whole number, not {d:?}"))?,
@@ -149,12 +211,12 @@ pub async fn run(ctx: &ActionCtx<'_>) -> Result<ActionOutput> {
     };
 
     ctx.info(format!("Syncing repository: {}", repo.full_name)).await;
-    if !dir.join(".git").exists() {
-        git(ctx, &dir, &[], &["init", "-q", "."]).await?;
-    }
-    if git(ctx, &dir, &[], &["remote", "add", "origin", &repo.clone_url]).await.is_err() {
-        git(ctx, &dir, &[], &["remote", "set-url", "origin", &repo.clone_url]).await?;
-    }
+    // A new repository every time, out of the job's reach. A .git an earlier step left in the
+    // workspace is never read, and the move below replaces it.
+    let stage = Stage::new(&ctx.dirs.private)?;
+    let work = stage.work.to_string_lossy().into_owned();
+    git(ctx, &stage, &[], &["init", "-q", &work]).await?;
+    git(ctx, &stage, &[], &["remote", "add", "origin", &repo.clone_url]).await?;
 
     let depth_arg = format!("--depth={depth}");
     let mut landed: Option<String> = None;
@@ -165,11 +227,11 @@ pub async fn run(ctx: &ActionCtx<'_>) -> Result<ActionOutput> {
             args.push(&depth_arg);
         }
         args.extend(["origin", spec]);
-        match git(ctx, &dir, &auth_args, &args).await {
+        match git(ctx, &stage, &auth_args, &args).await {
             Ok(_) => {
                 // Land on the right commit: the one the run names, or whatever the ref points at.
                 let tip_ref = spec.split(':').nth(1).unwrap_or("FETCH_HEAD");
-                let tip = git(ctx, &dir, &[], &["rev-parse", &format!("{tip_ref}^{{commit}}")]).await.ok().map(|s| s.trim().to_string());
+                let tip = git(ctx, &stage, &[], &["rev-parse", &format!("{tip_ref}^{{commit}}")]).await.ok().map(|s| s.trim().to_string());
                 match (&p.sha, tip) {
                     (Some(want), Some(have)) if *want != have => {
                         ctx.info(format!("{tip_ref} is at {have}, not {want}. Trying the commit itself.")).await;
@@ -192,10 +254,10 @@ pub async fn run(ctx: &ActionCtx<'_>) -> Result<ActionOutput> {
 
     match &p.branch {
         Some(b) if p.sha.as_deref().is_none_or(|s| s == commit) && !b.is_empty() => {
-            git(ctx, &dir, &[], &["checkout", "-q", "--force", "-B", b, &commit]).await?;
+            git(ctx, &stage, &[], &["checkout", "-q", "--force", "-B", b, &commit]).await?;
         }
         _ => {
-            git(ctx, &dir, &[], &["checkout", "-q", "--force", "--detach", &commit]).await?;
+            git(ctx, &stage, &[], &["checkout", "-q", "--force", "--detach", &commit]).await?;
         }
     }
 
@@ -204,7 +266,7 @@ pub async fn run(ctx: &ActionCtx<'_>) -> Result<ActionOutput> {
         if mode == "recursive" {
             a.push("--recursive");
         }
-        git(ctx, &dir, &auth_args, &a).await?;
+        git(ctx, &stage, &auth_args, &a).await?;
         let mut a = vec!["-c", "protocol.version=2", "submodule", "update", "--init", "--force", "-q"];
         if mode == "recursive" {
             a.push("--recursive");
@@ -214,12 +276,17 @@ pub async fn run(ctx: &ActionCtx<'_>) -> Result<ActionOutput> {
             a.push("--depth");
             a.push(da.trim_start_matches("--depth="));
         }
-        git(ctx, &dir, &auth_args, &a).await?;
+        git(ctx, &stage, &auth_args, &a).await?;
     }
 
     if persist && let Some(s) = &scope {
-        git(ctx, &dir, &[], &["config", "--local", &format!("http.{s}.extraheader"), &header]).await?;
+        git(ctx, &stage, &[], &["config", "--local", &format!("http.{s}.extraheader"), &header]).await?;
     }
+    // Hand the finished tree over. Nothing the job did in the workspace meanwhile was read; a
+    // link it left or swaps in at any name is replaced, never followed.
+    crate::safefs::move_into(&ctx.dirs.root, &stage.work, &dir)
+        .map_err(|e| anyhow!("cannot move the checkout into {sub:?}: {e}. Did a step change that directory while the checkout ran?"))?;
+    drop(stage);
     ctx.info(format!("Checked out {commit}")).await;
     let mut out = ActionOutput::default();
     out.outputs.insert("commit".into(), commit);
@@ -272,6 +339,15 @@ mod tests {
         let b64 = h.strip_prefix("AUTHORIZATION: basic ").unwrap();
         let raw = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
         assert_eq!(raw, b"x-access-token:tok123");
+    }
+
+    #[test]
+    fn every_git_call_turns_hooks_and_fsmonitor_off() {
+        let a = safe_config_args();
+        for want in ["core.hooksPath=/dev/null", "core.fsmonitor=false", "protocol.ext.allow=never"] {
+            let i = a.iter().position(|x| x == want).unwrap_or_else(|| panic!("{want} is missing"));
+            assert_eq!(a[i - 1], "-c");
+        }
     }
 
     #[test]

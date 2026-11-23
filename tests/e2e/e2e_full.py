@@ -22,7 +22,8 @@ name is not a throwaway one. There is no flag that turns that off.
 """
 import base64, concurrent.futures, hashlib, hmac, http.client, json, os, re, shlex, struct, subprocess, sys, tempfile, threading, time, urllib.parse
 
-BASE = os.environ.get("E2E_BASE", "http://127.0.0.1:3200").rstrip("/")
+# No default: on a host that runs a real instance, 127.0.0.1:3200 is that instance (ch-5q8).
+BASE = os.environ.get("E2E_BASE", "").rstrip("/")
 PUBLIC = os.environ.get("E2E_PUBLIC", "").rstrip("/")
 SSH = os.environ.get("E2E_SSH", "127.0.0.1:2222")
 CLI = shlex.split(os.environ.get("E2E_CLI", "codehaven"))
@@ -1086,6 +1087,20 @@ ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1)
 THROWAWAY_PROJECT = re.compile(r"^(test|e2e|shots|tmp)-[a-z0-9][a-z0-9-]*$")
 
 
+def project_addresses(project):
+    """Every network address of the running containers of one compose project."""
+    try:
+        ids = subprocess.run(["docker", "ps", "-q", "--filter", "label=com.docker.compose.project=" + project],
+                             capture_output=True, text=True, timeout=30).stdout.split()
+        if not ids:
+            return set()
+        out = subprocess.run(["docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}"] + ids,
+                             capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return {a for a in out.split() if a}
+
+
 def refuse_unless_throwaway():
     """Never drive a stack people use. Two checks, and neither has an override: the project must
     carry a throwaway name and be the one E2E_CLI talks to, and the stack must hold no account."""
@@ -1094,8 +1109,16 @@ def refuse_unless_throwaway():
     project = os.environ.get("E2E_PROJECT", "")
     if not THROWAWAY_PROJECT.match(project):
         sys.exit("e2e: E2E_PROJECT must name a throwaway compose project such as test-mine or e2e-mine. Refusing to run.")
-    if "compose" in CLI and not ("-p" in CLI and CLI[CLI.index("-p") + 1] == project):
+    if "compose" not in CLI or not ("-p" in CLI and CLI[CLI.index("-p") + 1] == project):
         sys.exit("e2e: E2E_CLI must address the throwaway project %s (docker compose -p %s ...). Refusing to run." % (project, project))
+    if not BASE:
+        sys.exit("e2e: set E2E_BASE to the address of the throwaway server (a container address of %s). There is no default. Refusing to run." % project)
+    # The account check below asks the project through E2E_CLI, so E2E_BASE must be that same
+    # project's server, not another instance that happens to answer: its host has to be the
+    # address of one of the project's own containers. A loopback port could be anything.
+    host = urllib.parse.urlparse(BASE).hostname or ""
+    if host not in project_addresses(project):
+        sys.exit("e2e: E2E_BASE (%s) is not the address of a container of the throwaway project %s. Refusing to run." % (BASE, project))
     rc, out, err = cli("admin", "users")
     if rc != 0:
         sys.exit("e2e: could not list the accounts of the target (rc=%d). Refusing to run." % rc)

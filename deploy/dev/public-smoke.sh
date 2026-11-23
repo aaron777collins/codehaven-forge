@@ -52,7 +52,15 @@ expect() { # path expected-status [header-regex]
   if [ -n "$re" ] && ! headers "$base$path" | grep -qiE "$re"; then bad "$path lacks header matching $re"; return; fi
   ok "$path -> $want"
 }
-for p in / /explore /root /nobody/nothing /signup /register /metrics /readyz; do expect "$p" 303 '^location: /login'; done
+for p in / /root /nobody/nothing /signup /register /metrics /readyz; do expect "$p" 303 '^location: /login'; done
+# /explore is public when the instance allows public repositories (codehaven admin public-repos on),
+# and a sign-in redirect when it does not. Either is right; anything else is not.
+c=$(code "$base/explore")
+case "$c" in
+  200) ok "/explore -> 200 (public repositories are on)" ;;
+  303) if headers "$base/explore" | grep -qi '^location: /login'; then ok "/explore -> 303 (public repositories are off)"; else bad "/explore redirects somewhere other than /login"; fi ;;
+  *) bad "/explore returned $c, expected 200 or 303" ;;
+esac
 for p in /api/v3/user /api/v3/meta /api/v3/version /api/v3/repos/x/y; do expect "$p" 401; done
 expect '/x/y.git/info/refs?service=git-upload-pack' 401 '^www-authenticate: basic'
 expect /v2/ 401 '^www-authenticate: bearer'

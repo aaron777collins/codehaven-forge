@@ -72,6 +72,39 @@ much data there is. Nothing else is stopped. If anything fails the archive is re
 script says so. Take backups on a schedule with cron or a systemd timer, and test a restore now
 and then: a backup nobody has restored is a hope.
 
+### A daily schedule
+
+```sh
+sudo bash deploy/prod/backup-timer.sh install
+```
+
+That installs a systemd timer that runs `deploy/prod/backup-daily.sh` once a day at 04:17
+local time, up to ten minutes later, and catches up after the host was off. Each run takes one
+backup and then prunes: the newest archive of each of the last 7 days and of each of the last
+4 ISO weeks is kept, the rest is deleted, and nothing else in `CODEHAVEN_BACKUP_DIR` is ever
+touched. The counts are settings: `CODEHAVEN_BACKUP_KEEP_DAILY` (default 7) and
+`CODEHAVEN_BACKUP_KEEP_WEEKLY` (default 4).
+
+Before the backup the run checks the free space on the disk behind `CODEHAVEN_BACKUP_DIR`.
+When less than `CODEHAVEN_BACKUP_MIN_FREE_MB` (default 2048) is free, or less than three
+times the newest archive, or less than twice the data it copies, the run is skipped and writes `SKIPPED` to `backup-daily.log` in
+the backup directory, so a nearly full disk does not eat its own backups. Every line of the
+run lands in that log.
+
+```sh
+sudo bash deploy/prod/backup-timer.sh status
+```
+
+shows when the timer fires next and the last 20 lines of the log.
+
+The timer runs a copy of `deploy/` taken at install time, kept under
+`CODEHAVEN_BUILD_ROOT/backup-tool`, so a checkout that is being synced or edited is never
+what runs at night. Run `install` again after updating the checkout to refresh the copy.
+`remove` uninstalls the timer and keeps every archive already taken.
+
+These archives stay on the same disk as the instance, so they do not survive losing that
+disk. Copy them off the host, encrypted, as well.
+
 ## Restoring
 
 Restore into an empty location. Make a new env file (or edit a copy) with a new
@@ -98,7 +131,16 @@ sudo bash deploy/prod/up.sh
 ```
 
 `up.sh` builds images for the new commit when it has none, then starts the instance on them, and
-the server applies new database migrations as it starts. The image tag
+the server applies new database migrations as it starts.
+
+Before it changes anything, `up.sh` dumps the database to `CODEHAVEN_BACKUP_DIR` as
+`pre-deploy-<project>-<time>-<tag>.dump` (the newest 5 are kept) and tags the image the server runs
+now as `codehaven-server:<project>-previous`. After the deploy the server has to be healthy within
+`CODEHAVEN_DEPLOY_WAIT` seconds (default 300) and `deploy/dev/public-smoke.sh` has to pass against
+`CODEHAVEN_SMOKE_URL` (default `http://CODEHAVEN_HTTP_BIND`). If either fails, `up.sh` starts the
+server again on the previous image, without migrating, and exits with an error that says so. The
+database is never rolled back automatically: the old server runs on it as the new one left it, and
+the dump is there if the data itself needs to go back (see Restoring). The image tag
 is `CODEHAVEN_TAG` when you set it, otherwise the short id of the checked-out commit, so every
 version has its own tag and the previous images stay on the host.
 

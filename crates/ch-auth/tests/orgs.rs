@@ -182,3 +182,38 @@ async fn an_org_may_run_ci_when_its_creator_may_and_an_admin_can_change_it(pool:
     c.state.accounts.set_can_run_ci(&admin, ch_core::UserId(acme.id.0), false, &c1()).await.unwrap();
     assert!(!ci(acme.id.0).await);
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn org_management_needs_the_admin_org_scope(pool: PgPool) {
+    // ch-84u: an org owner's token with any scope could manage the org. Management needs admin:org.
+    use ch_core::{Scopes, TokenId};
+    let c = ctx(pool).await;
+    let owner = make_user(&c, "owner", false).await;
+    let bob = make_user(&c, "bob", false).await;
+    let (_, o) = session(&c, "owner").await;
+    let org = c.state.orgs.create(&o, "haven", "", &c1()).await.unwrap();
+    let repo = c.env.repo(ch_core::UserId(org.id.0), "tools").await;
+    let team = c.state.orgs.create_team(&o, org.id, "core", "", Permission::Read, &c1()).await.unwrap();
+    let tok = |scopes: &[&str]| Actor::Token { user_id: owner, token_id: TokenId(1), scopes: Scopes::new(scopes.iter().copied()) };
+    for weak in [tok(&["repo:read"]), tok(&["notifications"]), tok(&["repo", "read:org"])] {
+        let refused =
+            |r: Result<(), Error>, what: &str| assert!(matches!(&r, Err(Error::Forbidden(m)) if m.contains("admin:org")), "{what}: {r:?}");
+        refused(c.state.orgs.update(&weak, org.id, None, None, Some(Permission::Admin), &c1()).await.map(|_| ()), "base permission");
+        refused(c.state.orgs.set_member(&weak, org.id, bob, OrgRole::Owner, &c1()).await, "set owner");
+        refused(c.state.orgs.create_team(&weak, org.id, "x", "", Permission::Admin, &c1()).await.map(|_| ()), "create team");
+        refused(c.state.orgs.set_team_permission(&weak, team.id, Permission::Admin, &c1()).await, "team permission");
+        refused(c.state.orgs.add_team_member(&weak, team.id, bob, &c1()).await, "team member");
+        refused(c.state.orgs.set_team_repo(&weak, team.id, repo, Permission::Admin, &c1()).await, "team repo");
+        refused(c.state.orgs.remove_team_repo(&weak, team.id, repo, &c1()).await, "remove team repo");
+        refused(c.state.orgs.delete_team(&weak, team.id, &c1()).await, "delete team");
+        refused(c.state.orgs.delete(&weak, org.id, &c1()).await, "delete org");
+    }
+    let org_now = c.state.orgs.get(&o, "haven").await.unwrap();
+    assert_eq!(org_now.base_permission, Permission::Read, "nothing changed");
+    assert_eq!(c.state.orgs.members(&o, org.id).await.unwrap().len(), 1);
+    // A token with admin:org (and repo, for the team's repository) still manages the org.
+    let strong = tok(&["admin:org", "repo"]);
+    c.state.orgs.set_member(&strong, org.id, bob, OrgRole::Member, &c1()).await.unwrap();
+    c.state.orgs.set_team_repo(&strong, team.id, repo, Permission::Write, &c1()).await.unwrap();
+    c.state.orgs.update(&strong, org.id, None, None, Some(Permission::Write), &c1()).await.unwrap();
+}

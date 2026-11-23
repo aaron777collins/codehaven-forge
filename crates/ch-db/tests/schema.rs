@@ -671,3 +671,45 @@ async fn token_and_code_hashes_must_be_32_bytes_and_unique(pool: PgPool) {
         CHECK
     ));
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_pull_request_from_a_fork_stays_one_after_the_fork_is_deleted(pool: PgPool) {
+    // Migration 0122: CI must tell a branch of the same repository (head_repo_id NULL) from a
+    // fork that was deleted (head_repo_id set to NULL by ON DELETE SET NULL).
+    let alice = user(&pool, "alice").await;
+    let bob = user(&pool, "bob").await;
+    let base = repo(&pool, alice, "demo").await;
+    let fork = repo(&pool, bob, "demo").await;
+    let mut pulls = Vec::new();
+    for (n, head) in [(1_i64, None), (2, Some(base)), (3, Some(fork))] {
+        let issue: i64 = sqlx::query_scalar(
+            "INSERT INTO issues (repo_id, number, is_pull, author_id, title) VALUES ($1, $2, true, $3, 't') RETURNING id",
+        )
+        .bind(base)
+        .bind(n)
+        .bind(bob)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO pull_requests (issue_id, repo_id, head_repo_id, head_ref, head_sha, base_ref, base_sha) VALUES ($1, $2, $3, 'f', 'abc', 'main', 'abc')")
+            .bind(issue)
+            .bind(base)
+            .bind(head)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pulls.push(issue);
+    }
+    let flags = |pool: PgPool| async move {
+        sqlx::query_scalar::<_, bool>("SELECT from_fork FROM pull_requests ORDER BY issue_id").fetch_all(&pool).await.unwrap()
+    };
+    assert_eq!(flags(pool.clone()).await, vec![false, false, true]);
+    sqlx::query("DELETE FROM repositories WHERE id = $1").bind(fork).execute(&pool).await.unwrap();
+    let head: Option<i64> =
+        sqlx::query_scalar("SELECT head_repo_id FROM pull_requests WHERE issue_id = $1").bind(pulls[2]).fetch_one(&pool).await.unwrap();
+    assert_eq!(head, None);
+    assert_eq!(flags(pool.clone()).await, vec![false, false, true], "the flag outlives the fork");
+    // Nothing clears it, not even a direct write.
+    sqlx::query("UPDATE pull_requests SET from_fork = false").execute(&pool).await.unwrap();
+    assert_eq!(flags(pool.clone()).await, vec![false, false, true]);
+}

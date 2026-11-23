@@ -147,8 +147,9 @@ async fn variables_can_be_listed_updated_and_deleted(pool: PgPool) {
 
 // ------------------------------------------------------------------ fork pull requests
 
-/// A pull request from `head_repo` into `repo`, authored by `author`.
-async fn open_pull(w: &World, repo: ch_core::RepoId, head_repo: ch_core::RepoId, author: ch_core::UserId, sha: &str) -> i64 {
+/// A pull request from `head_repo` into `repo`, authored by `author`. `None` is a branch of
+/// `repo` itself, stored the way ch-collab stores it: with no head repository.
+async fn open_pull(w: &World, repo: ch_core::RepoId, head_repo: Option<ch_core::RepoId>, author: ch_core::UserId, sha: &str) -> i64 {
     let issue: i64 = sqlx::query_scalar(
         "INSERT INTO issues (repo_id, number, is_pull, author_id, title) VALUES ($1, 1, true, $2, 'Change things') RETURNING id",
     )
@@ -160,7 +161,7 @@ async fn open_pull(w: &World, repo: ch_core::RepoId, head_repo: ch_core::RepoId,
     sqlx::query("INSERT INTO pull_requests (issue_id, repo_id, head_repo_id, head_ref, head_sha, base_ref, base_sha) VALUES ($1, $2, $3, 'feature', $4, 'main', $4)")
         .bind(issue)
         .bind(repo.0)
-        .bind(head_repo.0)
+        .bind(head_repo.map(|h| h.0))
         .bind(sha)
         .execute(w.pool())
         .await
@@ -177,7 +178,7 @@ async fn a_pull_request_from_a_fork_waits_for_approval_and_gets_no_secrets(pool:
     w.dirs_alias(fork, repo);
     let alice = Who::User(w.alice);
     put_secret(&w, "/api/v3/repos/alice/demo/actions/secrets/DEPLOY_KEY", &alice, "hunter2").await;
-    open_pull(&w, repo, fork, w.bob, &git.head()).await;
+    open_pull(&w, repo, Some(fork), w.bob, &git.head()).await;
     let run = w.run_ids().await[0];
     // Held: the run is waiting and no job is offered.
     assert_eq!(w.run_status(run).await.0, "waiting");
@@ -220,7 +221,7 @@ async fn a_pull_request_from_a_collaborator_runs_at_once_with_secrets(pool: PgPo
     let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, NEEDS_SECRET)]).await;
     w.env.collaborator(repo, w.bob, "write").await;
     put_secret(&w, "/api/v3/repos/alice/demo/actions/secrets/DEPLOY_KEY", &Who::User(w.alice), "hunter2").await;
-    open_pull(&w, repo, repo, w.bob, &git.head()).await;
+    open_pull(&w, repo, None, w.bob, &git.head()).await;
     let run = w.run_ids().await[0];
     assert_eq!(w.run_status(run).await.0, "queued");
     let r = w.runner("r", &["x"]).await;
@@ -229,6 +230,88 @@ async fn a_pull_request_from_a_collaborator_runs_at_once_with_secrets(pool: PgPo
     // A fork whose author has write access is trusted the same way.
     let fork = w.env.repo(w.bob, "demo2").await;
     sqlx::query("UPDATE pull_requests SET head_repo_id = $1").bind(fork.0).execute(w.pool()).await.unwrap();
+}
+
+/// The fork flag the run was stored with.
+async fn run_is_fork(w: &World, run: i64) -> bool {
+    let payload: serde_json::Value =
+        sqlx::query_scalar("SELECT event_payload FROM workflow_runs WHERE id = $1").bind(run).fetch_one(w.pool()).await.unwrap();
+    ch_ci::spec::split_payload(&payload).1.fork
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_same_repo_pull_request_gets_a_job_token_that_can_write(pool: PgPool) {
+    // ch-x12 regression: ch-collab stores a branch of the same repository with no head
+    // repository (NULL), and that is not a fork. bob has write access and opens a pull request
+    // from a branch of alice/demo: its job uploads artifacts, saves caches and posts statuses.
+    let w = World::new(pool).await;
+    let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, NEEDS_SECRET)]).await;
+    w.env.collaborator(repo, w.bob, "write").await;
+    put_secret(&w, "/api/v3/repos/alice/demo/actions/secrets/DEPLOY_KEY", &Who::User(w.alice), "hunter2").await;
+    open_pull(&w, repo, None, w.bob, &git.head()).await;
+    let run = w.run_ids().await[0];
+    assert!(!run_is_fork(&w, run).await, "a branch of the same repository is not a fork");
+    assert_eq!(w.run_status(run).await.0, "queued");
+    let r = w.runner("r", &["x"]).await;
+    let job = r.request(&w, 0).await.unwrap();
+    assert_eq!(job.secrets["DEPLOY_KEY"], "hunter2");
+    let jt = Who::Bearer(job.token.clone());
+    let (s, _) = w
+        .send_raw(
+            Method::PUT,
+            &format!("/api/runner/v1/jobs/{}/artifacts/x", job.job_id),
+            &jt,
+            Some((bytes::Bytes::from_static(b"PK\x03\x04 pretend"), "application/zip")),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "upload-artifact");
+    let (s, _) = w
+        .send_raw(
+            Method::PUT,
+            "/api/runner/v1/cache/k?version=v1",
+            &jt,
+            Some((bytes::Bytes::from_static(b"x"), "application/octet-stream")),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "cache save");
+    let sha = git.head();
+    let (s, _) = w.post(&format!("/api/v3/repos/alice/demo/statuses/{sha}"), &jt, json!({"state": "success", "context": "ci"})).await;
+    assert_eq!(s, StatusCode::CREATED, "commit status");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_pull_request_whose_fork_was_deleted_stays_a_fork(pool: PgPool) {
+    // Deleting the fork sets head_repo_id to NULL (ON DELETE SET NULL), which on its own reads
+    // like a branch of the base repository. The pull request was opened from a fork, so its
+    // runs stay fork runs: held for approval, no secrets, a read-only token.
+    let w = World::new(pool).await;
+    let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, NEEDS_SECRET)]).await;
+    let fork = w.env.repo(w.bob, "demo").await;
+    w.dirs_alias(fork, repo);
+    put_secret(&w, "/api/v3/repos/alice/demo/actions/secrets/DEPLOY_KEY", &Who::User(w.alice), "hunter2").await;
+    let pull = open_pull(&w, repo, Some(fork), w.bob, &git.head()).await;
+    sqlx::query("DELETE FROM repositories WHERE id = $1").bind(fork.0).execute(w.pool()).await.unwrap();
+    let head: Option<i64> =
+        sqlx::query_scalar("SELECT head_repo_id FROM pull_requests WHERE issue_id = $1").bind(pull).fetch_one(w.pool()).await.unwrap();
+    assert_eq!(head, None, "the fork is gone");
+    w.emit_and_process(DomainEvent::PrSynchronized {
+        repo_id: repo,
+        pull_id: ch_core::PullId(pull),
+        number: 1,
+        head_sha: git.head(),
+        app: None,
+    })
+    .await;
+    let runs = w.run_ids().await;
+    assert_eq!(runs.len(), 2);
+    let run = runs[1];
+    assert!(run_is_fork(&w, run).await, "still a fork after the fork was deleted");
+    assert_eq!(w.run_status(run).await.0, "waiting");
+    let uri = format!("/api/v3/repos/alice/demo/actions/runs/{run}/approve");
+    assert_eq!(w.post(&uri, &Who::User(w.alice), json!({})).await.0, StatusCode::CREATED);
+    let r = w.runner("r", &["x"]).await;
+    let job = r.request(&w, 0).await.expect("approved");
+    assert!(job.secrets.is_empty(), "{:?}", job.secrets);
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
@@ -249,4 +332,35 @@ jobs:
     assert!(w.push(repo, &git, "main", None).await.is_empty());
     let files = w.state.ci.workflows(&ch_testkit::fixtures::user_actor(w.alice), repo, None).await.unwrap();
     assert!(files[0].errors[0].contains("--privileged") && files[0].errors[0].starts_with("line 8"), "{:?}", files[0].errors);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn the_job_token_lookup_reads_the_fork_flag_join_payload_writes(pool: PgPool) {
+    // ch-x12: the one lookup authn uses (ch_db::ci_auth::job_from_token), against the exact
+    // payload shape create_run stores. A fork's job token cannot write checks, artifacts or caches.
+    let w = World::new(pool).await;
+    let repo = w.env.repo(w.alice, "demo").await;
+    for (fork, secret) in [(true, "chj_forkpayload0000000000000000000000000"), (false, "chj_samepayload0000000000000000000000000")] {
+        let meta = ch_ci::spec::RunMeta { workflow_path: ".codehaven/workflows/ci.yml".into(), fork, ..Default::default() };
+        let payload = ch_ci::spec::join_payload(&json!({"action": "opened"}), &meta);
+        let run: i64 = sqlx::query_scalar(
+            "INSERT INTO workflow_runs (repo_id, run_number, event, head_sha, event_payload) VALUES ($1, $2, 'pull_request', 'abc', $3) RETURNING id",
+        )
+        .bind(repo.0)
+        .bind(if fork { 1_i64 } else { 2 })
+        .bind(&payload)
+        .fetch_one(&w.env.pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO workflow_jobs (run_id, repo_id, job_key, name, token_hash, status) VALUES ($1, $2, 'build', 'build', $3, 'in_progress')")
+            .bind(run)
+            .bind(repo.0)
+            .bind(ch_db::tokens::hash_token(secret))
+            .execute(&w.env.pool)
+            .await
+            .unwrap();
+        let (_, _, perms) = ch_db::ci_auth::job_from_token(&w.env.pool, secret).await.unwrap().unwrap();
+        assert!(perms.contents_read);
+        assert_eq!(perms.write_checks, !fork, "fork={fork}");
+    }
 }

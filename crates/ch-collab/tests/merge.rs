@@ -551,3 +551,40 @@ async fn auto_merge_stops_when_its_owner_loses_access(pool: PgPool) {
     assert!(w.git.merges().is_empty());
     assert!(w.core.pull_view(&w.alice_a(), w.repo, n).await.unwrap().auto_merge.is_none());
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn update_branch_cannot_write_into_a_protected_head_branch(pool: PgPool) {
+    // ch-jnm: a pull request whose head is the protected main and whose base is the writer's own
+    // branch. "Update branch" would merge that branch into main with no review and no checks.
+    let w = World::new(pool).await;
+    protect_full(&w, "main", 1, false, false, &["ci"], true, false).await;
+    let n = w
+        .core
+        .pull_create(
+            &w.bob_a(),
+            NewPull {
+                repo_id: w.repo,
+                title: "Backwards".into(),
+                body: String::new(),
+                head_repo_id: w.repo,
+                head_ref: "main".into(),
+                base_ref: "feature".into(),
+                draft: false,
+            },
+            &w.c(),
+        )
+        .await
+        .unwrap()
+        .pull
+        .issue
+        .number;
+    let e = w.core.pull_update_branch(&w.bob_a(), w.repo, n, &w.c()).await.unwrap_err();
+    assert!(matches!(&e, Error::Forbidden(m) if m.contains("protected")), "{e:?}");
+    assert!(w.git.merges().is_empty(), "nothing may be written into main");
+    // An unprotected head branch still updates as before.
+    let n2 = w.pull(w.carol, "x", "").await.pull.issue.number;
+    w.git.set_mergeable(MergeableState::Clean);
+    w.core.pull_update_branch(&w.bob_a(), w.repo, n2, &w.c()).await.unwrap();
+    let req = &w.git.merges()[0];
+    assert!(req.update_branch, "the git layer is told this is not a gated merge");
+}

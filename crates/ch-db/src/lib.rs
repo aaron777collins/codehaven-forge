@@ -26,6 +26,11 @@ pub use outbox::PgEventBus;
 /// The full v1 schema. Other crates use it in tests: `#[sqlx::test(migrator = "ch_db::MIGRATOR")]`.
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
+/// The number of migration files and a digest of them, from build.rs. Reading it makes the
+/// compiler record the value, so a new or changed migration rebuilds this crate instead of
+/// coming back stale from the build cache.
+pub const MIGRATIONS_DIGEST: &str = env!("CH_DB_MIGRATIONS_DIGEST");
+
 /// Opens the pool. Statement logging stays off so no query text with values reaches logs.
 pub async fn connect(url: &str, max_connections: u32) -> Result<PgPool> {
     let opts = PgConnectOptions::from_str(url)

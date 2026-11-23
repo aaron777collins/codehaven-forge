@@ -332,6 +332,7 @@ fn merge_req(b: &Branches, method: MergeMethod, expected: &str) -> MergeRequest 
         author: sig("Pat", 1_700_002_000),
         committer: sig("Maggie", 1_700_003_000),
         expected_base_sha: expected.into(),
+        update_branch: false,
     }
 }
 
@@ -468,6 +469,28 @@ async fn merging_needs_write_access_and_lands_on_protected_branches(pool: PgPool
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn an_update_branch_merge_obeys_the_direct_push_rule(pool: PgPool) {
+    // ch-jnm: "update branch" writes into the pull request's head branch. That is a direct write,
+    // not a gated merge, so a protected head branch refuses it.
+    let b = pr_setup(pool).await;
+    b.f.state
+        .repos
+        .set_protection(
+            &b.f.actor(b.alice),
+            b.repo.id,
+            BranchProtection { pattern: "main".into(), block_force_push: true, block_deletion: true, ..Default::default() },
+            &b.f.client(),
+        )
+        .await
+        .unwrap();
+    let base = b.f.branch_sha(&b.repo, "main").await;
+    let req = MergeRequest { update_branch: true, ..merge_req(&b, MergeMethod::Merge, &base) };
+    let e = b.f.state.git.merge(&b.f.actor(b.alice), req, &b.f.client()).await.unwrap_err();
+    assert!(matches!(&e, Error::Forbidden(m) if m.contains("protected")), "{e:?}");
+    assert_eq!(b.f.branch_sha(&b.repo, "main").await, base, "main did not move");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
 async fn merging_something_already_merged_is_an_error_not_an_empty_commit(pool: PgPool) {
     let b = pr_setup(pool).await;
     let base = b.f.branch_sha(&b.repo, "main").await;
@@ -513,6 +536,7 @@ async fn a_pull_request_from_a_fork_merges_into_the_root(pool: PgPool) {
                 author: sig("Bob", 1_700_002_000),
                 committer: sig("Alice", 1_700_002_001),
                 expected_base_sha: base,
+                update_branch: false,
             },
             &f.client(),
         )
