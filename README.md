@@ -77,6 +77,26 @@ bash deploy/dev/public-smoke.sh https://code.example.com
 `docs/operations.md` covers backup, restore, upgrade and rollback in full. `docs/integration.md`
 walks the first run and the runner.
 
+## The browser workspace
+
+Codehaven now has a workspace for each repository at `/{owner}/{repo}/workspace`. These parts
+are live:
+
+- **Editor.** Monaco, the editor inside VS Code, with a file tree, tabs, search and a diff.
+  Unsaved edits are kept as drafts in the browser, encrypted, and locked when you sign out.
+- **Commit.** Many files in one commit, to the current branch or a new one, with a pull request
+  link when you commit to a new branch.
+- **Runs.** The workflows of each commit and their live logs beside the code, with run, re-run
+  and cancel.
+
+It is for signed-in accounts only. Nobody who is signed out can open any workspace page, file or
+stream, even for a public repository. A signed-in account sees the workspace of a repository it
+can read, and needs write access to commit or run. The server starts no shell and no container
+for it, and the editor is served by the instance itself, with nothing loaded from another site.
+
+The terminal, a shell that runs in your browser, is still being built. The workspace code comes
+to this repository with the next source update.
+
 ## Building and testing
 
 Builds and tests run in a container, on this machine or on another host over ssh. Set `CH_HOST`
