@@ -217,7 +217,7 @@ mod tests {
             "author": {
                 "login": "octocat",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/octocat.svg",
                 "url": "https://code.example.com/api/v3/users/octocat",
                 "html_url": "https://code.example.com/octocat",
                 "type": "User",
@@ -233,7 +233,7 @@ mod tests {
                     "uploader": {
                         "login": "octocat",
                         "id": 1,
-                        "avatar_url": "https://code.example.com/avatars/1.svg",
+                        "avatar_url": "https://code.example.com/avatar/octocat.svg",
                         "url": "https://code.example.com/api/v3/users/octocat",
                         "html_url": "https://code.example.com/octocat",
                         "type": "User",

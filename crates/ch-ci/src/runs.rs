@@ -249,6 +249,7 @@ pub async fn create_run(ctx: &Ctx, n: NewRun) -> Result<Created> {
         approved_by: n.approved_by.map(|u| u.0),
         hold_reason: if n.needs_approval { Some(n.hold_reason.clone().unwrap_or_else(|| "Waiting for approval".into())) } else { None },
         cancel_in_progress: false,
+        problem: None,
     };
     let vars = load_vars(ctx, n.repo_id.0, n.fork).await?;
 
@@ -332,6 +333,7 @@ pub async fn create_run(ctx: &Ctx, n: NewRun) -> Result<Created> {
             cancel: false,
             log_seq: 0,
             deferred_matrix: p.deferred_matrix.clone(),
+            step_names: p.step_names.clone(),
         };
         let at = JobPlace {
             run_id,
@@ -357,6 +359,11 @@ pub async fn create_run(ctx: &Ctx, n: NewRun) -> Result<Created> {
     }
     advance_run(ctx, run_id).await?;
     Ok(Created { run_id: RunId(run_id), run_number, already_existed: false })
+}
+
+/// What the page calls step `i` of a job: the name worked out at planning, else as written.
+fn step_name(spec: &JobSpec, i: usize) -> String {
+    spec.step_names.get(i).cloned().unwrap_or_else(|| spec.job.steps[i].display_name())
 }
 
 /// Where a new job goes: the run, and what its check run and link need to know.
@@ -396,11 +403,11 @@ async fn insert_job(
     .bind(serde_json::to_value(spec).map_err(Error::internal)?)
     .fetch_one(&mut **tx)
     .await?;
-    for s in &spec.job.steps {
+    for (i, s) in spec.job.steps.iter().enumerate() {
         sqlx::query("INSERT INTO workflow_steps (job_id, number, name) VALUES ($1, $2, $3)")
             .bind(job_id)
             .bind(s.number as i32)
-            .bind(s.display_name().chars().take(200).collect::<String>())
+            .bind(step_name(spec, i).chars().take(200).collect::<String>())
             .execute(&mut **tx)
             .await?;
     }
@@ -422,6 +429,33 @@ async fn insert_job(
         conclusion: None,
     });
     Ok(job_id)
+}
+
+/// The label sets of the runners that may take jobs from `repo`: not removed, and serving every
+/// repository or this one.
+pub async fn runner_labels(ctx: &Ctx, repo: i64) -> Result<Vec<Vec<String>>> {
+    Ok(sqlx::query_scalar("SELECT labels FROM runners WHERE revoked_at IS NULL AND (repo_id IS NULL OR repo_id = $1) ORDER BY id")
+        .bind(repo)
+        .fetch_all(&ctx.db)
+        .await?)
+}
+
+/// Whether some runner has every label a job asks for. The same rule the job queue uses.
+pub fn some_runner_fits(runs_on: &[String], offered: &[Vec<String>]) -> bool {
+    offered.iter().any(|labels| runs_on.iter().all(|l| labels.contains(l)))
+}
+
+/// What a job that no runner can take says, on its page and in its log.
+pub fn no_runner_line(runs_on: &[String], offered: &[Vec<String>]) -> String {
+    let mut all: Vec<&str> = offered.iter().flatten().map(String::as_str).collect();
+    all.sort_unstable();
+    all.dedup();
+    let asks = runs_on.join(", ");
+    if all.is_empty() {
+        format!("No runner has the labels this job asks for: {asks}. No runner is registered for this repository.")
+    } else {
+        format!("No runner has the labels this job asks for: {asks}. The runners here offer: {}.", all.join(", "))
+    }
 }
 
 /// `<workflow> / <job>`, the name a check run and a required-status rule use.
@@ -768,6 +802,7 @@ pub async fn advance_run(ctx: &Ctx, run_id: i64) -> Result<()> {
                                             cancel: false,
                                             log_seq: 0,
                                             deferred_matrix: None,
+                                            step_names: p.step_names.clone(),
                                         };
                                         if idx == 0 {
                                             let labels: Vec<String> = ns.runs_on.iter().map(|l| l.trim().to_lowercase()).collect();
@@ -781,6 +816,14 @@ pub async fn advance_run(ctx: &Ctx, run_id: i64) -> Result<()> {
                                             .bind(serde_json::to_value(&ns).map_err(Error::internal)?)
                                             .execute(&mut *tx)
                                             .await?;
+                                            for (i, st) in ns.job.steps.iter().enumerate() {
+                                                sqlx::query("UPDATE workflow_steps SET name = $3 WHERE job_id = $1 AND number = $2")
+                                                    .bind(j.id)
+                                                    .bind(st.number as i32)
+                                                    .bind(step_name(&ns, i).chars().take(200).collect::<String>())
+                                                    .execute(&mut *tx)
+                                                    .await?;
+                                            }
                                             sqlx::query("UPDATE check_runs SET name = $2 WHERE job_id = $1")
                                                 .bind(j.id)
                                                 .bind(check_name(&meta.workflow_name, &p.name))
@@ -987,6 +1030,9 @@ pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool, by: Option<UserId>
         }
     }
     let (event, mut meta) = split_payload(&old.event_payload);
+    if meta.problem.is_some() {
+        return Err(Error::conflict("This run never started because the workflow file has a problem. Fix the file and push again."));
+    }
     // A run that waited for approval and was cancelled before anyone gave it never ran with a
     // person's say-so. Starting it again must not skip that (ch-x12).
     if meta.hold_reason.is_some() && meta.approved_by.is_none() {
@@ -1048,12 +1094,12 @@ pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool, by: Option<UserId>
         .bind(if keep { j.completed_at } else { None })
         .fetch_one(&mut *tx)
         .await?;
-        for s in &spec.job.steps {
+        for (i, s) in spec.job.steps.iter().enumerate() {
             let (sst, sconc) = if keep { ("completed", Some("success")) } else { ("queued", None) };
             sqlx::query("INSERT INTO workflow_steps (job_id, number, name, status, conclusion) VALUES ($1, $2, $3, $4, $5)")
                 .bind(job_id)
                 .bind(s.number as i32)
-                .bind(s.display_name().chars().take(200).collect::<String>())
+                .bind(step_name(&spec, i).chars().take(200).collect::<String>())
                 .bind(sst)
                 .bind(sconc)
                 .execute(&mut *tx)
@@ -1116,6 +1162,19 @@ pub async fn approve_run(ctx: &Ctx, run_id: i64, approver: UserId) -> Result<()>
         .bind(approver.0)
         .execute(&mut *tx)
         .await?;
+    // A person vouched for this commit of a pull request, so a commit the server later builds on
+    // it (Update branch, a suggestion, a web edit) need not wait again (ch-3xn).
+    sqlx::query(
+        "INSERT INTO pull_cleared_commits (pull_id, head_sha)
+         SELECT pr.issue_id, r.head_sha FROM workflow_runs r
+           JOIN issues i ON i.repo_id = r.repo_id AND i.number = (r.event_payload->'event'->'pull_request'->>'number')::bigint
+           JOIN pull_requests pr ON pr.issue_id = i.id
+          WHERE r.id = $1 AND r.event = 'pull_request'
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(run_id)
+    .execute(&mut *tx)
+    .await?;
     let held: (i64, Option<String>, bool) = sqlx::query_as(
         "SELECT repo_id, concurrency_group, COALESCE((event_payload->'meta'->>'cancel_in_progress')::boolean, false) FROM workflow_runs WHERE id = $1",
     )
@@ -1216,6 +1275,7 @@ mod tests {
             cancel: false,
             log_seq: 0,
             deferred_matrix: None,
+            step_names: vec![],
         }
     }
 

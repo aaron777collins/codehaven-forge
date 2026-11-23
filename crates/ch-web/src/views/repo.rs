@@ -510,10 +510,7 @@ pub fn raw_response(file_name: &str, content: Vec<u8>, binary: bool) -> Response
         {
             ("text/plain; charset=utf-8".to_string(), "inline".to_string())
         }
-        None => (
-            "application/octet-stream".to_string(),
-            format!("attachment; filename=\"{}\"", file_name.replace(['"', '\\', '\r', '\n'], "_")),
-        ),
+        None => ("application/octet-stream".to_string(), ch_core::disposition::attachment(file_name)),
     };
     let mut r = (StatusCode::OK, content).into_response();
     let h = r.headers_mut();
@@ -562,10 +559,10 @@ pub async fn archive(ctx: Ctx, Path((owner, name, rest)): Path<(String, String, 
     let stream = ctx.state.git.archive(rc.id(), &sha, format).await?;
     let mut r = Response::new(Body::from_stream(stream));
     let ctype = if ext == "zip" { "application/zip" } else { "application/gzip" };
-    let fname = format!("{}-{}.{ext}", rc.repo.name, stem.replace('/', "-")).replace(['"', '\\', '\r', '\n'], "_");
+    let fname = format!("{}-{}.{ext}", rc.repo.name, stem.replace('/', "-"));
     let h = r.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(ctype));
-    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{fname}\"")) {
+    if let Ok(v) = HeaderValue::from_str(&ch_core::disposition::attachment(&fname)) {
         h.insert(header::CONTENT_DISPOSITION, v);
     }
     h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));

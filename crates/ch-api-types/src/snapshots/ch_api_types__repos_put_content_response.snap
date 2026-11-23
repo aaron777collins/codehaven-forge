@@ -5,7 +5,7 @@ expression: json
 {
   "commit": {
     "author": {
-      "avatar_url": "https://code.example.com/avatars/1.svg",
+      "avatar_url": "https://code.example.com/avatar/alice.svg",
       "html_url": "https://code.example.com/alice",
       "id": 1,
       "login": "alice",
@@ -31,7 +31,7 @@ expression: json
       }
     },
     "committer": {
-      "avatar_url": "https://code.example.com/avatars/1.svg",
+      "avatar_url": "https://code.example.com/avatar/alice.svg",
       "html_url": "https://code.example.com/alice",
       "id": 1,
       "login": "alice",

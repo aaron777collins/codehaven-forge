@@ -125,6 +125,10 @@ impl Urls {
     fn web(&self) -> String {
         format!("{}/{}", self.base, self.full)
     }
+    /// The repository's short name: the part of `full` after the last slash.
+    fn name(&self) -> &str {
+        self.full.rsplit_once('/').map_or(self.full.as_str(), |(_, name)| name)
+    }
 }
 
 async fn simple_user(ctx: &Ctx, id: Option<i64>) -> Result<Option<SimpleUser>> {
@@ -133,7 +137,7 @@ async fn simple_user(ctx: &Ctx, id: Option<i64>) -> Result<Option<SimpleUser>> {
         sqlx::query_as("SELECT username::text, kind, is_admin FROM users WHERE id = $1").bind(id).fetch_optional(&ctx.db).await?;
     let base = ctx.base_url();
     Ok(row.map(|(login, kind, admin)| SimpleUser {
-        avatar_url: format!("{base}/avatars/{id}.svg"),
+        avatar_url: ch_api_types::avatar_url(&base, &login),
         url: format!("{base}/api/v3/users/{login}"),
         html_url: format!("{base}/{login}"),
         kind: match kind.as_str() {
@@ -372,7 +376,8 @@ fn workflow_dto(urls: &Urls, id: i64, name: String, path: String, state: String,
         id,
         name,
         html_url: format!("{}/blob/HEAD/{path}", urls.web()),
-        badge_url: format!("{}/workflows/{path}/badge.svg", urls.web()),
+        // Served by the Actions pages for signed-in viewers (ch-c1d), by file name as on GitHub.
+        badge_url: format!("{}/actions/workflows/{}/badge.svg", urls.web(), path.rsplit('/').next().unwrap_or(&path)),
         url: format!("{}/actions/workflows/{id}", urls.api()),
         path,
         state,
@@ -474,9 +479,17 @@ async fn dispatch_workflow(
 // ---------------------------------------------------------------------------- runs
 
 async fn run_dto(ctx: &Ctx, urls: &Urls, r: &RunRow) -> Result<dto::WorkflowRun> {
-    let (_, meta) = crate::spec::split_payload(&r.event_payload);
+    let (event, meta) = crate::spec::split_payload(&r.event_payload);
     let actor = simple_user(ctx, r.actor_id).await?;
     let id = r.id;
+    // The commit the run built. A commit that cannot be read leaves it null.
+    let head_commit = ctx.source.commit(RepoId(r.repo_id), &r.head_sha).await.ok().flatten().map(|c| dto::RunHeadCommit {
+        id: c.id,
+        message: c.message,
+        author: Some(dto::RunCommitPerson { name: c.author_name, email: c.author_email }),
+        committer: None,
+    });
+    let pull_requests = run_pull_requests(ctx, urls, r, &event, meta.fork).await?;
     Ok(dto::WorkflowRun {
         id,
         name: Some(meta.workflow_name.clone()).filter(|n| !n.is_empty()),
@@ -488,6 +501,8 @@ async fn run_dto(ctx: &Ctx, urls: &Urls, r: &RunRow) -> Result<dto::WorkflowRun>
         workflow_id: r.workflow_id.unwrap_or(0),
         head_branch: r.head_branch.clone(),
         head_sha: r.head_sha.clone(),
+        head_commit,
+        pull_requests,
         path: meta.workflow_path.clone(),
         display_title: r.title.clone(),
         triggering_actor: actor.clone(),
@@ -503,6 +518,34 @@ async fn run_dto(ctx: &Ctx, urls: &Urls, r: &RunRow) -> Result<dto::WorkflowRun>
         rerun_url: format!("{}/actions/runs/{id}/rerun", urls.api()),
         repository: None,
     })
+}
+
+/// The pull request a `pull_request` run was for, as GitHub lists it. A fork's is left out, as on
+/// GitHub, and so is one that no longer exists.
+async fn run_pull_requests(ctx: &Ctx, urls: &Urls, r: &RunRow, event: &serde_json::Value, fork: bool) -> Result<Vec<dto::RunPullRequest>> {
+    if r.event != "pull_request" || fork {
+        return Ok(vec![]);
+    }
+    let pr = &event["pull_request"];
+    let Some(number) = pr["number"].as_i64() else { return Ok(vec![]) };
+    let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM issues WHERE repo_id = $1 AND number = $2 AND is_pull")
+        .bind(r.repo_id)
+        .bind(number)
+        .fetch_optional(&ctx.db)
+        .await?;
+    let Some((pull_id,)) = row else { return Ok(vec![]) };
+    let side = |key: &str| dto::RunPullRef {
+        git_ref: pr[key]["ref"].as_str().unwrap_or_default().to_string(),
+        sha: pr[key]["sha"].as_str().unwrap_or_default().to_string(),
+        repo: dto::RunPullRepo { id: r.repo_id, url: urls.api(), name: urls.name().to_string() },
+    };
+    Ok(vec![dto::RunPullRequest {
+        id: pull_id,
+        number,
+        url: format!("{}/pulls/{number}", urls.api()),
+        head: side("head"),
+        base: side("base"),
+    }])
 }
 
 #[derive(Deserialize, Default)]
@@ -770,7 +813,10 @@ async fn job_logs(
     Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8"), (header::X_CONTENT_TYPE_OPTIONS, "nosniff")], bytes).into_response())
 }
 
-/// Every job's log of a run in one text file, each under a heading.
+/// The most job log text one run's zip holds. Past it, the rest is named in a note inside the zip.
+const MAX_RUN_LOG_ZIP_BYTES: usize = 256 * 1024 * 1024;
+
+/// Every job's log of a run, one text file per job inside a zip.
 async fn run_logs(
     State(state): State<AppState>,
     CurrentActor(actor): CurrentActor,
@@ -779,13 +825,57 @@ async fn run_logs(
     let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
     let ctx = Ctx::from_state(&state);
     run_in(&state, &repo, id).await?;
-    let mut out = Vec::new();
-    for j in runs::fetch_jobs(&ctx, id).await? {
-        out.extend_from_slice(format!("===== {} =====\n", j.name).as_bytes());
-        out.extend_from_slice(&state.ci.log_range(&actor, repo.id, JobId(j.id), LogRange { from: 0, to: None }).await?);
-        out.push(b'\n');
+    let mut files: Vec<(String, bytes::Bytes)> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    let mut total = 0usize;
+    let jobs = runs::fetch_jobs(&ctx, id).await?;
+    for (i, j) in jobs.iter().enumerate() {
+        let bytes = state.ci.log_range(&actor, repo.id, JobId(j.id), LogRange { from: 0, to: None }).await?;
+        if total + bytes.len() > MAX_RUN_LOG_ZIP_BYTES {
+            skipped = jobs[i..].iter().map(|j| j.name.clone()).collect();
+            break;
+        }
+        total += bytes.len();
+        files.push((log_file_name(i, &j.name), bytes));
     }
-    Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8"), (header::X_CONTENT_TYPE_OPTIONS, "nosniff")], out).into_response())
+    if !skipped.is_empty() {
+        let note = format!("These job logs were too large to include. Download each from its job page:\n{}", skipped.join("\n"));
+        files.push(("logs-not-included.txt".to_string(), bytes::Bytes::from(note)));
+    }
+    let body = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, bytes) in files {
+            w.start_file(name, opts).map_err(Error::internal)?;
+            std::io::Write::write_all(&mut w, &bytes).map_err(Error::internal)?;
+        }
+        Ok(w.finish().map_err(Error::internal)?.into_inner())
+    })
+    .await
+    .map_err(Error::internal)??;
+    let disp = format!("attachment; filename=\"logs_{id}.zip\"");
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/zip".to_string()),
+            (header::CONTENT_DISPOSITION, disp),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+/// A job's entry name in a run's log zip: its place in the run and its name, made safe for a path.
+fn log_file_name(index: usize, job: &str) -> String {
+    let safe: String = job
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    format!("{index}_{safe}.txt")
 }
 
 // ---------------------------------------------------------------------------- artifacts and caches
@@ -874,7 +964,7 @@ async fn artifact_zip(
         return Err(Error::NotFound);
     }
     let body = store::blob_body(&ctx, &a.blob_sha256).await?;
-    let disp = format!("attachment; filename=\"{}.zip\"", a.name.replace(['"', '\\'], "_"));
+    let disp = ch_core::disposition::attachment(&format!("{}.zip", a.name));
     Ok((
         [
             (header::CONTENT_TYPE, "application/zip".to_string()),
@@ -1053,11 +1143,21 @@ async fn delete_repo_secret(
     delete_secret_in(&state, &actor, &client(c), Scope::Repo(repo.id.0), "repo", &name).await
 }
 
+/// A job gets the variables it may use in its payload: a fork's job gets none. Its token may not
+/// list them here, where `Read` would show every one (ch-3xn).
+fn no_job_token(actor: &Actor) -> Result<()> {
+    if matches!(actor, Actor::Job { .. }) {
+        return Err(Error::forbidden("A job token cannot read variables. A job gets the ones it may use with the job."));
+    }
+    Ok(())
+}
+
 async fn repo_variables(
     State(state): State<AppState>,
     CurrentActor(actor): CurrentActor,
     Path((o, n)): Path<(String, String)>,
 ) -> Result<Json<dto::VariablesResponse>> {
+    no_job_token(&actor)?;
     let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
     Ok(variables_response(secrets::list_variables(&Ctx::from_state(&state), Scope::Repo(repo.id.0)).await?))
 }
@@ -1067,6 +1167,7 @@ async fn repo_variable(
     CurrentActor(actor): CurrentActor,
     Path((o, n, name)): Path<(String, String, String)>,
 ) -> Result<Json<dto::Variable>> {
+    no_job_token(&actor)?;
     let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
     let rows = secrets::list_variables(&Ctx::from_state(&state), Scope::Repo(repo.id.0)).await?;
     let (name, value, t) = rows.into_iter().find(|r| r.0 == name).ok_or(Error::NotFound)?;
@@ -1289,4 +1390,16 @@ async fn admin_remove_runner(
     ctx.audit.record(&mut tx, AuditEvent::new(&actor, &client(c), action::RUNNER_REMOVED, Outcome::Success).target("runner", id)).await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_file_name_replaces_characters_a_path_cannot_hold() {
+        assert_eq!(log_file_name(0, "lint"), "0_lint.txt");
+        assert_eq!(log_file_name(2, "test (a)"), "2_test (a).txt");
+        assert_eq!(log_file_name(3, "a/b:c"), "3_a_b_c.txt");
+    }
 }

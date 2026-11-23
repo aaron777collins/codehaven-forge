@@ -114,8 +114,11 @@ impl Fanout {
                 let mentions = self.mention_ids(&body.unwrap_or_default(), &mut who).await?;
                 self.write(&Subject { kind: "release", id: release_id.0, repo: repo_id.0, title: tag }, who, Some(actor.0), &mentions).await
             }
-            WorkflowRunUpdated { repo_id, run_id, status, conclusion } if status == "completed" => {
-                // Only the person who triggered the run hears about it finishing.
+            WorkflowRunUpdated { repo_id, run_id, status, conclusion }
+                if status == "completed" && matches!(conclusion.as_deref(), Some("failure" | "timed_out" | "startup_failure")) =>
+            {
+                // Only the person who triggered the run hears about it, and only when it failed
+                // (ch-ed1): a note for every passing run buries the ones that matter.
                 let row: Option<(Option<i64>, String)> = sqlx::query_as("SELECT actor_id, title FROM workflow_runs WHERE id = $1")
                     .bind(run_id.0)
                     .fetch_optional(&self.pool)

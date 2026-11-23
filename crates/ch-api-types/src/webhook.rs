@@ -295,7 +295,7 @@ mod tests {
             "owner": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -374,7 +374,7 @@ mod tests {
             "user": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -429,7 +429,7 @@ mod tests {
             "user": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -469,7 +469,7 @@ mod tests {
             "user": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -495,7 +495,7 @@ mod tests {
                 "user": {
                     "login": "alice",
                     "id": 1,
-                    "avatar_url": "https://code.example.com/avatars/1.svg",
+                    "avatar_url": "https://code.example.com/avatar/alice.svg",
                     "url": "https://code.example.com/api/v3/users/alice",
                     "html_url": "https://code.example.com/alice",
                     "type": "User",
@@ -510,7 +510,7 @@ mod tests {
                     "owner": {
                         "login": "alice",
                         "id": 1,
-                        "avatar_url": "https://code.example.com/avatars/1.svg",
+                        "avatar_url": "https://code.example.com/avatar/alice.svg",
                         "url": "https://code.example.com/api/v3/users/alice",
                         "html_url": "https://code.example.com/alice",
                         "type": "User",
@@ -579,7 +579,7 @@ mod tests {
                 "user": {
                     "login": "alice",
                     "id": 1,
-                    "avatar_url": "https://code.example.com/avatars/1.svg",
+                    "avatar_url": "https://code.example.com/avatar/alice.svg",
                     "url": "https://code.example.com/api/v3/users/alice",
                     "html_url": "https://code.example.com/alice",
                     "type": "User",
@@ -594,7 +594,7 @@ mod tests {
                     "owner": {
                         "login": "alice",
                         "id": 1,
-                        "avatar_url": "https://code.example.com/avatars/1.svg",
+                        "avatar_url": "https://code.example.com/avatar/alice.svg",
                         "url": "https://code.example.com/api/v3/users/alice",
                         "html_url": "https://code.example.com/alice",
                         "type": "User",
@@ -700,7 +700,7 @@ mod tests {
             "user": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -736,7 +736,7 @@ mod tests {
             "user": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -772,7 +772,7 @@ mod tests {
             "author": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -853,7 +853,7 @@ mod tests {
             "actor": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -862,7 +862,7 @@ mod tests {
             "triggering_actor": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -886,7 +886,7 @@ mod tests {
                 "owner": {
                     "login": "alice",
                     "id": 1,
-                    "avatar_url": "https://code.example.com/avatars/1.svg",
+                    "avatar_url": "https://code.example.com/avatar/alice.svg",
                     "url": "https://code.example.com/api/v3/users/alice",
                     "html_url": "https://code.example.com/alice",
                     "type": "User",
@@ -1277,7 +1277,7 @@ mod tests {
                 "owner": {
                     "login": "alice",
                     "id": 1,
-                    "avatar_url": "https://code.example.com/avatars/1.svg",
+                    "avatar_url": "https://code.example.com/avatar/alice.svg",
                     "url": "https://code.example.com/api/v3/users/alice",
                     "html_url": "https://code.example.com/alice",
                     "type": "User",
@@ -1345,7 +1345,7 @@ mod tests {
             "sender": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",

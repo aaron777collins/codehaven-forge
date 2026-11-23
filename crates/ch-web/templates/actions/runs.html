@@ -42,7 +42,7 @@
       {% for r in rows %}
       <li class="run-row">
         {% call ui::status(r.status) %}
-        <a class="run-title" href="{{ r.href }}">{{ r.title }}</a>
+        <span class="run-names"><a class="run-title" href="{{ r.href }}">{{ r.title }}</a><span class="muted run-sub">{{ r.subtitle }}</span></span>
         {% if let Some(b) = r.branch %}<a class="chip" href="{{ r.branch_href }}">{{ b }}</a>{% endif %}
         <a class="mono run-sha" href="{{ r.commit_href }}">{{ r.short }}</a>
         <span class="spacer"></span>

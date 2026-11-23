@@ -197,7 +197,6 @@ async fn get_asset(
 /// Streams an asset. The name goes into `Content-Disposition` with quotes and control
 /// characters removed, and `nosniff` stops a browser from guessing a different type.
 pub fn file_response(info: &AssetInfo, stream: futures::stream::BoxStream<'static, std::io::Result<bytes::Bytes>>) -> Response {
-    let safe: String = info.name.chars().filter(|c| !c.is_control() && *c != '"' && *c != '\\').collect();
     let mut r = Response::new(Body::from_stream(stream));
     *r.status_mut() = StatusCode::OK;
     let h = r.headers_mut();
@@ -205,7 +204,7 @@ pub fn file_response(info: &AssetInfo, stream: futures::stream::BoxStream<'stati
     if let Ok(v) = HeaderValue::from_str(&info.size.to_string()) {
         h.insert(header::CONTENT_LENGTH, v);
     }
-    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{safe}\"")) {
+    if let Ok(v) = HeaderValue::from_str(&ch_core::disposition::attachment(&info.name)) {
         h.insert(header::CONTENT_DISPOSITION, v);
     }
     h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));

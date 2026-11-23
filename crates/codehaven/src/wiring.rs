@@ -39,7 +39,9 @@ pub fn routes(config: &Config) -> Router<AppState> {
         .merge(ch_notify::api_routes())
         .merge(ch_git::api_routes())
         .merge(ch_collab::api_routes())
-        .merge(ch_ci::api_routes());
+        .merge(ch_ci::api_routes())
+        .fallback(crate::api_errors::not_found)
+        .layer(axum::middleware::map_response(crate::api_errors::json_errors));
     Router::new()
         .merge(crate::meta::public_routes())
         .nest("/api/v3", api)

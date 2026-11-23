@@ -212,6 +212,9 @@ impl Guard {
             req.extensions_mut().insert(CsrfToken(expected));
         }
 
+        if let Some(s) = quota_state {
+            req.extensions_mut().insert(access::ApiQuota { limit: s.limit, remaining: s.remaining, reset: s.reset });
+        }
         let mut resp = next.run(req).await;
         if let Some(s) = quota_state {
             add_quota_headers(resp.headers_mut(), s.limit, s.remaining, s.reset);

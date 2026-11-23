@@ -363,7 +363,7 @@ fn protection_dto(api: &Api, repo: &Repo, branch: &str, p: &BranchProtection) ->
         required_status_checks: if p.required_checks.is_empty() && !p.strict {
             None
         } else {
-            Some(dto::RequiredStatusChecks { strict: p.strict, contexts: p.required_checks.clone() })
+            Some(dto::RequiredStatusChecks { strict: p.strict, contexts: p.required_checks.clone(), checks: vec![] })
         },
         required_pull_request_reviews: if p.required_approvals == 0 && !p.dismiss_stale_reviews && !p.require_code_owner_review {
             None
@@ -402,20 +402,49 @@ async fn put_protection(
 ) -> Result<Response> {
     let branch = rest.strip_suffix("/protection").ok_or(Error::NotFound)?;
     let repo = api.repo(&owner, &name).await?;
-    let p = BranchProtection {
-        pattern: branch.to_string(),
-        required_approvals: body.required_pull_request_reviews.as_ref().map(|r| r.required_approving_review_count).unwrap_or(0),
-        dismiss_stale_reviews: body.required_pull_request_reviews.as_ref().map(|r| r.dismiss_stale_reviews).unwrap_or(false),
-        require_code_owner_review: body.required_pull_request_reviews.as_ref().map(|r| r.require_code_owner_reviews).unwrap_or(false),
-        required_checks: body.required_status_checks.as_ref().map(|c| c.contexts.clone()).unwrap_or_default(),
-        strict: body.required_status_checks.as_ref().map(|c| c.strict).unwrap_or(false),
-        require_resolved_threads: body.required_conversation_resolution,
-        block_force_push: !body.allow_force_pushes,
-        block_deletion: !body.allow_deletions,
-        allow_direct_push: body.allow_direct_push,
-    };
+    let p = protection_from(branch, &body)?;
     api.core.do_set_protection(&api.actor, repo.id, p.clone(), &api.client).await?;
     Ok(Json(protection_dto(&api, &repo, branch, &p)).into_response())
+}
+
+/// The rules a PUT asks for, from Codehaven's body or GitHub's (ch-yci). What GitHub can set
+/// and Codehaven cannot enforce is refused by name, never dropped: push restrictions, linear
+/// history, blocking branch creation and locking the branch.
+fn protection_from(branch: &str, body: &dto::UpdateBranchProtection) -> Result<BranchProtection> {
+    let unsupported = |field: &str, what: &str| Error::invalid("BranchProtection", field, format!("{what} is not supported here."));
+    if body.restrictions.as_ref().is_some_and(|r| !(r.users.is_empty() && r.teams.is_empty() && r.apps.is_empty())) {
+        return Err(unsupported("restrictions", "Limiting who may push to a branch"));
+    }
+    if body.required_linear_history == Some(true) {
+        return Err(unsupported("required_linear_history", "Requiring a linear history"));
+    }
+    if body.block_creations == Some(true) {
+        return Err(unsupported("block_creations", "Blocking branch creation"));
+    }
+    if body.lock_branch == Some(true) {
+        return Err(unsupported("lock_branch", "Locking a branch"));
+    }
+    let reviews = body.required_pull_request_reviews.as_ref();
+    let checks = body.required_status_checks.as_ref();
+    let mut required_checks: Vec<String> = checks.map(|c| c.contexts.clone()).unwrap_or_default();
+    for c in checks.map(|c| c.checks.as_slice()).unwrap_or_default() {
+        if !required_checks.contains(&c.context) {
+            required_checks.push(c.context.clone());
+        }
+    }
+    Ok(BranchProtection {
+        pattern: branch.to_string(),
+        required_approvals: reviews.map(|r| r.required_approving_review_count).unwrap_or(0),
+        dismiss_stale_reviews: reviews.is_some_and(|r| r.dismiss_stale_reviews),
+        require_code_owner_review: reviews.is_some_and(|r| r.require_code_owner_reviews),
+        required_checks,
+        strict: checks.is_some_and(|c| c.strict),
+        require_resolved_threads: body.required_conversation_resolution.unwrap_or(false),
+        block_force_push: !body.allow_force_pushes.unwrap_or(false),
+        block_deletion: !body.allow_deletions.unwrap_or(false),
+        // GitHub: with reviews required, changes go through a pull request.
+        allow_direct_push: body.allow_direct_push.unwrap_or(reviews.is_none()),
+    })
 }
 
 async fn delete_protection(api: Api, Path((owner, name, rest)): Path<(String, String, String)>) -> Result<Response> {

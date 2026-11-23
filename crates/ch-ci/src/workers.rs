@@ -184,6 +184,49 @@ pub async fn reap_jobs(ctx: &Ctx) -> Result<usize> {
             n += 1;
         }
     }
+    n += reap_queued(ctx).await?;
+    Ok(n)
+}
+
+/// Jobs that wait in the queue for a runner that will not come (ch-7rq). A job whose labels no
+/// registered runner has fails after `no_runner_minutes`, since adding a runner is the only fix.
+/// Any other job fails as timed out after `queue_timeout_minutes`.
+async fn reap_queued(ctx: &Ctx) -> Result<usize> {
+    let mut n = 0;
+    let unmatched: Vec<JobRow> = sqlx::query_as::<_, JobRow>(&format!(
+        "SELECT {} FROM workflow_jobs j
+         WHERE j.status = 'queued' AND COALESCE(j.queued_at, j.created_at) < now() - make_interval(mins => $1)
+           AND NOT EXISTS (SELECT 1 FROM runners r WHERE r.revoked_at IS NULL
+                           AND (r.repo_id IS NULL OR r.repo_id = j.repo_id) AND j.runs_on <@ r.labels)",
+        runs::JOB_COLS
+    ))
+    .bind(ctx.config.ci.no_runner_minutes.clamp(1, 7 * 24 * 60) as i32)
+    .fetch_all(&ctx.db)
+    .await?;
+    for j in unmatched {
+        let run = fetch_run(ctx, j.run_id).await?;
+        let offered = runs::runner_labels(ctx, j.repo_id).await?;
+        append_system_line(ctx, &run, &j, &runs::no_runner_line(&j.runs_on, &offered)).await;
+        if runs::finish_job(ctx, j.id, "failure", &BTreeMap::new()).await? {
+            n += 1;
+        }
+    }
+    let stale: Vec<JobRow> = sqlx::query_as::<_, JobRow>(&format!(
+        "SELECT {} FROM workflow_jobs WHERE status = 'queued' AND COALESCE(queued_at, created_at) < now() - make_interval(mins => $1)",
+        runs::JOB_COLS
+    ))
+    .bind(ctx.config.ci.queue_timeout_minutes.clamp(1, 35 * 24 * 60) as i32)
+    .fetch_all(&ctx.db)
+    .await?;
+    for j in stale {
+        let run = fetch_run(ctx, j.run_id).await?;
+        let hours = ctx.config.ci.queue_timeout_minutes.div_ceil(60).max(1);
+        let line = format!("No runner picked up this job within {hours} hour{}, so it was stopped.", if hours == 1 { "" } else { "s" });
+        append_system_line(ctx, &run, &j, &line).await;
+        if runs::finish_job(ctx, j.id, "timed_out", &BTreeMap::new()).await? {
+            n += 1;
+        }
+    }
     Ok(n)
 }
 

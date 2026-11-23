@@ -358,7 +358,11 @@ jobs:
 ";
     let w = World::new(pool).await;
     let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, yml)]).await;
-    assert!(w.push(repo, &git, "main", None).await.is_empty());
+    // Nothing runs: the push shows a failed run with no job that says why (ch-xy5).
+    let runs = w.push(repo, &git, "main", None).await;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(w.run_status(runs[0]).await, ("completed".to_string(), Some("failure".to_string())));
+    assert!(w.jobs(runs[0]).await.is_empty());
     let files = w.state.ci.workflows(&ch_testkit::fixtures::user_actor(w.alice), repo, None).await.unwrap();
     assert!(files[0].errors[0].contains("--privileged") && files[0].errors[0].starts_with("line 8"), "{:?}", files[0].errors);
 }

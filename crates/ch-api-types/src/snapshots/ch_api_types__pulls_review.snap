@@ -12,7 +12,7 @@ expression: json
   "state": "APPROVED",
   "submitted_at": "2026-01-02T03:04:05Z",
   "user": {
-    "avatar_url": "https://code.example.com/avatars/2.svg",
+    "avatar_url": "https://code.example.com/avatar/hubot.svg",
     "html_url": "https://code.example.com/hubot",
     "id": 2,
     "login": "hubot",

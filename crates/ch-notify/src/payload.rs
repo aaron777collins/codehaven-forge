@@ -29,7 +29,7 @@ pub async fn user_json(pool: &PgPool, base: &str, id: i64) -> Result<SimpleUser>
         sqlx::query_as("SELECT username::text, kind, is_admin FROM users WHERE id = $1").bind(id).fetch_optional(pool).await?;
     let (login, kind, admin) = row.ok_or(Error::NotFound)?;
     Ok(SimpleUser {
-        avatar_url: format!("{base}/avatars/{id}.svg"),
+        avatar_url: ch_api_types::avatar_url(base, &login),
         url: format!("{base}/api/v3/users/{login}"),
         html_url: format!("{base}/{login}"),
         kind: match kind.as_str() {

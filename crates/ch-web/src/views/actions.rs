@@ -232,13 +232,6 @@ fn runner_chip(status: &str) -> (&'static str, &'static str) {
     }
 }
 
-/// A file name a Content-Disposition header can carry.
-pub fn safe_filename(name: &str) -> String {
-    let clean: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
-    let trimmed = clean.trim_matches('.').to_string();
-    if trimmed.is_empty() { "artifact".into() } else { trimmed }
-}
-
 fn workflow_views(defs: &[WorkflowDef]) -> Vec<WorkflowView> {
     defs.iter()
         .map(|w| WorkflowView {
@@ -310,6 +303,8 @@ pub struct RunRow {
     pub href: String,
     pub status: StatusView,
     pub title: String,
+    /// `ci #5 · push`, and the attempt when it was re-run.
+    pub subtitle: String,
     pub branch: Option<String>,
     pub branch_href: String,
     pub short: String,
@@ -347,6 +342,12 @@ pub struct InputField {
     pub required: bool,
     pub default: String,
     pub description: String,
+    /// `text`, `checkbox` or `select`.
+    pub control: &'static str,
+    /// For a checkbox: whether it starts ticked.
+    pub checked: bool,
+    /// For a select: each choice and whether it is the one selected.
+    pub choices: Vec<(String, bool)>,
 }
 
 #[derive(Template)]
@@ -388,7 +389,8 @@ pub struct ArtifactRow {
 struct RunPage {
     c: Chrome,
     number: i64,
-    event: String,
+    title: String,
+    subtitle: String,
     status: StatusView,
     branch: Option<String>,
     branch_href: String,
@@ -400,6 +402,10 @@ struct RunPage {
     show_rerun: bool,
     show_approve: bool,
     hold_reason: Option<String>,
+    /// The first queued job that no runner can take, and why (ch-7rq).
+    queue_note: Option<String>,
+    /// Why the run failed before any job: the workflow file is broken (ch-xy5).
+    problem: Option<String>,
     approve_action: String,
     cancel_action: String,
     rerun_action: String,
@@ -439,6 +445,7 @@ struct JobPage {
     /// Unix milliseconds, for the ticking job elapsed timer. Active, started jobs only.
     job_started_ms: Option<i64>,
     runner: Option<String>,
+    queue_note: Option<String>,
     steps: Vec<StepView>,
     jobs: Vec<JobLink>,
     log_txt_href: String,
@@ -521,7 +528,8 @@ pub async fn runs(ctx: Ctx, Path((owner, name)): Path<(String, String)>, Query(q
         .map(|r| RunRow {
             href: format!("{base}/actions/runs/{}", r.id),
             status: fmt::status(&r.status, r.conclusion.as_deref()),
-            title: format!("#{} on {}", r.run_number, r.event),
+            title: if r.title.trim().is_empty() { format!("#{} on {}", r.run_number, r.event) } else { r.title.clone() },
+            subtitle: run_subtitle(r),
             branch: r.head_branch.clone(),
             branch_href: format!("{base}/tree/{}", fmt::enc_path(r.head_branch.as_deref().unwrap_or(""))),
             short: fmt::short_sha(&r.head_sha),
@@ -543,6 +551,16 @@ pub async fn runs(ctx: Ctx, Path((owner, name)): Path<(String, String)>, Query(q
         rows,
         pager: Pager::new(&here, page, more),
     })
+}
+
+/// The line under a run's title: which workflow, its number, the event and the attempt.
+fn run_subtitle(r: &ch_core::model::WorkflowRun) -> String {
+    let mut s = if r.workflow_name.is_empty() { format!("#{}", r.run_number) } else { format!("{} #{}", r.workflow_name, r.run_number) };
+    s.push_str(&format!(" · {}", r.event.replace('_', " ")));
+    if r.attempt > 1 {
+        s.push_str(&format!(" · attempt {}", r.attempt));
+    }
+    s
 }
 
 // ------------------------------------------------------------------ manual dispatch
@@ -569,8 +587,15 @@ pub async fn dispatch_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>
         let msg = "Pick a workflow that can be started by hand.";
         return dispatch_page(&ctx, &rc, &path, &git_ref, &HashMap::new(), msg, StatusCode::UNPROCESSABLE_ENTITY).await;
     };
-    let entered: HashMap<String, String> =
-        wf.inputs.iter().filter_map(|i| form.opt(&format!("input_{}", i.name)).map(|v| (i.name.clone(), v.to_string()))).collect();
+    let entered: HashMap<String, String> = wf
+        .inputs
+        .iter()
+        .filter_map(|i| match form.opt(&format!("input_{}", i.name)) {
+            Some(v) => Some((i.name.clone(), v.to_string())),
+            None if i.kind == "boolean" => Some((i.name.clone(), "false".into())),
+            None => None,
+        })
+        .collect();
     if git_ref.is_empty() {
         return dispatch_page(
             &ctx,
@@ -587,8 +612,14 @@ pub async fn dispatch_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>
     let mut missing: Vec<String> = Vec::new();
     for i in &wf.inputs {
         match form.opt(&format!("input_{}", i.name)) {
+            Some(v) if i.kind == "boolean" => {
+                inputs.insert(i.name.clone(), serde_json::Value::String(if v == "true" { "true" } else { "false" }.into()));
+            }
             Some(v) => {
                 inputs.insert(i.name.clone(), serde_json::Value::String(v.to_string()));
+            }
+            None if i.kind == "boolean" => {
+                inputs.insert(i.name.clone(), serde_json::Value::String("false".into()));
             }
             None if i.required => missing.push(i.name.clone()),
             None => {}
@@ -637,11 +668,21 @@ async fn dispatch_page(
         .map(|w| {
             w.inputs
                 .iter()
-                .map(|i| InputField {
-                    label: i.name.clone(),
-                    required: i.required,
-                    default: entered.get(&i.name).cloned().or_else(|| i.default.clone()).unwrap_or_default(),
-                    description: i.description.clone(),
+                .map(|i| {
+                    let value = entered.get(&i.name).cloned().or_else(|| i.default.clone()).unwrap_or_default();
+                    InputField {
+                        label: i.name.clone(),
+                        required: i.required,
+                        description: i.description.clone(),
+                        control: match i.kind.as_str() {
+                            "boolean" => "checkbox",
+                            "choice" if !i.options.is_empty() => "select",
+                            _ => "text",
+                        },
+                        checked: value.eq_ignore_ascii_case("true"),
+                        choices: i.options.iter().map(|o| (o.clone(), *o == value)).collect(),
+                        default: value,
+                    }
                 })
                 .collect()
         })
@@ -705,11 +746,17 @@ pub async fn run_get(ctx: Ctx, Path((owner, name, run)): Path<(String, String, i
 
     let waiting = info.status == "waiting";
     let hold_reason = if waiting { ctx.state.ci.run_hold_reason(&ctx.actor, rc.id(), RunId(run)).await.ok().flatten() } else { None };
+    let problem = if jobs.is_empty() && info.status == "completed" {
+        ctx.state.ci.run_problem(&ctx.actor, rc.id(), RunId(run)).await.ok().flatten()
+    } else {
+        None
+    };
     let c = rc.chrome(&ctx, &format!("Run #{}", info.run_number), "actions").await;
     ctx.page(&RunPage {
         c,
         number: info.run_number,
-        event: info.event.clone(),
+        title: info.title.clone(),
+        subtitle: run_subtitle(&info),
         status: if waiting {
             fmt::StatusView { class: "queued".into(), icon: "circle-dashed".into(), label: "Waiting for approval".into() }
         } else {
@@ -722,9 +769,11 @@ pub async fn run_get(ctx: Ctx, Path((owner, name, run)): Path<(String, String, i
         when: fmt::time(info.created_at),
         duration: run_duration(&jobs),
         show_cancel: can_write && active,
-        show_rerun: can_write && !active,
+        show_rerun: can_write && !active && problem.is_none(),
         show_approve: can_write && waiting,
         hold_reason,
+        problem,
+        queue_note: jobs.iter().find_map(|j| j.queue_note.as_ref().map(|n| format!("{}: {n}", j.name))),
         approve_action: format!("{base}/actions/runs/{run}/approve"),
         cancel_action: format!("{base}/actions/runs/{run}/cancel"),
         rerun_action: format!("{base}/actions/runs/{run}/rerun"),
@@ -784,7 +833,7 @@ pub async fn artifact_download(ctx: Ctx, Path((owner, name, run, id)): Path<(Str
     let mut r = Response::new(Body::from_stream(stream));
     let h = r.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
-    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{}\"", safe_filename(&a.name))) {
+    if let Ok(v) = HeaderValue::from_str(&ch_core::disposition::attachment(&a.name)) {
         h.insert(header::CONTENT_DISPOSITION, v);
     }
     h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
@@ -822,6 +871,7 @@ pub async fn job_get(ctx: Ctx, Path((owner, name, run, job)): Path<(String, Stri
         duration: fmt::duration_between(j.started_at, j.completed_at),
         job_started_ms: if active { j.started_at.map(|t| t.timestamp_millis()) } else { None },
         runner: j.runner_name.clone(),
+        queue_note: j.queue_note.clone(),
         steps,
         jobs: links,
         log_txt_href: format!("{base}/actions/runs/{run}/jobs/{job}/log.txt"),
@@ -831,6 +881,24 @@ pub async fn job_get(ctx: Ctx, Path((owner, name, run, job)): Path<(String, Stri
         run_href: format!("{base}/actions/runs/{run}"),
         run_number: info.run_number.to_string(),
     })
+}
+
+/// A workflow's status badge, `{owner}/{repo}/actions/workflows/{file}/badge.svg` as on GitHub
+/// (ch-c1d). Signed in only, like every page here: it is not on the public list, so the gate turns
+/// a signed-out request away first. `?branch=` and `?event=` narrow it.
+pub async fn workflow_badge(
+    ctx: Ctx,
+    Path((owner, name, file)): Path<(String, String, String)>,
+    Query(q): Query<Params>,
+) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    let b = ctx.state.ci.badge(&ctx.actor, rc.id(), &file, q.get("branch").map(String::as_str), q.get("event").map(String::as_str)).await?;
+    let mut r = (StatusCode::OK, ch_render::badge::svg(&b.workflow_name, b.conclusion.as_deref())).into_response();
+    let h = r.headers_mut();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/svg+xml"));
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    Ok(r)
 }
 
 pub async fn job_log_txt(ctx: Ctx, Path((owner, name, run, job)): Path<(String, String, i64, i64)>) -> WebResult<Response> {
@@ -1343,6 +1411,7 @@ mod tests {
             conclusion: Some("success".into()),
             needs: vec![],
             runner_name: None,
+            queue_note: None,
             started_at: s,
             completed_at: e,
             steps: vec![],
@@ -1362,14 +1431,6 @@ mod tests {
         assert_eq!(chips[2].href, "/a/b/actions?status=failed");
         assert!(chips[2].current && !chips[0].current);
         assert_eq!(chips[0].count, 3);
-    }
-
-    #[test]
-    fn filenames_are_safe_for_a_header() {
-        assert_eq!(safe_filename("my report/v1.zip"), "my_report_v1.zip");
-        assert_eq!(safe_filename("a\"b"), "a_b");
-        assert_eq!(safe_filename(".."), "artifact");
-        assert_eq!(safe_filename(""), "artifact");
     }
 
     #[test]

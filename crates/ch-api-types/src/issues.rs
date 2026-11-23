@@ -24,15 +24,15 @@ pub struct Milestone {
     pub id: i64,
     pub number: i64,
     pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub description: Option<String>,
     /// `open` or `closed`.
     pub state: String,
     pub open_issues: u32,
     pub closed_issues: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub due_on: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub closed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -57,29 +57,29 @@ pub struct Issue {
     pub id: i64,
     pub number: i64,
     pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub body: Option<String>,
     /// `open` or `closed`.
     pub state: String,
     /// `completed`, `not_planned` or `reopened`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub state_reason: Option<String>,
     pub locked: bool,
     pub user: SimpleUser,
     #[serde(default)]
     pub labels: Vec<Label>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub assignee: Option<SimpleUser>,
     #[serde(default)]
     pub assignees: Vec<SimpleUser>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub milestone: Option<Milestone>,
     pub comments: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub closed_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub closed_by: Option<SimpleUser>,
     pub html_url: String,
     pub url: String,
@@ -508,7 +508,7 @@ mod tests {
             "user": {
                 "login": "octocat",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/octocat.svg",
                 "url": "https://code.example.com/api/v3/users/octocat",
                 "html_url": "https://code.example.com/octocat",
                 "type": "User",

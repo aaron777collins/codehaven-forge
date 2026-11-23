@@ -71,15 +71,15 @@ pub struct CheckRun {
     /// `queued`, `in_progress` or `completed`.
     pub status: String,
     /// `success`, `failure`, `neutral`, `cancelled`, `skipped`, `timed_out`, `action_required`, `startup_failure` or `stale`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub conclusion: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub started_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub completed_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub details_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub external_id: Option<String>,
     pub output: CheckRunOutput,
     pub html_url: String,
@@ -117,6 +117,51 @@ pub struct WorkflowsResponse {
     pub workflows: Vec<Workflow>,
 }
 
+/// `head_commit` of a workflow run: the commit it built.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunHeadCommit {
+    pub id: String,
+    pub message: String,
+    #[serde(default)]
+    pub author: Option<RunCommitPerson>,
+    #[serde(default)]
+    pub committer: Option<RunCommitPerson>,
+}
+
+/// A commit's author or committer in `head_commit`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunCommitPerson {
+    pub name: String,
+    pub email: String,
+}
+
+/// One entry of a run's `pull_requests`: the pull request it ran for. Empty for a fork's, as on GitHub.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunPullRequest {
+    pub id: i64,
+    pub number: i64,
+    pub url: String,
+    pub head: RunPullRef,
+    pub base: RunPullRef,
+}
+
+/// The `head` or `base` of a `RunPullRequest`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunPullRef {
+    #[serde(rename = "ref")]
+    pub git_ref: String,
+    pub sha: String,
+    pub repo: RunPullRepo,
+}
+
+/// The repository of a `RunPullRef`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunPullRepo {
+    pub id: i64,
+    pub url: String,
+    pub name: String,
+}
+
 /// A run of a workflow, `GET /repos/{owner}/{repo}/actions/runs`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowRun {
@@ -127,15 +172,19 @@ pub struct WorkflowRun {
     pub run_attempt: u32,
     pub event: String,
     /// `queued`, `in_progress` or `completed`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub status: Option<String>,
     /// `success`, `failure`, `neutral`, `cancelled`, `skipped`, `timed_out`, `action_required`, `startup_failure` or `stale`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub conclusion: Option<String>,
     pub workflow_id: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub head_branch: Option<String>,
     pub head_sha: String,
+    #[serde(default)]
+    pub head_commit: Option<RunHeadCommit>,
+    #[serde(default)]
+    pub pull_requests: Vec<RunPullRequest>,
     pub path: String,
     pub display_title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -144,7 +193,7 @@ pub struct WorkflowRun {
     pub triggering_actor: Option<SimpleUser>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub run_started_at: Option<DateTime<Utc>>,
     pub html_url: String,
     pub url: String,
@@ -169,12 +218,12 @@ pub struct WorkflowRunsResponse {
 pub struct WorkflowStep {
     pub name: String,
     pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub conclusion: Option<String>,
     pub number: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub started_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub completed_at: Option<DateTime<Utc>>,
 }
 
@@ -186,19 +235,19 @@ pub struct WorkflowJob {
     pub run_attempt: u32,
     pub name: String,
     pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub conclusion: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub started_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub steps: Vec<WorkflowStep>,
     #[serde(default)]
     pub labels: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub runner_id: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub runner_name: Option<String>,
     pub html_url: String,
     pub url: String,
@@ -344,7 +393,7 @@ mod tests {
             "owner": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -465,6 +514,8 @@ mod tests {
             workflow_id: 42,
             head_branch: Some("main".into()),
             head_sha: SHA.into(),
+            head_commit: None,
+            pull_requests: vec![],
             path: ".codehaven/workflows/ci.yaml".into(),
             display_title: "add ci types".into(),
             actor: Some(crate::user("alice", 1)),
@@ -722,7 +773,7 @@ mod tests {
             "actor": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -731,7 +782,7 @@ mod tests {
             "triggering_actor": {
                 "login": "alice",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",
                 "type": "User",
@@ -759,7 +810,7 @@ mod tests {
                 "owner": {
                     "login": "alice",
                     "id": 1,
-                    "avatar_url": "https://code.example.com/avatars/1.svg",
+                    "avatar_url": "https://code.example.com/avatar/alice.svg",
                     "url": "https://code.example.com/api/v3/users/alice",
                     "html_url": "https://code.example.com/alice",
                     "type": "User",

@@ -266,6 +266,16 @@ pub struct WorkflowInput {
     pub description: String,
     pub default: Option<String>,
     pub required: bool,
+    /// `string`, `boolean`, `choice` or `number`.
+    #[serde(default = "string_kind")]
+    pub kind: String,
+    /// The choices of a `choice` input, in file order. Empty for other kinds.
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+fn string_kind() -> String {
+    "string".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,6 +312,9 @@ pub struct WorkflowJob {
     /// Names of the jobs this one waits for.
     pub needs: Vec<String>,
     pub runner_name: Option<String>,
+    /// For a queued job: why it is still waiting, when the reason is worth saying.
+    #[serde(default)]
+    pub queue_note: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub steps: Vec<WorkflowStep>,

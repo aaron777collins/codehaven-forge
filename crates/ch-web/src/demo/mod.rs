@@ -1034,6 +1034,19 @@ impl Ci for Demo {
     async fn cancel(&self, _a: &Actor, _repo: RepoId, _run: RunId, _c: &ClientInfo) -> Result<()> {
         Ok(())
     }
+    async fn badge(
+        &self,
+        _a: &Actor,
+        repo: RepoId,
+        file: &str,
+        _b: Option<&str>,
+        _e: Option<&str>,
+    ) -> Result<ch_core::model::WorkflowBadge> {
+        if !is_lh(repo) || file != "ci.yml" {
+            return Err(Error::NotFound);
+        }
+        Ok(ch_core::model::WorkflowBadge { workflow_name: "CI".into(), conclusion: Some("success".into()) })
+    }
     async fn rerun(&self, _a: &Actor, _repo: RepoId, _run: RunId, _f: bool, _c: &ClientInfo) -> Result<RunId> {
         Ok(RunId(55))
     }

@@ -3,7 +3,7 @@ source: crates/ch-api-types/src/lib.rs
 expression: json
 ---
 {
-  "avatar_url": "https://code.example.com/avatars/2.svg",
+  "avatar_url": "https://code.example.com/avatar/kim.svg",
   "html_url": "https://code.example.com/kim",
   "id": 2,
   "login": "kim",

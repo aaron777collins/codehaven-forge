@@ -191,6 +191,7 @@ pub fn build_for(mcp: bool) -> Registry {
         .post("/{owner}/{repo}/actions/runs/{run}/approve", actions::run_approve)
         .post("/{owner}/{repo}/actions/runs/{run}/rerun", actions::run_rerun)
         .get("/{owner}/{repo}/actions/runs/{run}/artifacts/{id}", actions::artifact_download)
+        .get("/{owner}/{repo}/actions/workflows/{workflow}/badge.svg", actions::workflow_badge)
         .form("/{owner}/{repo}/settings/secrets", actions::secrets_get, actions::secrets_post)
         .post("/{owner}/{repo}/settings/secrets/{name}/delete", actions::secret_delete)
         .post("/{owner}/{repo}/settings/variables/{name}/delete", actions::variable_delete)

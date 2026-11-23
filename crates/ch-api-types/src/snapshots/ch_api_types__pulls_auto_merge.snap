@@ -4,7 +4,7 @@ expression: json
 ---
 {
   "enabled_by": {
-    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "avatar_url": "https://code.example.com/avatar/octocat.svg",
     "html_url": "https://code.example.com/octocat",
     "id": 1,
     "login": "octocat",

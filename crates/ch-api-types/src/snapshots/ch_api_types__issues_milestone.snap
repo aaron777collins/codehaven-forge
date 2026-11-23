@@ -3,10 +3,11 @@ source: crates/ch-api-types/src/lib.rs
 expression: json
 ---
 {
+  "closed_at": null,
   "closed_issues": 1,
   "created_at": "2026-01-02T03:04:05Z",
   "creator": {
-    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "avatar_url": "https://code.example.com/avatar/octocat.svg",
     "html_url": "https://code.example.com/octocat",
     "id": 1,
     "login": "octocat",

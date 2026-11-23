@@ -142,6 +142,12 @@ impl ApiClient {
         decode(resp).await
     }
 
+    /// A DELETE that decodes a JSON answer (turning auto-merge off answers with the pull request).
+    pub async fn delete_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let resp = self.send(self.request(Method::DELETE, &self.url(path))).await?;
+        decode(resp).await
+    }
+
     /// A POST whose answer carries nothing we need (`202 Accepted`, `204 No Content`).
     pub async fn post_empty<B: Serialize + ?Sized>(&self, path: &str, body: &B) -> Result<()> {
         self.send(self.request(Method::POST, &self.url(path)).json(body)).await?;

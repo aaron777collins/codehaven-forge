@@ -42,8 +42,12 @@ enum Command {
         #[arg(long, env = "HAVEN_RUNNER_NAME")]
         name: String,
         /// Labels this runner can serve. Jobs run on it when their `runs-on` labels are a subset.
+        /// Left out, the labels of the settings file's `[labels]` table and the architecture.
         #[arg(long, env = "HAVEN_RUNNER_LABELS", value_delimiter = ',')]
         labels: Vec<String>,
+        /// Settings file whose labels to register. Defaults as for `run`.
+        #[arg(long, env = "HAVEN_RUNNER_CONFIG")]
+        config: Option<PathBuf>,
         /// Replace an existing registration file.
         #[arg(long)]
         replace: bool,
@@ -86,15 +90,6 @@ async fn main() {
     }
 }
 
-fn default_labels() -> Vec<String> {
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        a => a,
-    };
-    vec!["ubuntu-latest".into(), "linux".into(), arch.into()]
-}
-
 fn config_path(explicit: Option<PathBuf>, cred_path: &Path) -> PathBuf {
     explicit.unwrap_or_else(|| cred_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).join("config.toml"))
 }
@@ -102,12 +97,12 @@ fn config_path(explicit: Option<PathBuf>, cred_path: &Path) -> PathBuf {
 async fn real_main(cli: Cli) -> Result<()> {
     let cred_path = cli.credential_file.clone().unwrap_or_else(credential::default_path);
     match cli.command {
-        Command::Register { url, token, name, labels, replace } => {
+        Command::Register { url, token, name, labels, config, replace } => {
             if cred_path.exists() && !replace {
                 bail!("{} already exists. This runner is registered. Use --replace to register again", cred_path.display());
             }
             let labels = if labels.is_empty() {
-                default_labels()
+                Config::load(&config_path(config, &cred_path))?.register_labels()
             } else {
                 labels.into_iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()
             };

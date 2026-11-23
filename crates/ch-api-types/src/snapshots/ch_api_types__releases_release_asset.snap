@@ -13,7 +13,7 @@ expression: json
   "state": "uploaded",
   "updated_at": "2026-01-02T03:04:05Z",
   "uploader": {
-    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "avatar_url": "https://code.example.com/avatar/octocat.svg",
     "html_url": "https://code.example.com/octocat",
     "id": 1,
     "login": "octocat",

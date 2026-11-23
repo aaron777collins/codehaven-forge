@@ -809,12 +809,33 @@ pub struct WorkflowRun {
     pub repo_id: RepoId,
     pub workflow_id: Option<WorkflowId>,
     pub run_number: i64,
+    /// 1 for the first run, then one more for each re-run.
+    #[serde(default = "first_attempt")]
+    pub attempt: i32,
+    /// The run's title: the commit message's first line, the pull request title or `run-name:`.
+    #[serde(default)]
+    pub title: String,
+    /// The workflow's display name at the time of the run.
+    #[serde(default)]
+    pub workflow_name: String,
     pub event: String,
     pub head_sha: String,
     pub head_branch: Option<String>,
     pub status: String,
     pub conclusion: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+fn first_attempt() -> i32 {
+    1
+}
+
+/// What a workflow's status badge shows (ch-c1d).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowBadge {
+    pub workflow_name: String,
+    /// The latest finished run's conclusion, `None` when nothing has finished.
+    pub conclusion: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

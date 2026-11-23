@@ -115,6 +115,22 @@ impl Default for DiskSection {
 }
 
 impl Config {
+    /// The labels a runner registers with when none are given (ch-dvg): every label its
+    /// `[labels]` table can run, so the server offers it exactly the jobs it has an image for,
+    /// plus the architecture (`x64`, `arm64`), as GitHub's runners have.
+    pub fn register_labels(&self) -> Vec<String> {
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            a => a,
+        };
+        let mut out: Vec<String> = self.labels.keys().cloned().collect();
+        if !out.iter().any(|l| l == arch) {
+            out.push(arch.to_string());
+        }
+        out
+    }
+
     /// Reads a TOML file. A missing file is the defaults; a file that is there but wrong is an
     /// error that names the file.
     pub fn load(path: &Path) -> Result<Config> {
@@ -227,6 +243,20 @@ mod tests {
         assert_eq!(c.limits().memory, 8 << 30);
         assert_eq!(c.limits().pids, 4096);
         assert_eq!(c.disk.max_percent, 85);
+    }
+
+    #[test]
+    fn a_runner_registers_the_labels_it_has_images_for() {
+        let arch = if cfg!(target_arch = "x86_64") {
+            "x64"
+        } else if cfg!(target_arch = "aarch64") {
+            "arm64"
+        } else {
+            std::env::consts::ARCH
+        };
+        let shipped: Config = toml::from_str(include_str!("../../../deploy/runner.toml")).unwrap();
+        assert_eq!(shipped.register_labels(), vec!["linux", "ubuntu-24.04", "ubuntu-latest", arch]);
+        assert_eq!(Config::default().register_labels(), vec!["linux", "ubuntu-22.04", "ubuntu-24.04", "ubuntu-latest", arch]);
     }
 
     #[test]

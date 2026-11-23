@@ -29,6 +29,7 @@ tracing.workspace = true
 anyhow.workspace = true
 hex.workspace = true
 sha2.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 ch-testkit.workspace = true

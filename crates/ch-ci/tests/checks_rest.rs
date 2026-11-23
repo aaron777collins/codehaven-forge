@@ -162,7 +162,13 @@ async fn workflows_runs_and_jobs_over_rest(pool: PgPool) {
             &[(CI_YML, &basic_workflow()), (".codehaven/workflows/bad.yml", "on: push\njobs:\n  a:\n    steps: []\n")],
         )
         .await;
-    let run = w.push(repo, &git, "main", None).await[0];
+    // bad.yml does not parse, so the push shows it as a failed run next to ci's (ch-xy5).
+    assert_eq!(w.push(repo, &git, "main", None).await.len(), 2);
+    let run: i64 = sqlx::query_scalar("SELECT id FROM workflow_runs WHERE event_payload->'meta'->>'workflow_path' = $1")
+        .bind(CI_YML)
+        .fetch_one(w.pool())
+        .await
+        .unwrap();
     let alice = Who::User(w.alice);
     let (s, wfs) = w.get("/api/v3/repos/alice/demo/actions/workflows", &alice).await;
     assert_eq!(s, StatusCode::OK);
@@ -174,8 +180,13 @@ async fn workflows_runs_and_jobs_over_rest(pool: PgPool) {
     assert_eq!(w.get(&format!("/api/v3/repos/alice/demo/actions/workflows/{wid}"), &alice).await.1["path"], CI_YML);
 
     let (_, runs) = w.get("/api/v3/repos/alice/demo/actions/runs", &alice).await;
-    assert_eq!(runs["total_count"], 1);
-    let r = &runs["workflow_runs"][0];
+    assert_eq!(runs["total_count"], 2);
+    let r = runs["workflow_runs"].as_array().unwrap().iter().find(|x| x["id"] == run).unwrap();
+    let bad = runs["workflow_runs"].as_array().unwrap().iter().find(|x| x["id"] != run).unwrap();
+    assert_eq!(
+        (bad["status"].as_str(), bad["conclusion"].as_str(), bad["path"].as_str()),
+        (Some("completed"), Some("failure"), Some(".codehaven/workflows/bad.yml"))
+    );
     assert_eq!(
         (r["id"].as_i64(), r["event"].as_str(), r["status"].as_str(), r["name"].as_str()),
         (Some(run), Some("push"), Some("queued"), Some("ci"))
@@ -189,7 +200,8 @@ async fn workflows_runs_and_jobs_over_rest(pool: PgPool) {
     assert!(r["html_url"].as_str().unwrap().ends_with(&format!("/alice/demo/actions/runs/{run}")));
     let (_, f) = w.get("/api/v3/repos/alice/demo/actions/runs?status=queued&event=push&branch=main", &alice).await;
     assert_eq!(f["total_count"], 1);
-    for q in ["status=completed", "event=pull_request", "branch=dev", "head_sha=abc"] {
+    assert_eq!(w.get("/api/v3/repos/alice/demo/actions/runs?status=completed", &alice).await.1["total_count"], 1, "the failed bad.yml run");
+    for q in ["event=pull_request", "branch=dev", "head_sha=abc"] {
         assert_eq!(w.get(&format!("/api/v3/repos/alice/demo/actions/runs?{q}"), &alice).await.1["total_count"], 0, "{q}");
     }
     assert_eq!(w.get(&format!("/api/v3/repos/alice/demo/actions/workflows/{wid}/runs"), &alice).await.1["total_count"], 1);
@@ -208,7 +220,7 @@ async fn workflows_runs_and_jobs_over_rest(pool: PgPool) {
     let info = w.state.ci.jobs(&user, repo, ch_core::RunId(run)).await.unwrap();
     assert_eq!(info.len(), 3);
     assert_eq!(info[0].steps[0].name, "Run echo lint");
-    assert_eq!(w.state.ci.runs(&user, repo, 1, 30).await.unwrap().len(), 1);
+    assert_eq!(w.state.ci.runs(&user, repo, 1, 30).await.unwrap().len(), 2, "ci and the failed bad.yml run");
     assert_eq!(w.state.ci.get_run(&user, repo, ch_core::RunId(run)).await.unwrap().status, "queued");
 
     // A job or run of another repository is not found through this one.
@@ -222,20 +234,7 @@ async fn workflows_runs_and_jobs_over_rest(pool: PgPool) {
     assert_eq!(w.get(&format!("/api/v3/repos/alice/demo/actions/runs/{run}"), &Who::Anon).await.0, StatusCode::UNAUTHORIZED);
 }
 
-#[sqlx::test(migrator = "ch_db::MIGRATOR")]
-async fn run_logs_are_one_text_file_with_headings(pool: PgPool) {
-    let w = World::new(pool).await;
-    let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, &basic_workflow())]).await;
-    let run = w.push(repo, &git, "main", None).await[0];
-    let r = w.runner("r", &["ubuntu-latest"]).await;
-    let j = r.request(&w, 0).await.unwrap();
-    r.logs(&w, j.job_id, 0, 0, &["lint output"]).await;
-    let (s, text) = w.get(&format!("/api/v3/repos/alice/demo/actions/runs/{run}/logs"), &Who::User(w.alice)).await;
-    assert_eq!(s, StatusCode::OK);
-    let t = text.as_str().unwrap();
-    assert!(t.contains("===== lint =====\nlint output\n"), "{t}");
-    assert!(t.contains("===== test (a) =====") && t.contains("===== test (b) ====="));
-}
+// Run logs as a zip: tests/run_logs_zip.rs (ch-1bp).
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
 async fn runners_are_listed_for_admins_and_shown_busy_or_online(pool: PgPool) {

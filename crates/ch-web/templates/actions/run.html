@@ -2,7 +2,7 @@
 {% import "components.html" as ui %}
 {% block repo_body %}
 <div class="list-head">
-  <h2 class="page-h">Run #{{ number }} <span class="muted">on {{ event }}</span></h2>
+  <h2 class="page-h">{% if title.is_empty() %}Run #{{ number }}{% else %}{{ title }}{% endif %} <span class="muted">{{ subtitle }}</span></h2>
   <div class="spacer"></div>
   {% if show_approve %}
   <form method="post" action="{{ approve_action }}" class="inline">
@@ -30,6 +30,8 @@
 {% if let Some(r) = hold_reason %}
 <p class="notice" role="status"><strong>Waiting for approval.</strong> {{ r }}. Someone with write access has to approve it before any job runs.</p>
 {% endif %}
+{% if let Some(p) = problem %}<p class="notice notice-warn" role="status"><strong>This workflow could not run.</strong> {{ p }}</p>{% endif %}
+{% if let Some(n) = queue_note %}<p class="notice notice-warn" role="status">{{ n }}</p>{% endif %}
 <div class="card pad run-summary">
   <div class="run-summary-main">
     {% call ui::status(status) %}

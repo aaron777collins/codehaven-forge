@@ -5,7 +5,7 @@ expression: json
 {
   "action": "opened",
   "assignee": {
-    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "avatar_url": "https://code.example.com/avatar/alice.svg",
     "html_url": "https://code.example.com/alice",
     "id": 1,
     "login": "alice",
@@ -14,8 +14,11 @@ expression: json
     "url": "https://code.example.com/api/v3/users/alice"
   },
   "issue": {
+    "assignee": null,
     "assignees": [],
     "body": "the build is red",
+    "closed_at": null,
+    "closed_by": null,
     "comments": 1,
     "comments_url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/7/comments",
     "created_at": "2026-01-02T03:04:05Z",
@@ -31,6 +34,7 @@ expression: json
       }
     ],
     "locked": false,
+    "milestone": null,
     "number": 7,
     "reactions": {
       "+1": 0,
@@ -46,11 +50,12 @@ expression: json
     },
     "repository_url": "https://code.example.com/api/v3/repos/alice/codehaven",
     "state": "open",
+    "state_reason": null,
     "title": "ci red on main",
     "updated_at": "2026-01-02T03:04:05Z",
     "url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/7",
     "user": {
-      "avatar_url": "https://code.example.com/avatars/1.svg",
+      "avatar_url": "https://code.example.com/avatar/alice.svg",
       "html_url": "https://code.example.com/alice",
       "id": 1,
       "login": "alice",
@@ -88,7 +93,7 @@ expression: json
     "name": "codehaven",
     "open_issues_count": 2,
     "owner": {
-      "avatar_url": "https://code.example.com/avatars/1.svg",
+      "avatar_url": "https://code.example.com/avatar/alice.svg",
       "html_url": "https://code.example.com/alice",
       "id": 1,
       "login": "alice",
@@ -117,7 +122,7 @@ expression: json
     "watchers_count": 1
   },
   "sender": {
-    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "avatar_url": "https://code.example.com/avatar/alice.svg",
     "html_url": "https://code.example.com/alice",
     "id": 1,
     "login": "alice",

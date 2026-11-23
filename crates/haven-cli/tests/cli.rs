@@ -218,6 +218,20 @@ async fn handle(AxState(st): AxState<Shared>, req: Request<Body>) -> Response {
             Some(s) => err_resp(s, "Required status check \"ci / test\" is expected."),
             None => json_resp(200, with(snap!("pulls_merge_result"), &[("sha", json!("0123456789abcdef"))])),
         },
+        (Method::PUT, ["repos", _, _, "pulls", n, "auto-merge"]) => json_resp(
+            200,
+            with(
+                snap!("pulls_pull_request"),
+                &[
+                    ("number", json!(n.parse::<i64>().unwrap_or(0))),
+                    ("auto_merge", json!({"merge_method": "squash", "enabled_by": snap!("pulls_auto_merge")["enabled_by"]})),
+                ],
+            ),
+        ),
+        (Method::DELETE, ["repos", _, _, "pulls", n, "auto-merge"]) => json_resp(
+            200,
+            with(snap!("pulls_pull_request"), &[("number", json!(n.parse::<i64>().unwrap_or(0))), ("auto_merge", json!(null))]),
+        ),
         (Method::GET, ["repos", _, _, "commits", _, "check-runs"]) => json_resp(200, snap!("ci_check_runs_response")),
 
         // actions
@@ -721,6 +735,24 @@ async fn pr_view_review_diff_and_merge() {
     ok(&c.repo(&["pr", "merge", "3"]).await);
     assert_eq!(s.find("PUT", "/pulls/3/merge")[1].body["merge_method"], "merge");
     let both = c.repo(&["pr", "merge", "3", "--squash", "--rebase"]).await;
+    assert_ne!(both.code, 0);
+}
+
+#[tokio::test]
+async fn pr_merge_auto_turns_auto_merge_on_and_off() {
+    // ch-96n: the REST route exists, so the CLI offers it.
+    let s = server().await;
+    let c = Cli::new(&s.url);
+    let o = c.repo(&["pr", "merge", "3", "--auto", "--squash"]).await;
+    ok(&o);
+    assert!(o.out.contains("Auto-merge is on for #3") && o.out.contains("squash"), "{}", o.out);
+    assert_eq!(s.find("PUT", "/pulls/3/auto-merge")[0].body["merge_method"], "squash");
+    assert!(s.find("PUT", "/pulls/3/merge").is_empty(), "nothing merges now");
+    let o = c.repo(&["pr", "merge", "3", "--disable-auto"]).await;
+    ok(&o);
+    assert!(o.out.contains("Auto-merge is off for #3"), "{}", o.out);
+    assert_eq!(s.find("DELETE", "/pulls/3/auto-merge").len(), 1);
+    let both = c.repo(&["pr", "merge", "3", "--auto", "--disable-auto"]).await;
     assert_ne!(both.code, 0);
 }
 

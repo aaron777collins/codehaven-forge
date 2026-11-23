@@ -135,7 +135,15 @@ pub fn pack(root: &Path, files: &[std::path::PathBuf], archive: &Path) -> Result
         let full = root.join(rel);
         // A file that vanished or cannot be read is left out, not fatal. It is opened without
         // following any link, so nothing outside the workspace lands in the cache (ch-ctk.1).
-        let added = crate::safefs::open_regular(root, &full).and_then(|mut f| tar.append_file(rel, &mut f));
+        let added = crate::safefs::open_regular(root, &full).and_then(|f| {
+            // The header's size is taken once, and exactly that many bytes follow it. A file a
+            // job process is still writing cannot add bytes that a restore would read as more
+            // entries, and one that shrinks is padded (ch-3xn).
+            let meta = f.metadata()?;
+            let mut h = tar::Header::new_gnu();
+            h.set_metadata(&meta);
+            tar.append_data(&mut h, rel, exactly(f, meta.len()))
+        });
         match added {
             Ok(()) => n += 1,
             Err(e) => tracing::debug!("cache: skipping {}: {e}", rel.display()),
@@ -144,6 +152,12 @@ pub fn pack(root: &Path, files: &[std::path::PathBuf], archive: &Path) -> Result
     let gz = tar.into_inner()?;
     gz.finish()?.sync_all()?;
     Ok((n, std::fs::metadata(archive)?.len()))
+}
+
+/// Exactly `len` bytes of `r`: cut if it holds more, padded with zeros if it holds fewer.
+fn exactly(r: impl std::io::Read, len: u64) -> impl std::io::Read {
+    use std::io::Read;
+    r.take(len).chain(std::io::repeat(0)).take(len)
 }
 
 /// Unpacks a cache archive into `dest`, which lies inside `root` (the job root). Only regular
@@ -228,6 +242,18 @@ fn entry_path<R: std::io::Read>(entry: &tar::Entry<'_, R>) -> Option<std::path::
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_file_adds_exactly_the_bytes_its_header_says() {
+        use std::io::Read;
+        let mut out = Vec::new();
+        exactly(&b"grown past the header"[..], 5).read_to_end(&mut out).unwrap();
+        assert_eq!(out, b"grown");
+        out.clear();
+        exactly(&b"ab"[..], 4).read_to_end(&mut out).unwrap();
+        assert_eq!(out, b"ab\0\0");
+    }
+
     use super::*;
     use std::path::PathBuf;
 

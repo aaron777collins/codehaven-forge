@@ -106,5 +106,14 @@ the real schema.
 - A job's log stops at 64 MiB with a note. Artifacts: 2 GiB each, 100 per run, 90 days at most.
   Caches: 2 GiB each, 10 GiB per repository (least recently used go first), 7 days unused.
 - The server does not mask secrets in logs. The runner masks them before sending (ARCHITECTURE.md 9.5).
-- Not built: a queued job never times out waiting for a runner, workflow badges
-  (`badge_url` is filled in but nothing serves it), `GET /runs/{id}/logs` returns text rather than a zip.
+- A queued job that no registered runner has the labels for fails after 15 minutes
+  (`ci.no_runner_minutes`), and its page says which labels the runners here offer. Any other job
+  fails as timed out after a day in the queue (`ci.queue_timeout_minutes`).
+- A pushed workflow file that does not parse, or a job refused while planning (container options
+  that expressions turn into `--privileged`, say), shows as a failed run with the reason, once
+  per push that changed the file. A manual run reports the problem on the form instead.
+- Caches: a job restores caches saved on its own ref, the default branch or, for a pull request,
+  its base branch. Never another branch's.
+- Status badges: `/{owner}/{repo}/actions/workflows/{file}/badge.svg` (`?branch=`, `?event=`), for
+  signed-in viewers only, like every page here. `GET /runs/{id}/logs` is a zip with a text file per
+  job. Only failed runs notify the person who started them.

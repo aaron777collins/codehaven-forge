@@ -320,6 +320,13 @@ pub struct ReviewView {
     /// Whether the author may be counted toward required approvals (write access).
     pub counts: bool,
     pub comment_count: u32,
+    /// GitHub's `author_association`: `OWNER`, `MEMBER`, `COLLABORATOR` or `NONE` (ch-yci).
+    #[serde(default = "no_association")]
+    pub association: String,
+}
+
+fn no_association() -> String {
+    "NONE".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

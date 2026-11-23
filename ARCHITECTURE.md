@@ -1032,7 +1032,8 @@ The credential is saved to `.runner` with mode 0600. For each job the runner:
    job token, depth 1 by default, `fetch-depth` honoured).
 2. Pulls the job image. `runs-on` labels map to images in the runner config,
    for example `ubuntu-latest = codehaven-job:trixie` (our image: Debian trixie
-   with git, curl, build-essential, ca-certificates, Node and Python). A job's
+   with git, curl, build-essential, ca-certificates, Node, Python and Rust through
+   rustup with stable, clippy and rustfmt; no Docker CLI). A job's
    `container.image` overrides it.
 3. Starts one long-lived container per job with `/work/<job>` bound at the same
    path and runs each `run:` step with `docker exec`, using the step's shell

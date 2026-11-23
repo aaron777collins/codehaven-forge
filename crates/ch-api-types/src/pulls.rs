@@ -26,6 +26,26 @@ pub struct AutoMerge {
     pub enabled_by: SimpleUser,
 }
 
+/// One link in a pull request's `_links`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Link {
+    pub href: String,
+}
+
+/// A pull request's `_links`, as GitHub sends them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PullLinks {
+    #[serde(rename = "self")]
+    pub self_link: Link,
+    pub html: Link,
+    pub issue: Link,
+    pub comments: Link,
+    pub review_comments: Link,
+    pub review_comment: Link,
+    pub commits: Link,
+    pub statuses: Link,
+}
+
 /// `GET /repos/{owner}/{repo}/pulls/{number}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PullRequest {
@@ -38,12 +58,12 @@ pub struct PullRequest {
     pub state: String,
     pub locked: bool,
     pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub body: Option<String>,
     pub user: SimpleUser,
     #[serde(default)]
     pub labels: Vec<Label>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub milestone: Option<Milestone>,
     #[serde(default)]
     pub assignees: Vec<SimpleUser>,
@@ -53,12 +73,16 @@ pub struct PullRequest {
     pub base: PullBranch,
     pub draft: bool,
     pub merged: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mergeable: Option<bool>,
+    /// Whether the branch can be rebased onto the base cleanly. Codehaven answers as for
+    /// `mergeable`, since a clean merge here means no conflicting change.
+    #[serde(default)]
+    pub rebaseable: Option<bool>,
     pub mergeable_state: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub merged_by: Option<SimpleUser>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub merge_commit_sha: Option<String>,
     pub comments: u32,
     pub review_comments: u32,
@@ -68,12 +92,14 @@ pub struct PullRequest {
     pub changed_files: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub closed_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub merged_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub auto_merge: Option<AutoMerge>,
+    #[serde(default, rename = "_links", skip_serializing_if = "Option::is_none")]
+    pub links: Option<PullLinks>,
 }
 
 /// Response of `PUT /repos/{owner}/{repo}/pulls/{number}/merge`.
@@ -315,6 +341,7 @@ mod tests {
             draft: false,
             merged: false,
             mergeable: Some(true),
+            rebaseable: None,
             mergeable_state: "clean".into(),
             merged_by: None,
             merge_commit_sha: None,
@@ -329,6 +356,7 @@ mod tests {
             closed_at: None,
             merged_at: None,
             auto_merge: None,
+            links: None,
         };
         crate::roundtrip("pulls_pull_request", &pr);
     }
@@ -521,7 +549,7 @@ mod tests {
             "user": {
                 "login": "octocat",
                 "id": 1,
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/octocat.svg",
                 "url": "https://code.example.com/api/v3/users/octocat",
                 "html_url": "https://code.example.com/octocat",
                 "type": "User",
@@ -538,7 +566,7 @@ mod tests {
                 "user": {
                     "login": "octocat",
                     "id": 1,
-                    "avatar_url": "https://code.example.com/avatars/1.svg",
+                    "avatar_url": "https://code.example.com/avatar/octocat.svg",
                     "url": "https://code.example.com/api/v3/users/octocat",
                     "html_url": "https://code.example.com/octocat",
                     "type": "User",
@@ -553,7 +581,7 @@ mod tests {
                 "user": {
                     "login": "octocat",
                     "id": 1,
-                    "avatar_url": "https://code.example.com/avatars/1.svg",
+                    "avatar_url": "https://code.example.com/avatar/octocat.svg",
                     "url": "https://code.example.com/api/v3/users/octocat",
                     "html_url": "https://code.example.com/octocat",
                     "type": "User",

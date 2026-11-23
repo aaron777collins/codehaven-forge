@@ -4,7 +4,7 @@ expression: json
 ---
 {
   "actor": {
-    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "avatar_url": "https://code.example.com/avatar/alice.svg",
     "html_url": "https://code.example.com/alice",
     "id": 1,
     "login": "alice",
@@ -18,6 +18,7 @@ expression: json
   "display_title": "add ci types",
   "event": "push",
   "head_branch": "main",
+  "head_commit": null,
   "head_sha": "abc123def4567890abcdef0123456789abcdef01",
   "html_url": "https://code.example.com/alice/codehaven/actions/runs/900001",
   "id": 900001,
@@ -25,6 +26,7 @@ expression: json
   "logs_url": "https://code.example.com/api/v3/repos/alice/codehaven/actions/runs/900001/logs",
   "name": "ci",
   "path": ".codehaven/workflows/ci.yaml",
+  "pull_requests": [],
   "repository": {
     "allow_merge_commit": true,
     "allow_rebase_merge": false,
@@ -47,7 +49,7 @@ expression: json
     "name": "codehaven",
     "open_issues_count": 2,
     "owner": {
-      "avatar_url": "https://code.example.com/avatars/1.svg",
+      "avatar_url": "https://code.example.com/avatar/alice.svg",
       "html_url": "https://code.example.com/alice",
       "id": 1,
       "login": "alice",
@@ -81,7 +83,7 @@ expression: json
   "run_started_at": "2026-01-02T03:04:05Z",
   "status": "completed",
   "triggering_actor": {
-    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "avatar_url": "https://code.example.com/avatar/alice.svg",
     "html_url": "https://code.example.com/alice",
     "id": 1,
     "login": "alice",

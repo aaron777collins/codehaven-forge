@@ -33,6 +33,8 @@ pub struct PlannedJob {
     /// A matrix built from `needs` outputs cannot be expanded until the jobs it needs have
     /// finished. The job is planned once, and the run expands it when it becomes ready.
     pub deferred_matrix: Option<Matrix>,
+    /// What the page calls each step, expressions filled in where the planning contexts allow.
+    pub step_names: Vec<String>,
     pub job: Job,
 }
 
@@ -132,6 +134,26 @@ fn from_value(v: Value) -> Result<Matrix, String> {
     Ok(m)
 }
 
+/// A step's name for the page: its expressions filled in from `github`, `inputs`, `vars`,
+/// `matrix` and `strategy`. A name that reads `secrets`, or reads something not known yet (`env`,
+/// `steps`), stays as written. Display only: the runner gets the step as written.
+pub fn step_display_name(raw: &str, ctx: &Context<'_>) -> String {
+    if !expr::has_expression(raw) {
+        return raw.to_string();
+    }
+    let refs = expr::template_refs(raw);
+    if refs.all_secrets
+        || !refs.secrets.is_empty()
+        || refs.names.iter().any(|n| !matches!(n.as_str(), "github" | "inputs" | "vars" | "matrix" | "strategy"))
+    {
+        return raw.to_string();
+    }
+    match expr::interpolate(raw, ctx) {
+        Ok(s) if !s.trim().is_empty() => s.trim().chars().take(200).collect(),
+        _ => raw.to_string(),
+    }
+}
+
 fn cell_label(cell: &Cell) -> String {
     cell.values()
         .filter_map(|v| match v {
@@ -215,8 +237,12 @@ pub fn plan_cell(
         })),
     );
     let waiting_on_needs = deferred.is_some();
+    let label = cell.as_ref().map(cell_label).unwrap_or_default();
     let name = match job.name.as_deref().filter(|n| !n.trim().is_empty()) {
         Some(n) => match expr::interpolate(n, &ctx) {
+            // A name that does not read `matrix` gets the cell's values, as on GitHub, so the
+            // cells of one job (and their checks) can be told apart.
+            Ok(s) if !label.is_empty() && !expr::template_refs(n).names.contains("matrix") => format!("{s} ({label})"),
             Ok(s) => s,
             Err(e) => {
                 if waiting_on_needs {
@@ -312,9 +338,11 @@ pub fn plan_cell(
     if !diags.is_empty() {
         return Err(diags);
     }
+    let step_names = job.steps.iter().map(|st| step_display_name(&st.display_name(), &ctx)).collect();
     Ok(PlannedJob {
         key: job.key.clone(),
         name,
+        step_names,
         matrix: cell,
         index,
         total,

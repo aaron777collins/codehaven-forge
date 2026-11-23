@@ -127,7 +127,7 @@ where
     async fn from_request(req: axum::extract::Request, state: &S) -> std::result::Result<Self, Error> {
         match axum::Json::<T>::from_request(req, state).await {
             Ok(axum::Json(v)) => Ok(ApiJson(v)),
-            Err(e) => Err(Error::invalid("Request", "body", format!("Problems parsing JSON: {}", e.body_text()))),
+            Err(e) => Err(Error::invalid("Request", "body", ch_core::error::json_problem(&e.body_text()))),
         }
     }
 }

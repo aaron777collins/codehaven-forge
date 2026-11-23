@@ -27,6 +27,9 @@ pub fn to_run(r: &RunRow) -> ch_core::model::WorkflowRun {
         repo_id: RepoId(r.repo_id),
         workflow_id: r.workflow_id.map(WorkflowId),
         run_number: r.run_number,
+        attempt: r.attempt,
+        title: r.title.clone(),
+        workflow_name: crate::spec::split_payload(&r.event_payload).1.workflow_name,
         event: r.event.clone(),
         head_sha: r.head_sha.clone(),
         head_branch: r.head_branch.clone(),
@@ -109,8 +112,11 @@ impl Ci for CiImpl {
         self.ctx.authz.require(actor, repo, Permission::Read).await?;
         let per = i64::from(per_page.clamp(1, 100));
         let off = i64::from(page.max(1) - 1) * per;
+        // One row per run: a re-run replaces its earlier attempts, as on GitHub (ch-zwo).
         let rows = sqlx::query_as::<_, RunRow>(&format!(
-            "SELECT {} FROM workflow_runs WHERE repo_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3",
+            "SELECT {} FROM workflow_runs r WHERE repo_id = $1
+               AND NOT EXISTS (SELECT 1 FROM workflow_runs n WHERE n.repo_id = r.repo_id AND n.run_number = r.run_number AND n.attempt > r.attempt)
+             ORDER BY run_number DESC, id DESC LIMIT $2 OFFSET $3",
             runs::RUN_COLS
         ))
         .bind(repo.0)
@@ -358,6 +364,45 @@ impl Ci for CiImpl {
             .fetch_optional(&self.ctx.db)
             .await?
             .flatten())
+    }
+
+    async fn badge(&self, actor: &Actor, repo: RepoId, file: &str, branch: Option<&str>, event: Option<&str>) -> Result<WorkflowBadge> {
+        self.ctx.authz.require(actor, repo, Permission::Read).await?;
+        let info = repo_ci(&self.ctx, repo).await?;
+        // The file name alone, as GitHub's badge URL has it. `.codehaven/workflows` wins over
+        // `.github/workflows` when both hold the name, as discovery does.
+        let wf: Option<(i64, String)> = sqlx::query_as(
+            "SELECT id, name FROM workflows WHERE repo_id = $1 AND path IN ('.codehaven/workflows/' || $2, '.github/workflows/' || $2)
+             ORDER BY (path LIKE '.codehaven/%') DESC LIMIT 1",
+        )
+        .bind(repo.0)
+        .bind(file)
+        .fetch_optional(&self.ctx.db)
+        .await?;
+        let Some((id, workflow_name)) = wf else { return Err(Error::NotFound) };
+        let branch = branch.filter(|b| !b.trim().is_empty()).unwrap_or(&info.default_branch);
+        // Runs of pull requests name the head branch, which may be a fork's of the same name, so
+        // they count only when asked for by event.
+        let conclusion: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT conclusion FROM workflow_runs
+             WHERE repo_id = $1 AND workflow_id = $2 AND head_branch = $3 AND status = 'completed'
+               AND (($4::text IS NULL AND event <> 'pull_request') OR event = $4)
+               AND NOT COALESCE((event_payload->'meta'->>'fork')::boolean, false)
+             ORDER BY run_number DESC, attempt DESC LIMIT 1",
+        )
+        .bind(repo.0)
+        .bind(id)
+        .bind(branch)
+        .bind(event.filter(|e| !e.trim().is_empty()))
+        .fetch_optional(&self.ctx.db)
+        .await?;
+        Ok(WorkflowBadge { workflow_name, conclusion: conclusion.flatten() })
+    }
+
+    async fn run_problem(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Option<String>> {
+        self.ctx.authz.require(actor, repo, Permission::Read).await?;
+        let r = self.run_in_repo(repo, run).await?;
+        Ok(crate::spec::split_payload(&r.event_payload).1.problem)
     }
 
     async fn approve_run(&self, actor: &Actor, repo: RepoId, run: RunId, client: &ClientInfo) -> Result<()> {

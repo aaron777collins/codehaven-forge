@@ -44,7 +44,7 @@ pub fn routes() -> Router<AppState> {
         .route("/orgs/{org}/members/{login}", delete(remove_org_member))
         .route("/orgs/{org}/memberships/{login}", put(set_org_member))
         .route("/orgs/{org}/teams", get(list_teams).post(create_team))
-        .route("/orgs/{org}/teams/{slug}", get(get_team).delete(delete_team))
+        .route("/orgs/{org}/teams/{slug}", get(get_team).patch(update_team).delete(delete_team))
         .route("/orgs/{org}/teams/{slug}/members", get(team_members))
         .route("/orgs/{org}/teams/{slug}/memberships/{login}", put(add_team_member).delete(remove_team_member))
         .route("/orgs/{org}/teams/{slug}/repos/{owner}/{repo}", put(set_team_repo).delete(remove_team_repo))
@@ -75,7 +75,7 @@ async fn profile_dto(s: &AppState, u: &User, me: bool) -> Res<dto::User> {
     Ok(dto::User {
         login: u.username.clone(),
         id: u.id.0,
-        avatar_url: format!("{b}/avatars/{}.svg", u.id.0),
+        avatar_url: ch_api_types::avatar_url(&b, &u.username),
         url: format!("{b}/api/v3/users/{}", u.username),
         html_url: format!("{b}/{}", u.username),
         kind: kind_name(u.kind).into(),
@@ -148,7 +148,7 @@ async fn get_user(State(s): State<AppState>, CurrentActor(actor): CurrentActor, 
         return Ok(Json(dto::User {
             login: u.username.clone(),
             id: u.id.0,
-            avatar_url: format!("{b}/avatar/{}", u.username),
+            avatar_url: ch_api_types::avatar_url(&b, &u.username),
             url: format!("{b}/api/v3/users/{}", u.username),
             html_url: format!("{b}/{}", u.username),
             kind: kind_name(u.kind).into(),
@@ -331,7 +331,7 @@ fn org_dto(s: &AppState, o: &ch_core::identity::Org) -> dto::Organization {
         id: o.id.0,
         url: format!("{b}/api/v3/orgs/{}", o.name),
         html_url: format!("{b}/orgs/{}", o.name),
-        avatar_url: format!("{b}/avatars/{}.svg", o.id.0),
+        avatar_url: ch_api_types::avatar_url(&b, &o.name),
         description: Some(o.description.clone()).filter(|d| !d.is_empty()),
         name: Some(o.display_name.clone()).filter(|d| !d.is_empty()),
         created_at: o.created_at,
@@ -356,7 +356,7 @@ fn team_dto(s: &AppState, org: &str, t: &ch_core::identity::Team) -> dto::Team {
         description: Some(t.description.clone()).filter(|d| !d.is_empty()),
         permission: github_permission(t.permission).into(),
         url: format!("{b}/api/v3/orgs/{org}/teams/{}", t.name.to_lowercase()),
-        html_url: format!("{b}/orgs/{org}/teams/{}", t.name.to_lowercase()),
+        html_url: format!("{b}/orgs/{org}/teams/{}", t.id.0),
         members_count: t.member_count,
         repos_count: t.repo_count,
         organization: None,
@@ -436,7 +436,7 @@ fn member_dto(s: &AppState, m: &ch_core::identity::OrgMember) -> MemberDto {
         user: SimpleUser {
             login: m.username.clone(),
             id: m.user_id.0,
-            avatar_url: format!("{b}/avatars/{}.svg", m.user_id.0),
+            avatar_url: ch_api_types::avatar_url(&b, &m.username),
             url: format!("{b}/api/v3/users/{}", m.username),
             html_url: format!("{b}/{}", m.username),
             kind: "User".into(),
@@ -515,6 +515,34 @@ async fn get_team(
     Path((org, slug)): Path<(String, String)>,
 ) -> Res<Json<dto::Team>> {
     let o = s.orgs.get(&actor, &org).await?;
+    Ok(Json(team_dto(&s, &o.name, &s.orgs.get_team(&actor, o.id, &slug).await?)))
+}
+
+async fn update_team(
+    State(s): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Client(client): Client,
+    Path((org, slug)): Path<(String, String)>,
+    Json(body): Json<dto::UpdateTeam>,
+) -> Res<Json<dto::Team>> {
+    let o = s.orgs.get(&actor, &org).await?;
+    let t = s.orgs.get_team(&actor, o.id, &slug).await?;
+    if body.name.as_deref().is_some_and(|n| n != t.name) {
+        return Err(Error::Validation(vec![FieldError::custom(
+            "Team",
+            "name",
+            "Renaming a team is not supported. Create a new team instead.",
+        )]));
+    }
+    if body.description.as_deref().is_some_and(|d| d != t.description) {
+        return Err(Error::Validation(vec![FieldError::custom("Team", "description", "Changing a team's description is not supported.")]));
+    }
+    if let Some(p) = body.permission.as_deref() {
+        let perm = Permission::parse(p).filter(|p| *p != Permission::None).ok_or_else(|| {
+            Error::Validation(vec![FieldError::custom("Team", "permission", "Use pull, triage, push, maintain or admin.")])
+        })?;
+        s.orgs.set_team_permission(&actor, t.id, perm, &client).await?;
+    }
     Ok(Json(team_dto(&s, &o.name, &s.orgs.get_team(&actor, o.id, &slug).await?)))
 }
 

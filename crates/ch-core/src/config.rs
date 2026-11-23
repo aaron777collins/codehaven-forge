@@ -112,6 +112,10 @@ pub struct WebhooksConfig {
 pub struct CiConfig {
     pub log_retention_days: u32,
     pub registration_token_ttl_minutes: u32,
+    /// A queued job that no runner takes within this many minutes fails as timed out.
+    pub queue_timeout_minutes: u32,
+    /// A queued job whose labels no registered runner has fails after this many minutes.
+    pub no_runner_minutes: u32,
 }
 
 /// The Claude connector: an MCP endpoint at `/mcp` with OAuth sign-in. Off unless turned on.
@@ -217,7 +221,7 @@ impl Default for InvitesConfig {
 }
 impl Default for CiConfig {
     fn default() -> Self {
-        Self { log_retention_days: 90, registration_token_ttl_minutes: 60 }
+        Self { log_retention_days: 90, registration_token_ttl_minutes: 60, queue_timeout_minutes: 24 * 60, no_runner_minutes: 15 }
     }
 }
 impl Default for McpConfig {

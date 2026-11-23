@@ -10,6 +10,7 @@ pub mod apps;
 pub mod audit;
 pub mod collab;
 pub mod config;
+pub mod disposition;
 pub mod error;
 pub mod events;
 pub mod identity;

@@ -681,3 +681,138 @@ async fn old_caches_are_evicted(pool: PgPool) {
     let keys: Vec<String> = sqlx::query_scalar("SELECT key FROM caches").fetch_all(w.pool()).await.unwrap();
     assert_eq!(keys, vec!["new"]);
 }
+
+/// A job restores caches saved on its own branch or the default branch, as on GitHub, never
+/// another branch's (ch-3xn item 13).
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_cache_from_another_branch_is_out_of_reach(pool: PgPool) {
+    let w = World::new(pool).await;
+    let (repo, git) = w.repo_with(w.alice, "a", &[(CI_YML, ONE)]).await;
+    let r = w.runner("r", &["x"]).await;
+    let save = |t: Who, key: &'static str| {
+        let w = &w;
+        async move {
+            let (s, _) = w
+                .send_raw(
+                    Method::PUT,
+                    &format!("/api/runner/v1/cache/{key}?version=v"),
+                    &t,
+                    Some((Bytes::from_static(b"x"), "application/octet-stream")),
+                )
+                .await;
+            assert_eq!(s, StatusCode::CREATED);
+        }
+    };
+    let look = |t: Who, key: &'static str| {
+        let w = &w;
+        async move {
+            w.post("/api/runner/v1/cache/lookup", &t, json!({"keys": [key], "version": "v"})).await.1["hit"]["key"]
+                .as_str()
+                .map(String::from)
+        }
+    };
+
+    // A job on main saves `main-k`.
+    w.push(repo, &git, "main", None).await;
+    let jm = r.request(&w, 0).await.unwrap();
+    save(Who::Bearer(jm.token.clone()), "main-k").await;
+    r.complete(&w, jm.job_id, "success", json!({})).await;
+
+    // A job on `side` sees main's cache and saves its own.
+    let before = git.head();
+    git.branch("side");
+    git.commit_file("s.txt", "s\n", "Side");
+    w.push(repo, &git, "side", Some(&before)).await;
+    let js = r.request(&w, 0).await.unwrap();
+    let ts = Who::Bearer(js.token.clone());
+    assert_eq!(look(ts.clone(), "main-k").await.as_deref(), Some("main-k"));
+    save(ts, "side-k").await;
+    r.complete(&w, js.job_id, "success", json!({})).await;
+
+    // A job on `other` sees main's, not side's, by lookup or by id.
+    git.git(&["checkout", "--quiet", "main"]);
+    git.branch("other");
+    git.commit_file("o.txt", "o\n", "Other");
+    w.push(repo, &git, "other", Some(&before)).await;
+    let jo = r.request(&w, 0).await.unwrap();
+    let to = Who::Bearer(jo.token.clone());
+    assert_eq!(look(to.clone(), "main-k").await.as_deref(), Some("main-k"));
+    assert_eq!(look(to.clone(), "side-k").await, None);
+    let side_id = hit_id(&w, "side-k").await;
+    assert_eq!(w.send_raw(Method::GET, &format!("/api/runner/v1/cache/{side_id}"), &to, None).await.0, StatusCode::NOT_FOUND);
+}
+
+/// Each ref keeps its own copy of a key, as on GitHub. A branch that saves a key first does not
+/// stop the default branch saving and restoring its own, and a job restores its own ref's copy
+/// before the default branch's (ch-3xn item 13).
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_key_saved_on_a_branch_first_still_saves_on_main(pool: PgPool) {
+    let w = World::new(pool).await;
+    let (repo, git) = w.repo_with(w.alice, "a", &[(CI_YML, ONE)]).await;
+    let r = w.runner("r", &["x"]).await;
+    let save = |t: Who, body: &'static [u8]| {
+        let w = &w;
+        async move {
+            w.send_raw(
+                Method::PUT,
+                "/api/runner/v1/cache/lock-abc?version=v",
+                &t,
+                Some((Bytes::from_static(body), "application/octet-stream")),
+            )
+            .await
+            .0
+        }
+    };
+    let restore = |t: Who| {
+        let w = &w;
+        async move {
+            let (_, hit) = w.post("/api/runner/v1/cache/lookup", &t, json!({"keys": ["lock-abc"], "version": "v"})).await;
+            let id = hit["hit"]["id"].as_i64()?;
+            assert_eq!(hit["hit"]["exact"], true);
+            let (s, body) = w.send_raw(Method::GET, &format!("/api/runner/v1/cache/{id}"), &t, None).await;
+            assert_eq!(s, StatusCode::OK);
+            Some(String::from_utf8(body.to_vec()).unwrap())
+        }
+    };
+
+    // A branch saves the key first.
+    let base = git.head();
+    git.branch("side");
+    git.commit_file("s.txt", "s\n", "Side");
+    w.push(repo, &git, "side", Some(&base)).await;
+    let js = r.request(&w, 0).await.unwrap();
+    let ts = Who::Bearer(js.token.clone());
+    assert_eq!(save(ts.clone(), b"from side").await, StatusCode::CREATED);
+    assert_eq!(save(ts, b"again").await, StatusCode::CONFLICT, "one copy per ref");
+    r.complete(&w, js.job_id, "success", json!({})).await;
+
+    // main misses it, then saves and restores its own.
+    git.git(&["checkout", "--quiet", "main"]);
+    git.commit_file("m.txt", "m\n", "Main");
+    w.push(repo, &git, "main", Some(&base)).await;
+    let jm = r.request(&w, 0).await.unwrap();
+    let tm = Who::Bearer(jm.token.clone());
+    assert_eq!(restore(tm.clone()).await, None);
+    assert_eq!(save(tm.clone(), b"from main").await, StatusCode::CREATED);
+    assert_eq!(restore(tm).await.as_deref(), Some("from main"));
+    r.complete(&w, jm.job_id, "success", json!({})).await;
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM caches WHERE key = 'lock-abc'").fetch_one(w.pool()).await.unwrap();
+    assert_eq!(rows, 2);
+
+    // side restores its own copy before main's.
+    git.git(&["checkout", "--quiet", "side"]);
+    let side_before = git.head();
+    git.commit_file("s2.txt", "s\n", "Side again");
+    w.push(repo, &git, "side", Some(&side_before)).await;
+    let js = r.request(&w, 0).await.unwrap();
+    assert_eq!(restore(Who::Bearer(js.token.clone())).await.as_deref(), Some("from side"));
+    r.complete(&w, js.job_id, "success", json!({})).await;
+
+    // Another branch falls back to main's.
+    git.git(&["checkout", "--quiet", "main"]);
+    git.branch("other");
+    git.commit_file("o.txt", "o\n", "Other");
+    w.push(repo, &git, "other", Some(&base)).await;
+    let jo = r.request(&w, 0).await.unwrap();
+    assert_eq!(restore(Who::Bearer(jo.token.clone())).await.as_deref(), Some("from main"));
+}

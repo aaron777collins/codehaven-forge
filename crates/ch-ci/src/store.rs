@@ -168,55 +168,70 @@ fn valid_cache_key(k: &str) -> bool {
     !k.is_empty() && k.len() <= 512 && !k.chars().any(|c| c.is_control())
 }
 
-pub async fn cache_lookup(ctx: &Ctx, repo: i64, req: &CacheLookupRequest) -> Result<CacheLookupResponse> {
+/// `refs` are the refs whose caches the job may read, most preferred first: its own, then for a
+/// pull request its base branch's, then the default branch's (ch-3xn). Each ref is searched in
+/// turn, the key exactly and then each restore key by prefix, as on GitHub. A cache saved with
+/// no ref (from before caches had one) is readable by all and is searched last.
+pub async fn cache_lookup(ctx: &Ctx, repo: i64, req: &CacheLookupRequest, refs: &[String]) -> Result<CacheLookupResponse> {
     if req.keys.is_empty() || req.keys.len() > 10 || req.keys.iter().any(|k| !valid_cache_key(k)) || req.version.len() > 128 {
         return Err(Error::invalid("Cache", "keys", "Give between 1 and 10 keys of at most 512 characters."));
     }
-    let exact: Option<(i64, String, i64)> =
-        sqlx::query_as("SELECT id, key, size FROM caches WHERE repo_id = $1 AND key = $2 AND version = $3")
-            .bind(repo)
-            .bind(&req.keys[0])
-            .bind(&req.version)
-            .fetch_optional(&ctx.db)
-            .await?;
-    let hit = if let Some((id, key, size)) = exact {
-        Some(CacheHit { id, key, size, exact: true })
-    } else {
-        let mut found = None;
+    let tiers = refs.iter().map(|r| Some(r.as_str())).chain(std::iter::once(None));
+    let mut hit = None;
+    'tiers: for git_ref in tiers {
+        let exact: Option<(i64, String, i64)> = sqlx::query_as(
+            "SELECT id, key, size FROM caches
+              WHERE repo_id = $1 AND key = $2 AND version = $3 AND git_ref IS NOT DISTINCT FROM $4",
+        )
+        .bind(repo)
+        .bind(&req.keys[0])
+        .bind(&req.version)
+        .bind(git_ref)
+        .fetch_optional(&ctx.db)
+        .await?;
+        if let Some((id, key, size)) = exact {
+            hit = Some(CacheHit { id, key, size, exact: true });
+            break;
+        }
         for k in &req.keys[1..] {
             let row: Option<(i64, String, i64)> = sqlx::query_as(
-                "SELECT id, key, size FROM caches WHERE repo_id = $1 AND version = $2 AND starts_with(key, $3) ORDER BY created_at DESC, id DESC LIMIT 1",
+                "SELECT id, key, size FROM caches WHERE repo_id = $1 AND version = $2 AND starts_with(key, $3)
+                   AND git_ref IS NOT DISTINCT FROM $4 ORDER BY created_at DESC, id DESC LIMIT 1",
             )
             .bind(repo)
             .bind(&req.version)
             .bind(k)
+            .bind(git_ref)
             .fetch_optional(&ctx.db)
             .await?;
             if let Some((id, key, size)) = row {
-                found = Some(CacheHit { id, key, size, exact: false });
-                break;
+                hit = Some(CacheHit { id, key, size, exact: false });
+                break 'tiers;
             }
         }
-        found
-    };
+    }
     if let Some(h) = &hit {
         sqlx::query("UPDATE caches SET last_used_at = now() WHERE id = $1").bind(h.id).execute(&ctx.db).await?;
     }
     Ok(CacheLookupResponse { hit })
 }
 
-/// Saves a cache entry. Entries are immutable: saving a key that exists is a conflict, which
-/// the runner reads as "already saved".
+/// Saves a cache entry for `git_ref`. Entries are immutable: saving a key that this ref already
+/// has is a conflict, which the runner reads as "already saved". Another ref's copy of the same
+/// key does not count (ch-3xn).
 pub async fn cache_put(ctx: &Ctx, repo: i64, key: &str, version: &str, git_ref: Option<&str>, body: Body) -> Result<CacheHit> {
     if !valid_cache_key(key) || version.len() > 128 {
         return Err(Error::invalid("Cache", "key", "The key must be 1 to 512 characters with no control characters."));
     }
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM caches WHERE repo_id = $1 AND key = $2 AND version = $3)")
-        .bind(repo)
-        .bind(key)
-        .bind(version)
-        .fetch_one(&ctx.db)
-        .await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM caches WHERE repo_id = $1 AND key = $2 AND version = $3 AND git_ref IS NOT DISTINCT FROM $4)",
+    )
+    .bind(repo)
+    .bind(key)
+    .bind(version)
+    .bind(git_ref)
+    .fetch_one(&ctx.db)
+    .await?;
     if exists {
         return Err(Error::conflict("A cache with this key already exists."));
     }
@@ -224,7 +239,7 @@ pub async fn cache_put(ctx: &Ctx, repo: i64, key: &str, version: &str, git_ref: 
     let mut tx = ctx.db.begin().await?;
     let id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO caches (repo_id, key, version, git_ref, blob_sha256, size) VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (repo_id, key, version) DO NOTHING RETURNING id",
+         ON CONFLICT ON CONSTRAINT caches_repo_key_version_ref DO NOTHING RETURNING id",
     )
     .bind(repo)
     .bind(key)
@@ -242,12 +257,14 @@ pub async fn cache_put(ctx: &Ctx, repo: i64, key: &str, version: &str, git_ref: 
     Ok(CacheHit { id, key: key.to_string(), size: blob.size as i64, exact: true })
 }
 
-/// The blob of a cache entry, if it belongs to this repository.
-pub async fn cache_blob(ctx: &Ctx, repo: i64, id: i64) -> Result<String> {
-    let sha: Option<String> =
-        sqlx::query_scalar("UPDATE caches SET last_used_at = now() WHERE id = $1 AND repo_id = $2 RETURNING blob_sha256")
-            .bind(id)
-            .bind(repo)
+/// The blob of a cache entry, if it belongs to this repository and to one of `refs`.
+pub async fn cache_blob(ctx: &Ctx, repo: i64, id: i64, refs: &[String]) -> Result<String> {
+    let sha: Option<String> = sqlx::query_scalar(
+        "UPDATE caches SET last_used_at = now() WHERE id = $1 AND repo_id = $2 AND (git_ref IS NULL OR git_ref = ANY($3)) RETURNING blob_sha256",
+    )
+    .bind(id)
+    .bind(repo)
+    .bind(refs)
             .fetch_optional(&ctx.db)
             .await?;
     sha.ok_or(Error::NotFound)

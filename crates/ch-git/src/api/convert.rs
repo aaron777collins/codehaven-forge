@@ -26,7 +26,7 @@ pub fn simple_user(base: &str, u: &UserRef) -> SimpleUser {
     SimpleUser {
         login: u.login.clone(),
         id: u.id,
-        avatar_url: format!("{base}/avatars/{}.svg", u.id),
+        avatar_url: ch_api_types::avatar_url(base, &u.login),
         url: format!("{}/users/{}", api_url(base), u.login),
         html_url: format!("{base}/{}", u.login),
         kind: match u.kind.as_str() {

@@ -138,7 +138,7 @@ async fn an_issue_goes_through_its_life(pool: PgPool) {
     assert_eq!(j["closed_by"]["login"], "dave");
     assert_eq!(j["milestone"]["closed_issues"], 1);
     let j = api.call(&dave, "PATCH", &format!("{R}/issues/1"), Some(json!({ "milestone": null, "state": "open" }))).await.json();
-    assert!(j.get("milestone").is_none() && j["state"] == "open");
+    assert!(j["milestone"].is_null() && j["state"] == "open");
     assert_eq!(
         api.call(&dave, "PATCH", &format!("{R}/issues/1"), Some(json!({ "state": "weird" }))).await.status,
         StatusCode::UNPROCESSABLE_ENTITY
@@ -287,7 +287,7 @@ async fn labels_and_milestones_over_http(pool: PgPool) {
     assert_eq!(api.get(&carol, &format!("{R}/milestones")).await.json().as_array().unwrap().len(), 1, "open ones by default");
     assert_eq!(api.get(&carol, &format!("{R}/milestones?state=all")).await.json().as_array().unwrap().len(), 2);
     let j = api.call(&dave, "PATCH", &format!("{R}/milestones/1"), Some(json!({ "due_on": null, "state": "closed" }))).await.json();
-    assert!(j.get("due_on").is_none() && j["state"] == "closed" && j["closed_at"].is_string());
+    assert!(j["due_on"].is_null() && j["state"] == "closed" && j["closed_at"].is_string());
     assert_eq!(
         api.call(&dave, "POST", &format!("{R}/milestones"), Some(json!({ "title": "x", "state": "weird" }))).await.status,
         StatusCode::UNPROCESSABLE_ENTITY
@@ -428,7 +428,7 @@ async fn a_blocked_merge_says_why(pool: PgPool) {
     let r = api.call(&bob, "PUT", &format!("{R}/pulls/1/auto-merge"), Some(json!({ "merge_method": "squash" }))).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.message());
     assert_eq!(r.json()["auto_merge"]["merge_method"], "squash");
-    assert_eq!(api.call(&bob, "DELETE", &format!("{R}/pulls/1/auto-merge"), None).await.json().get("auto_merge"), None);
+    assert!(api.call(&bob, "DELETE", &format!("{R}/pulls/1/auto-merge"), None).await.json()["auto_merge"].is_null());
     assert!(w.git.merges().is_empty());
 }
 

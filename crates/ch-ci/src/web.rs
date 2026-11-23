@@ -6,6 +6,7 @@
 //! and variables needs `Admin` on the repository, and runners are for site admins (or, for one
 //! repository, its admins).
 
+use crate::runs;
 use crate::secrets::{self, Scope};
 use crate::service::{CiImpl, runner_summaries};
 use async_trait::async_trait;
@@ -53,6 +54,8 @@ impl Pipelines for CiImpl {
                             other => other.to_string(),
                         }),
                         required: i.required,
+                        kind: i.kind,
+                        options: i.options,
                     })
                     .collect(),
             })
@@ -74,6 +77,9 @@ impl Pipelines for CiImpl {
         .fetch_all(&self.ctx.db)
         .await?;
         let ranges: HashMap<(i64, i32), (Option<i64>, Option<i64>)> = ranges.into_iter().map(|(j, n, a, b)| ((j, n), (a, b))).collect();
+        // A queued job says when no runner here can take it, and which labels the runners offer.
+        let offered = if infos.iter().any(|j| j.status == "queued") { runs::runner_labels(&self.ctx, repo.0).await? } else { vec![] };
+        let no_runner_minutes = self.ctx.config.ci.no_runner_minutes;
         Ok(infos
             .iter()
             .map(|j| WorkflowJob {
@@ -87,6 +93,12 @@ impl Pipelines for CiImpl {
                     .map(|keys| keys.iter().map(|k| name_of.get(k.as_str()).map(|n| n.to_string()).unwrap_or_else(|| k.clone())).collect())
                     .unwrap_or_default(),
                 runner_name: j.runner_name.clone(),
+                queue_note: (j.status == "queued" && !runs::some_runner_fits(&j.labels, &offered)).then(|| {
+                    format!(
+                        "{} The job fails if no runner with these labels is added within {no_runner_minutes} minutes of it being queued.",
+                        runs::no_runner_line(&j.labels, &offered)
+                    )
+                }),
                 started_at: j.started_at,
                 completed_at: j.completed_at,
                 steps: j

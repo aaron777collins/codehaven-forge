@@ -29,6 +29,10 @@ pub struct JobSpec {
     /// A matrix that reads `needs` outputs, expanded once the jobs it needs have finished.
     #[serde(default)]
     pub deferred_matrix: Option<ch_workflow::Matrix>,
+    /// Step names for the page, expressions filled in at planning (ch-zwo). Empty for a job
+    /// planned before this existed, which then shows the names as written.
+    #[serde(default)]
+    pub step_names: Vec<String>,
 }
 
 /// Run-level facts that have no column. Lives in `workflow_runs.event_payload.meta`.
@@ -66,6 +70,10 @@ pub struct RunMeta {
     /// Kept for a held run: its concurrency group is applied only when it is approved.
     #[serde(default)]
     pub cancel_in_progress: bool,
+    /// Why the workflow could not run at all: a file that does not parse, or a job refused while
+    /// planning. Such a run has no jobs and failed at once (ch-xy5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
 }
 
 /// Splits `workflow_runs.event_payload` into the webhook-style event and the meta block.

@@ -14,6 +14,10 @@ haven-runner run [--config config.toml] [--concurrency 2] [--work-dir /work]
 haven-runner check                  # credential, settings, Docker, work dir, disk, server
 ```
 
+Without `--labels`, `register` offers the labels of its settings file's `[labels]` table (the
+stack's `deploy/runner.toml`: `ubuntu-latest`, `ubuntu-24.04` and `linux`) plus the architecture
+(`x64` or `arm64`), so the server offers it exactly the jobs it has an image for.
+
 `register` saves `.runner` (mode 0600, written atomically) next to where it runs, or under
 `$HAVEN_RUNNER_HOME`. A second `register` is refused without `--replace`. The registration token
 is single use, so a failed attempt needs a new one from Site admin > Runners.
@@ -30,7 +34,9 @@ HAVEN_RUNNER_TOKEN=<token> sudo -E bash deploy/prod/ci-up.sh register runner-1
 sudo bash deploy/prod/ci-up.sh                      # dind, the job image inside it, the runner
 ```
 
-`ci-up.sh` builds `codehaven-job:trixie` (`deploy/images/job.Dockerfile`) with the host's buildx
+`ci-up.sh` builds `codehaven-job:trixie` (`deploy/images/job.Dockerfile`: Debian trixie with git,
+a C toolchain, Node, Python and Rust through rustup with stable, clippy and rustfmt; no Docker
+CLI, since jobs cannot reach a daemon) with the host's buildx
 builder and loads it into `dind` with `docker save | docker load`. Nothing is started on the host
 by these scripts until you run them; the runner name defaults to `CODEHAVEN_RUNNER_NAME`
 (`runner-1` in `.env.example`).
@@ -163,7 +169,7 @@ comment`, `pr create|list|view|checkout|diff|review|merge`, `run list|view|watch
 - `-R owner/name` picks the repository, otherwise the `origin` remote of the current directory.
 - `--json` on list and view commands prints the DTOs. `haven api` takes `-f` (strings), `-F`
   (typed), `-H`, `--input`, `--include` and `--paginate`.
-- `pr merge` has no `--auto`: the REST contract has no auto-merge endpoint yet.
+- `pr merge --auto` turns on auto-merge (with `--squash`, `--rebase` or `--merge`), `--disable-auto` turns it off.
 - `tests/cli.rs` drives every command against a fake server whose bodies are the committed
   `ch-api-types` snapshots.
 

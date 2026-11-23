@@ -317,6 +317,12 @@ async fn assigned_team_mentions_and_ci(pool: PgPool) {
         conclusion: conclusion.map(String::from),
     };
     assert_eq!(w.fan.process(&ev("in_progress", None)).await.unwrap(), 0);
+    // Only a run that failed is worth a notification (ch-ed1). Passing, cancelled and skipped
+    // runs are on the Actions page.
+    for quiet in ["success", "cancelled", "skipped", "neutral"] {
+        assert_eq!(w.fan.process(&ev("completed", Some(quiet))).await.unwrap(), 0, "{quiet}");
+    }
+    assert!(w.inbox(w.bob).await.iter().all(|n| n.reason != "ci_activity"));
     assert_eq!(w.fan.process(&ev("completed", Some("failure"))).await.unwrap(), 1);
     let inbox = w.inbox(w.bob).await;
     let ci = inbox.iter().find(|n| n.reason == "ci_activity").unwrap();

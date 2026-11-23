@@ -85,8 +85,11 @@ pub fn header_scope(clone_url: &str) -> Option<String> {
 /// which may be a fork's, so a submodule may never be fetched from a local path (`file` is
 /// allowed only for the runner's own top-level fetch, which tests use), and no attributes file
 /// outside the repository is read. With global and system config off (see `git`), the only
-/// config files git reads are the ones it writes itself in the private stage, so no filter,
-/// include or command can come from anything the job wrote.
+/// config files git reads are the ones it writes itself in the private stage (the submodules'
+/// repositories too, which git keeps under the stage's `.git/modules`), so no filter, include or
+/// command can come from anything the job wrote. A server may not redirect a fetch elsewhere, so
+/// a submodule URL cannot bounce the runner to another host (ch-3xn), and every object fetched is
+/// checked, as the server checks every push.
 pub const SAFE_CONFIG: &[&str] = &[
     "core.hooksPath=/dev/null",
     "core.fsmonitor=false",
@@ -96,6 +99,8 @@ pub const SAFE_CONFIG: &[&str] = &[
     "protocol.file.allow=user",
     "credential.helper=",
     "safe.bareRepository=explicit",
+    "http.followRedirects=false",
+    "transfer.fsckObjects=true",
 ];
 
 pub fn safe_config_args() -> Vec<String> {
@@ -368,6 +373,9 @@ mod tests {
             // a local path such as the runner's home.
             "protocol.file.allow=user",
             "core.attributesFile=/dev/null",
+            // ch-3xn: no redirect to another host, and fetched objects are checked.
+            "http.followRedirects=false",
+            "transfer.fsckObjects=true",
         ] {
             let i = a.iter().position(|x| x == want).unwrap_or_else(|| panic!("{want} is missing"));
             assert_eq!(a[i - 1], "-c");

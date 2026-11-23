@@ -160,3 +160,43 @@ async fn a_rerun_records_who_started_it(pool: PgPool) {
         .unwrap();
     assert_eq!(started_by, Some(w.bob.0));
 }
+
+const TYPED: &str = "name: typed
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Where to
+        type: choice
+        options: [staging, production]
+        default: staging
+      dry:
+        type: boolean
+        default: true
+      note:
+        type: string
+jobs:
+  b:
+    runs-on: x
+    steps:
+      - run: echo
+";
+
+/// The Actions pages learn each input's type and choices, so the form can offer a menu and a
+/// checkbox instead of a text box (ch-3a2).
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn dispatch_inputs_carry_their_type_and_options(pool: PgPool) {
+    let w = World::new(pool).await;
+    let (repo, _) = w.repo_with(w.alice, "demo", &[(".codehaven/workflows/typed.yml", TYPED)]).await;
+    let alice = ch_testkit::fixtures::user_actor(w.alice);
+    let defs = w.state.pipelines.workflows(&alice, repo, "main").await.unwrap();
+    let inputs = &defs.iter().find(|d| d.name == "typed").unwrap().inputs;
+    let by = |n: &str| inputs.iter().find(|i| i.name == n).unwrap();
+    assert_eq!(by("target").kind, "choice");
+    assert_eq!(by("target").options, vec!["staging", "production"]);
+    assert_eq!(by("target").default.as_deref(), Some("staging"));
+    assert_eq!(by("dry").kind, "boolean");
+    assert_eq!(by("dry").default.as_deref(), Some("true"));
+    assert_eq!(by("note").kind, "string");
+    assert!(by("note").options.is_empty());
+}

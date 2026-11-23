@@ -6,6 +6,7 @@
 
 pub mod ansi;
 pub mod avatar;
+pub mod badge;
 pub mod highlight;
 pub mod markdown;
 

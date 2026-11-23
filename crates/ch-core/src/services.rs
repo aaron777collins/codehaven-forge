@@ -979,6 +979,22 @@ pub trait Ci: Send + Sync {
     async fn run_hold_reason(&self, _actor: &Actor, _repo: RepoId, _run: RunId) -> Result<Option<String>> {
         Ok(None)
     }
+    /// Why a run failed before any job: its workflow file is broken or was refused.
+    async fn run_problem(&self, _actor: &Actor, _repo: RepoId, _run: RunId) -> Result<Option<String>> {
+        Ok(None)
+    }
+    /// The status badge of the workflow file named `file` (`ci.yml`): the latest finished run on
+    /// `branch` (the default branch when `None`), from `event` when given. Needs `Read`.
+    async fn badge(
+        &self,
+        _actor: &Actor,
+        _repo: RepoId,
+        _file: &str,
+        _branch: Option<&str>,
+        _event: Option<&str>,
+    ) -> Result<WorkflowBadge> {
+        Err(Error::unavailable("CI is not available"))
+    }
     /// The size of a job's log in bytes, so a reader can start at the end.
     async fn log_size(&self, _actor: &Actor, _repo: RepoId, _job: JobId) -> Result<u64> {
         Err(Error::unavailable("CI is not available"))

@@ -38,7 +38,7 @@ impl Ctx {
         SimpleUser {
             login: u.username.clone(),
             id: u.id.0,
-            avatar_url: format!("{}/avatars/{}.svg", self.base, u.id.0),
+            avatar_url: ch_api_types::avatar_url(&self.base, &u.username),
             url: format!("{}/api/v3/users/{}", self.base, u.username),
             html_url: format!("{}/{}", self.base, u.username),
             kind: match u.kind {
@@ -164,7 +164,7 @@ impl Ctx {
             Some(SimpleUser {
                 login: login.clone(),
                 id,
-                avatar_url: format!("{}/avatars/{id}.svg", self.base),
+                avatar_url: ch_api_types::avatar_url(&self.base, &login),
                 url: format!("{}/api/v3/users/{login}", self.base),
                 html_url: format!("{}/{login}", self.base),
                 kind: "User".into(),
@@ -221,6 +221,11 @@ impl Ctx {
         let _ = head_name;
         let user = self.user(&v.issue.author);
         let issue = self.issue(&v.issue);
+        let mergeable = match v.pull.mergeable {
+            MergeableState::Clean | MergeableState::Behind | MergeableState::Blocked => Some(true),
+            MergeableState::Conflict => Some(false),
+            MergeableState::Unknown => None,
+        };
         api_p::PullRequest {
             url: self.api(&format!("/pulls/{n}")),
             id: v.pull.issue.id.0,
@@ -258,11 +263,8 @@ impl Ctx {
             },
             draft: v.pull.draft,
             merged: v.pull.merged_at.is_some(),
-            mergeable: match v.pull.mergeable {
-                MergeableState::Clean | MergeableState::Behind | MergeableState::Blocked => Some(true),
-                MergeableState::Conflict => Some(false),
-                MergeableState::Unknown => None,
-            },
+            mergeable,
+            rebaseable: mergeable,
             mergeable_state: match v.pull.mergeable {
                 MergeableState::Clean => "clean",
                 MergeableState::Conflict => "dirty",
@@ -286,6 +288,16 @@ impl Ctx {
             auto_merge: v.auto_merge.as_ref().map(|a| api_p::AutoMerge {
                 merge_method: crate::pulls::method_str(a.method).into(),
                 enabled_by: self.user(&a.enabled_by),
+            }),
+            links: Some(api_p::PullLinks {
+                self_link: api_p::Link { href: self.api(&format!("/pulls/{n}")) },
+                html: api_p::Link { href: self.html(&format!("/pull/{n}")) },
+                issue: api_p::Link { href: self.api(&format!("/issues/{n}")) },
+                comments: api_p::Link { href: self.api(&format!("/issues/{n}/comments")) },
+                review_comments: api_p::Link { href: self.api(&format!("/pulls/{n}/comments")) },
+                review_comment: api_p::Link { href: self.api("/pulls/comments{/number}") },
+                commits: api_p::Link { href: self.api(&format!("/pulls/{n}/commits")) },
+                statuses: api_p::Link { href: self.api(&format!("/statuses/{}", v.pull.head_sha)) },
             }),
         }
     }
@@ -374,7 +386,7 @@ impl Ctx {
             submitted_at: r.submitted_at,
             html_url: self.html(&format!("/pull/{number}#pullrequestreview-{}", r.id.0)),
             pull_request_url: self.api(&format!("/pulls/{number}")),
-            author_association: if v.counts { "COLLABORATOR" } else { "NONE" }.into(),
+            author_association: v.association.clone(),
         }
     }
 

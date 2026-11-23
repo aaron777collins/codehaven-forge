@@ -528,7 +528,15 @@ async fn a_broken_workflow_file_does_not_stop_the_others(pool: PgPool) {
             &[(".codehaven/workflows/broken.yml", "on: push\njobs:\n  a:\n    steps: []\n"), (CI_YML, &basic_workflow())],
         )
         .await;
-    assert_eq!(w.push(repo, &git, "main", None).await.len(), 1);
+    // The good workflow runs, and the broken one shows as a failed run that says why (ch-xy5).
+    let runs = w.push(repo, &git, "main", None).await;
+    assert_eq!(runs.len(), 2);
+    let statuses: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT status, conclusion FROM workflow_runs ORDER BY event_payload->'meta'->>'workflow_path'")
+            .fetch_all(w.pool())
+            .await
+            .unwrap();
+    assert_eq!(statuses, vec![("completed".into(), Some("failure".into())), ("queued".into(), None)]);
     let files = w.state.ci.workflows(&ch_testkit::fixtures::user_actor(w.alice), repo, None).await.unwrap();
     let broken = files.iter().find(|f| f.path.ends_with("broken.yml")).unwrap();
     assert!(!broken.errors.is_empty());

@@ -9,7 +9,7 @@ expression: json
   "members_count": 2,
   "name": "Core",
   "organization": {
-    "avatar_url": "https://code.example.com/avatars/20.svg",
+    "avatar_url": "https://code.example.com/avatar/haven.svg",
     "created_at": "2026-01-02T03:04:05Z",
     "description": "the forge collective",
     "html_url": "https://code.example.com/orgs/haven",

@@ -101,6 +101,78 @@ impl Error {
     }
 }
 
+/// What a request body that did not parse says, in words for the caller rather than the
+/// deserializer's (ch-yci). axum's text names Rust types and a line and column; this keeps the
+/// field and what was wrong with it, and says "a number" for `i64`.
+pub fn json_problem(raw: &str) -> String {
+    let mut s = raw.trim().to_string();
+    for prefix in ["Failed to deserialize the JSON body into the target type: ", "Failed to parse the request body as JSON: "] {
+        if let Some(rest) = s.strip_prefix(prefix) {
+            s = rest.to_string();
+        }
+    }
+    // ` at line 1 column 10` at the end.
+    if let Some(i) = s.rfind(" at line ")
+        && s[i + 9..].split(" column ").all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    {
+        s.truncate(i);
+    }
+    for (rust, plain) in [
+        ("i8", "a number"),
+        ("i16", "a number"),
+        ("i32", "a number"),
+        ("i64", "a number"),
+        ("u8", "a number"),
+        ("u16", "a number"),
+        ("u32", "a number"),
+        ("u64", "a number"),
+        ("usize", "a number"),
+        ("f64", "a number"),
+        ("a sequence", "a list"),
+        ("a map", "an object"),
+        ("unit", "nothing"),
+    ] {
+        s = s.replace(&format!("expected {rust}"), &format!("expected {plain}"));
+    }
+    if let Some(i) = s.find("expected struct ") {
+        s.truncate(i);
+        s.push_str("expected an object");
+    }
+    if s.is_empty() { "Problems parsing JSON".into() } else { format!("Problems parsing JSON: {s}") }
+}
+
+#[cfg(test)]
+mod json_problem_tests {
+    use super::json_problem;
+
+    #[test]
+    fn deserializer_text_becomes_plain_words() {
+        assert_eq!(
+            json_problem(
+                "Failed to deserialize the JSON body into the target type: name: invalid type: integer `5`, expected a string at line 1 column 10"
+            ),
+            "Problems parsing JSON: name: invalid type: integer `5`, expected a string"
+        );
+        assert_eq!(
+            json_problem(
+                "Failed to deserialize the JSON body into the target type: per_page: invalid type: string \"x\", expected u32 at line 1 column 15"
+            ),
+            "Problems parsing JSON: per_page: invalid type: string \"x\", expected a number"
+        );
+        assert_eq!(
+            json_problem(
+                "Failed to deserialize the JSON body into the target type: invalid type: sequence, expected struct CreateTeam at line 1 column 0"
+            ),
+            "Problems parsing JSON: invalid type: sequence, expected an object"
+        );
+        assert_eq!(
+            json_problem("Failed to parse the request body as JSON: EOF while parsing a value at line 1 column 0"),
+            "Problems parsing JSON: EOF while parsing a value"
+        );
+        assert_eq!(json_problem(""), "Problems parsing JSON");
+    }
+}
+
 impl From<sqlx::Error> for Error {
     fn from(e: sqlx::Error) -> Self {
         match e {

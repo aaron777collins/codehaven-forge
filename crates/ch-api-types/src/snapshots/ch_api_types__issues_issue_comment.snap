@@ -11,7 +11,7 @@ expression: json
   "updated_at": "2026-01-02T03:04:05Z",
   "url": "https://code.example.com/api/v3/repos/octo/haven/issues/comments/11",
   "user": {
-    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "avatar_url": "https://code.example.com/avatar/octocat.svg",
     "html_url": "https://code.example.com/octocat",
     "id": 1,
     "login": "octocat",

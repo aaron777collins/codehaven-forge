@@ -51,9 +51,7 @@ impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for ApiJson<T> {
     async fn from_request(req: Request, state: &S) -> std::result::Result<Self, Self::Rejection> {
         match axum::Json::<T>::from_request(req, state).await {
             Ok(axum::Json(v)) => Ok(ApiJson(v)),
-            Err(e) => {
-                Err(Error::Validation(vec![FieldError::custom("Request", "body", format!("Problems parsing JSON: {}", e.body_text()))]))
-            }
+            Err(e) => Err(Error::Validation(vec![FieldError::custom("Request", "body", ch_core::error::json_problem(&e.body_text()))])),
         }
     }
 }

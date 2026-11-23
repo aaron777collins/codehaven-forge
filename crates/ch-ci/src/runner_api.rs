@@ -423,6 +423,23 @@ fn job_of(actor: &Actor) -> Result<(i64, i64)> {
     }
 }
 
+/// The refs whose caches a job may read, as on GitHub, most preferred first: its run's own ref,
+/// then for a pull request the branch it targets, then the default branch. Never another
+/// branch's (ch-3xn).
+async fn cache_refs(ctx: &Ctx, job: &JobRow) -> Result<Vec<String>> {
+    let run = runs::fetch_run(ctx, job.run_id).await?;
+    let info = crate::discovery::repo_ci(ctx, ch_core::RepoId(job.repo_id)).await?;
+    let (_, meta) = crate::spec::split_payload(&run.event_payload);
+    let mut refs: Vec<String> = run.git_ref.clone().into_iter().collect();
+    if !meta.base_ref.is_empty() {
+        refs.push(format!("refs/heads/{}", meta.base_ref));
+    }
+    refs.push(format!("refs/heads/{}", info.default_branch));
+    let mut seen = std::collections::HashSet::new();
+    refs.retain(|r| seen.insert(r.clone()));
+    Ok(refs)
+}
+
 async fn cache_lookup(
     State(state): State<AppState>,
     CurrentActor(actor): CurrentActor,
@@ -430,8 +447,9 @@ async fn cache_lookup(
 ) -> Result<Json<rn::CacheLookupResponse>> {
     let ctx = Ctx::from_state(&state);
     let (job, repo) = job_of(&actor)?;
-    token_job(&ctx, &actor, job, false).await?;
-    Ok(Json(store::cache_lookup(&ctx, repo, &req).await?))
+    let row = token_job(&ctx, &actor, job, false).await?;
+    let refs = cache_refs(&ctx, &row).await?;
+    Ok(Json(store::cache_lookup(&ctx, repo, &req, &refs).await?))
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -458,9 +476,9 @@ async fn cache_put(
 async fn cache_get(State(state): State<AppState>, CurrentActor(actor): CurrentActor, Path(key): Path<String>) -> Result<Response> {
     let ctx = Ctx::from_state(&state);
     let (job, repo) = job_of(&actor)?;
-    token_job(&ctx, &actor, job, false).await?;
+    let row = token_job(&ctx, &actor, job, false).await?;
     let id: i64 = key.parse().map_err(|_| Error::NotFound)?;
-    let sha = store::cache_blob(&ctx, repo, id).await?;
+    let sha = store::cache_blob(&ctx, repo, id, &cache_refs(&ctx, &row).await?).await?;
     let body = store::blob_body(&ctx, &sha).await?;
     Ok(([(axum::http::header::CONTENT_TYPE, "application/octet-stream")], body).into_response())
 }

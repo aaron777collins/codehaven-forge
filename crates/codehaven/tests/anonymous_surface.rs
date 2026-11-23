@@ -301,12 +301,22 @@ async fn no_sign_up_route_exists_in_any_form() {
 #[tokio::test]
 async fn signed_out_sweep_gives_the_documented_answers() {
     let app = app(config(&[]), false);
-    for path in ["/", "/explore", "/root", "/nobody/nothing", "/signup", "/metrics", "/readyz"] {
+    // Batch C3 routes are on the list too: the badge is for signed-in viewers only (ch-c1d).
+    for path in ["/", "/explore", "/root", "/nobody/nothing", "/signup", "/metrics", "/readyz", "/x/y/actions/workflows/ci.yml/badge.svg"] {
         let r = get_(&app, path).await;
         assert_eq!(r.status, StatusCode::SEE_OTHER, "{path}");
         assert!(r.headers[header::LOCATION].to_str().unwrap().starts_with("/login"), "{path}");
     }
-    for path in ["/api/v3/user", "/api/v3/meta", "/api/v3/version", "/api/v3/repos/x/y", "/api/v3"] {
+    for path in [
+        "/api/v3/user",
+        "/api/v3/meta",
+        "/api/v3/version",
+        "/api/v3/repos/x/y",
+        "/api/v3",
+        "/api/v3/rate_limit",
+        "/api/v3/repos/x/y/actions/runs/1/logs",
+        "/api/v3/orgs/x/teams/y",
+    ] {
         let r = get_(&app, path).await;
         assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{path}");
         assert_eq!(r.body, r#"{"message":"Requires authentication"}"#);

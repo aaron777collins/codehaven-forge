@@ -225,6 +225,34 @@ async fn every_page_renders_for_a_signed_in_user() {
 }
 
 #[tokio::test]
+async fn the_dispatch_form_offers_a_menu_and_a_checkbox_for_typed_inputs() {
+    // The demo CI workflow has a boolean `verbose` and a choice `target` (ch-3a2).
+    let r = get("/ada/lighthouse/actions/run").await;
+    assert_eq!(r.status, StatusCode::OK);
+    let select = between(&r.body, "<select id=\"wf-input-", "</select>");
+    assert!(select.contains("name=\"input_target\""), "{select}");
+    assert!(select.contains("<option value=\"staging\" selected>staging</option>"), "{select}");
+    assert!(select.contains("<option value=\"production\">production</option>"), "{select}");
+    let check = between(&r.body, "name=\"input_verbose\" type=\"checkbox\"", ">");
+    assert!(check.contains("value=\"true\""), "{check}");
+    assert!(!r.body.contains("name=\"input_verbose\" type=\"text\""));
+}
+
+#[tokio::test]
+async fn a_workflow_badge_is_an_svg_for_a_signed_in_viewer() {
+    let r = get("/ada/lighthouse/actions/workflows/ci.yml/badge.svg").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.headers[header::CONTENT_TYPE], "image/svg+xml");
+    assert!(r.headers[header::CACHE_CONTROL].to_str().unwrap().contains("no-store"));
+    assert!(r.body.starts_with("<svg") && r.body.contains(">passing</text>"), "{}", r.body);
+    assert_eq!(get("/ada/lighthouse/actions/workflows/nothing.yml/badge.svg").await.status, StatusCode::NOT_FOUND);
+    // Signed out, the gate answers before the page: no badge for strangers (ch-c1d).
+    let anon = send(&app(), Method::GET, "/ada/lighthouse/actions/workflows/ci.yml/badge.svg", None, None, None).await;
+    assert_ne!(anon.status, StatusCode::OK);
+    assert!(!anon.body.contains("<svg"));
+}
+
+#[tokio::test]
 async fn pages_without_a_repo_or_an_issue_are_404() {
     for p in [
         "/ada/nope",

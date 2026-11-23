@@ -14,7 +14,7 @@ pub struct Repository {
     pub owner: SimpleUser,
     pub private: bool,
     pub html_url: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub description: Option<String>,
     pub fork: bool,
     pub url: String,
@@ -34,7 +34,7 @@ pub struct Repository {
     pub has_issues: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub pushed_at: Option<DateTime<Utc>>,
     /// Size of the git store in kilobytes.
     pub size: i64,
@@ -140,17 +140,47 @@ pub struct Branch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequiredStatusChecks {
     /// Require branches to be up to date before merging.
+    #[serde(default)]
     pub strict: bool,
     #[serde(default)]
     pub contexts: Vec<String>,
+    /// GitHub's newer form of `contexts`. Read on input and merged into `contexts`; never sent.
+    #[serde(default, skip_serializing)]
+    pub checks: Vec<StatusCheckName>,
 }
 
-/// Review requirements that must be met before merging into a protected branch.
+/// One entry of GitHub's `required_status_checks.checks`. Codehaven matches by name only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusCheckName {
+    pub context: String,
+}
+
+/// Review requirements that must be met before merging into a protected branch. On input, a
+/// block with only some fields takes GitHub's defaults for the rest: one approval, nothing else.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequiredReviews {
+    #[serde(default = "one_review")]
     pub required_approving_review_count: u32,
+    #[serde(default)]
     pub dismiss_stale_reviews: bool,
+    #[serde(default)]
     pub require_code_owner_reviews: bool,
+}
+
+fn one_review() -> u32 {
+    1
+}
+
+/// GitHub's `restrictions`: who may push. Codehaven has no such rule, so only an empty one is
+/// accepted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PushRestrictions {
+    #[serde(default)]
+    pub users: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub teams: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub apps: Vec<serde_json::Value>,
 }
 
 /// `GET /repos/{owner}/{repo}/branches/{branch}/protection`: the rules on a protected branch.
@@ -169,17 +199,36 @@ pub struct BranchProtection {
 }
 
 /// `PUT /repos/{owner}/{repo}/branches/{branch}/protection`: replace the rules on a branch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// GitHub's body works as it is (ch-yci): every field may be left out or null, which means off.
+/// `enforce_admins` is accepted and ignored, since rules here bind administrators too.
+/// `allow_direct_push` is Codehaven's own; left out, it follows GitHub: pushing straight to the
+/// branch is allowed unless reviews are required.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct UpdateBranchProtection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_status_checks: Option<RequiredStatusChecks>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_pull_request_reviews: Option<RequiredReviews>,
-    pub enforce_admins: bool,
-    pub required_conversation_resolution: bool,
-    pub allow_force_pushes: bool,
-    pub allow_deletions: bool,
-    pub allow_direct_push: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforce_admins: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_conversation_resolution: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_force_pushes: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_deletions: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_direct_push: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restrictions: Option<PushRestrictions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_linear_history: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_creations: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_branch: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_fork_syncing: Option<bool>,
 }
 
 /// `GET /repos/{owner}/{repo}/tags`: a tag in a repository.
@@ -542,7 +591,7 @@ mod tests {
     fn branch_protection_roundtrip() {
         let value = BranchProtection {
             url: "https://code.example.com/api/v3/repos/alice/codehaven/branches/main/protection".into(),
-            required_status_checks: Some(RequiredStatusChecks { strict: true, contexts: vec!["ci".into()] }),
+            required_status_checks: Some(RequiredStatusChecks { checks: vec![], strict: true, contexts: vec!["ci".into()] }),
             required_pull_request_reviews: Some(RequiredReviews {
                 required_approving_review_count: 1,
                 dismiss_stale_reviews: true,
@@ -560,17 +609,18 @@ mod tests {
     #[test]
     fn update_branch_protection_roundtrip() {
         let value = UpdateBranchProtection {
-            required_status_checks: Some(RequiredStatusChecks { strict: false, contexts: vec!["ci".into()] }),
+            required_status_checks: Some(RequiredStatusChecks { strict: false, contexts: vec!["ci".into()], checks: vec![] }),
             required_pull_request_reviews: Some(RequiredReviews {
                 required_approving_review_count: 2,
                 dismiss_stale_reviews: false,
                 require_code_owner_reviews: true,
             }),
-            enforce_admins: false,
-            required_conversation_resolution: true,
-            allow_force_pushes: false,
-            allow_deletions: false,
-            allow_direct_push: true,
+            enforce_admins: Some(false),
+            required_conversation_resolution: Some(true),
+            allow_force_pushes: Some(false),
+            allow_deletions: Some(false),
+            allow_direct_push: Some(true),
+            ..Default::default()
         };
         crate::roundtrip("repos_update_branch_protection", &value);
     }
@@ -725,7 +775,7 @@ mod tests {
                 "login": "alice",
                 "id": 1,
                 "node_id": "MDQ6VXNlcjE=",
-                "avatar_url": "https://code.example.com/avatars/1.svg",
+                "avatar_url": "https://code.example.com/avatar/alice.svg",
                 "gravatar_id": "",
                 "url": "https://code.example.com/api/v3/users/alice",
                 "html_url": "https://code.example.com/alice",

@@ -327,6 +327,12 @@ pub struct PrMergeArgs {
     pub rebase: bool,
     #[arg(long, group = "method")]
     pub merge: bool,
+    /// Merge once the required checks and reviews pass, instead of now.
+    #[arg(long, conflicts_with = "disable_auto")]
+    pub auto: bool,
+    /// Turn auto-merge off.
+    #[arg(long, conflicts_with_all = ["auto", "squash", "rebase", "merge", "subject", "body"])]
+    pub disable_auto: bool,
     /// Title for the merge or squash commit.
     #[arg(long)]
     pub subject: Option<String>,

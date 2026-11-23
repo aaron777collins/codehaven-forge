@@ -67,6 +67,8 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
 .run-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4); border-top: 1px solid var(--border); flex-wrap: wrap; }
 .run-row:first-child { border-top: 0; }
 .run-title { font-weight: 600; color: var(--text); }
+.run-names { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.run-sub { font-size: 0.86rem; }
 .run-meta { color: var(--muted); font-size: 0.86rem; }
 .run-graph { display: flex; gap: var(--s6); overflow-x: auto; padding: var(--s4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .run-col { display: grid; gap: var(--s3); align-content: start; min-width: 180px; position: relative; }

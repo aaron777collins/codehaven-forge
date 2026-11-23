@@ -576,6 +576,16 @@ pub fn actor_accepted(actor: &Actor, kind: RouteKind) -> bool {
     }
 }
 
+/// The caller's API quota once this request is counted. The guard puts it on the request so
+/// `GET /rate_limit` reports the same numbers as the `X-RateLimit-*` headers (ch-iw8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApiQuota {
+    pub limit: u32,
+    pub remaining: u32,
+    /// Unix time the window ends.
+    pub reset: i64,
+}
+
 /// Extractor for the caller. The gate inserts the `Actor` it resolved; a handler that
 /// somehow runs without one sees `Anonymous`.
 #[derive(Debug, Clone)]

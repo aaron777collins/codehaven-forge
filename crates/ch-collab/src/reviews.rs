@@ -217,22 +217,47 @@ impl Core {
                 .into_iter()
                 .collect()
         };
-        let mut perms: HashMap<UserId, bool> = HashMap::new();
+        let mut perms: HashMap<UserId, (bool, String)> = HashMap::new();
         let mut out = Vec::new();
         for r in rows {
-            let counts_toward = match perms.get(&r.author_id) {
-                Some(c) => *c,
+            let (counts_toward, association) = match perms.get(&r.author_id) {
+                Some(c) => c.clone(),
                 None => {
                     let c = self.permission(&as_user(r.author_id), base_repo).await? >= Permission::Write;
-                    perms.insert(r.author_id, c);
-                    c
+                    let a = self.association(base_repo, r.author_id, c).await?;
+                    perms.insert(r.author_id, (c, a.clone()));
+                    (c, a)
                 }
             };
             let n = counts.get(&r.id.0).copied().unwrap_or(0) as u32;
             let author = refs.get(&r.author_id).cloned().unwrap_or_else(|| ghost(r.author_id));
-            out.push(ReviewView { review: r.into(), author, counts: counts_toward, comment_count: n });
+            out.push(ReviewView { review: r.into(), author, counts: counts_toward, comment_count: n, association });
         }
         Ok(out)
+    }
+
+    /// GitHub's `author_association` of `user` on `repo` (ch-yci): `OWNER` for the owner (or an
+    /// owner of the owning organization), `MEMBER` for a member of the owning organization,
+    /// `COLLABORATOR` for an explicit collaborator or anyone else who can write, else `NONE`.
+    pub async fn association(&self, repo: RepoId, user: UserId, can_write: bool) -> Result<String> {
+        let row: Option<(bool, Option<String>, bool)> = sqlx::query_as(
+            "SELECT r.owner_id = $2,
+                    (SELECT m.role FROM org_members m WHERE m.org_id = r.owner_id AND m.user_id = $2),
+                    EXISTS (SELECT 1 FROM repo_collaborators c WHERE c.repo_id = r.id AND c.user_id = $2)
+             FROM repositories r WHERE r.id = $1",
+        )
+        .bind(repo.0)
+        .bind(user.0)
+        .fetch_optional(self.db())
+        .await?;
+        let Some((owner, org_role, collaborator)) = row else { return Ok("NONE".into()) };
+        Ok(match (owner, org_role.as_deref()) {
+            (true, _) | (false, Some("owner")) => "OWNER",
+            (false, Some(_)) => "MEMBER",
+            _ if collaborator || can_write => "COLLABORATOR",
+            _ => "NONE",
+        }
+        .into())
     }
 
     pub async fn review_views(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Vec<ReviewView>> {

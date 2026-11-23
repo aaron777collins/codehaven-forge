@@ -319,6 +319,58 @@ async fn branches_tags_and_protection(pool: PgPool) {
     assert_eq!(h.delete("alice", "/repos/alice/demo/branches/main/protection").await.status, 204);
     assert_eq!(h.get("alice", "/repos/alice/demo/branches/main/protection").await.status, 404);
 
+    // GitHub's own body works as it is (ch-yci): nulls for what is not wanted, `checks` instead of
+    // `contexts`, the review block with only a count, and no Codehaven-only fields.
+    let gh = h
+        .put(
+            "alice",
+            "/repos/alice/demo/branches/main/protection",
+            json!({
+                "required_status_checks": {"strict": true, "checks": [{"context": "ci / test", "app_id": null}]},
+                "enforce_admins": null,
+                "required_pull_request_reviews": {"required_approving_review_count": 1},
+                "restrictions": null,
+                "required_linear_history": false,
+                "allow_force_pushes": null,
+                "allow_deletions": false,
+                "block_creations": false,
+                "required_conversation_resolution": true,
+                "lock_branch": false,
+                "allow_fork_syncing": false
+            }),
+        )
+        .await;
+    assert_eq!(gh.status, 200, "{}", gh.body);
+    assert_eq!(gh.body["required_status_checks"]["contexts"], json!(["ci / test"]));
+    assert_eq!(gh.body["required_pull_request_reviews"]["required_approving_review_count"], 1);
+    assert_eq!(gh.body["allow_force_pushes"], false);
+    assert_eq!(gh.body["allow_direct_push"], false, "requiring reviews means no direct push, as on GitHub");
+    assert_eq!(gh.body["required_conversation_resolution"], true);
+    // What Codehaven cannot enforce is refused, not silently dropped.
+    for (field, v) in [
+        ("restrictions", json!({"users": ["bob"], "teams": [], "apps": []})),
+        ("required_linear_history", json!(true)),
+        ("lock_branch", json!(true)),
+    ] {
+        let mut body =
+            json!({"required_status_checks": null, "enforce_admins": null, "required_pull_request_reviews": null, "restrictions": null});
+        body[field] = v;
+        let r = h.put("alice", "/repos/alice/demo/branches/main/protection", body).await;
+        assert_eq!(r.status, 422, "{field}: {}", r.body);
+        assert!(r.body.to_string().contains(field), "{field}: {}", r.body);
+    }
+    // The minimal GitHub body: no rules but the defaults.
+    let bare = h
+        .put(
+            "alice",
+            "/repos/alice/demo/branches/main/protection",
+            json!({"required_status_checks": null, "enforce_admins": null, "required_pull_request_reviews": null, "restrictions": null}),
+        )
+        .await;
+    assert_eq!(bare.status, 200, "{}", bare.body);
+    assert_eq!(bare.body["allow_direct_push"], true);
+    assert_eq!(h.delete("alice", "/repos/alice/demo/branches/main/protection").await.status, 204);
+
     let tags = h.get("alice", "/repos/alice/demo/tags").await;
     assert_eq!(tags.body[0]["name"], "v1");
     assert_eq!(tags.body[0]["commit"]["sha"], sha);

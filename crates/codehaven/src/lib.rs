@@ -4,6 +4,7 @@
 //! The foundation stream owns this crate and, after M0, the integration stream does.
 
 pub mod admin;
+pub mod api_errors;
 pub mod app;
 pub mod cli;
 pub mod doctor;

@@ -226,13 +226,30 @@ async fn review(ctx: &Ctx, a: PrReviewArgs) -> Result<i32> {
 }
 
 async fn merge(ctx: &Ctx, a: PrMergeArgs) -> Result<i32> {
+    let (owner, repo) = ctx.repo()?;
+    if a.disable_auto {
+        let _: PullRequest = ctx.api()?.delete_json(&format!("/repos/{owner}/{repo}/pulls/{}/auto-merge", a.number)).await?;
+        ctx.println(format!("Auto-merge is off for #{}", a.number));
+        return Ok(0);
+    }
     let method = match (a.squash, a.rebase, a.merge) {
         (true, false, false) => "squash",
         (false, true, false) => "rebase",
         (false, false, _) => "merge",
         _ => bail!("choose one of --squash, --rebase or --merge"),
     };
-    let (owner, repo) = ctx.repo()?;
+    if a.auto {
+        if a.subject.is_some() || a.body.is_some() {
+            bail!("--subject and --body apply to merging now, not to --auto");
+        }
+        let p: PullRequest = ctx
+            .api()?
+            .put(&format!("/repos/{owner}/{repo}/pulls/{}/auto-merge", a.number), &serde_json::json!({ "merge_method": method }))
+            .await?;
+        let applied = p.auto_merge.as_ref().map(|m| m.merge_method.as_str()).unwrap_or(method);
+        ctx.println(format!("Auto-merge is on for #{} ({applied}): it merges once the required checks and reviews pass.", a.number));
+        return Ok(0);
+    }
     let req =
         MergePull { merge_method: Some(method.to_string()), commit_title: a.subject.clone(), commit_message: a.body.clone(), sha: None };
     let r: MergeResult = ctx.api()?.put(&format!("/repos/{owner}/{repo}/pulls/{}/merge", a.number), &req).await?;

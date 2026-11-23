@@ -326,7 +326,7 @@ async fn archive(api: Api, owner: String, name: String, rev: Option<String>, for
     let safe: String = rev.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '-' }).collect();
     let mut r = Response::new(Body::from_stream(stream));
     r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(ct));
-    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{}-{safe}.{ext}\"", repo.name)) {
+    if let Ok(v) = HeaderValue::from_str(&ch_core::disposition::attachment(&format!("{}-{safe}.{ext}", repo.name))) {
         r.headers_mut().insert(header::CONTENT_DISPOSITION, v);
     }
     Ok(r)

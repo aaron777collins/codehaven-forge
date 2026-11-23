@@ -5,7 +5,7 @@ expression: json
 {
   "action": "added",
   "member": {
-    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "avatar_url": "https://code.example.com/avatar/alice.svg",
     "html_url": "https://code.example.com/alice",
     "id": 1,
     "login": "alice",
@@ -35,7 +35,7 @@ expression: json
     "name": "codehaven",
     "open_issues_count": 2,
     "owner": {
-      "avatar_url": "https://code.example.com/avatars/1.svg",
+      "avatar_url": "https://code.example.com/avatar/alice.svg",
       "html_url": "https://code.example.com/alice",
       "id": 1,
       "login": "alice",
@@ -64,7 +64,7 @@ expression: json
     "watchers_count": 1
   },
   "sender": {
-    "avatar_url": "https://code.example.com/avatars/1.svg",
+    "avatar_url": "https://code.example.com/avatar/alice.svg",
     "html_url": "https://code.example.com/alice",
     "id": 1,
     "login": "alice",

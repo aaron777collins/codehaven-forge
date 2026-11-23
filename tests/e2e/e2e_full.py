@@ -14,7 +14,7 @@ rate limit and lockout steps act as many client addresses.
   E2E_PROJECT=test-mine              the throwaway compose project the stack runs in (required)
   E2E_CLI="docker compose -p test-mine -f deploy/compose.e2e.yml exec -T server codehaven"   (required)
   E2E_HOST_IP=192.0.2.1              (optional) the host as the server sees it, for the webhook step
-  E2E_STEPS=0-19
+  E2E_STEPS=0-19      (or several ranges: 0-14,24)
 
 It refuses to run against a stack that already holds an account, and against any project whose
 name is not a throwaway one. There is no flag that turns that off.
@@ -1074,6 +1074,104 @@ def step23():
         check(p.returncode == 0, f"the terminal failed in {engine}:\n{problems}")
 
 
+C3_FILES = {
+    ".codehaven/workflows/c3.yml": """name: c3
+on: push
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ['1.21', '1.22']
+    steps:
+      - name: Install Go ${{ matrix.go }}
+        run: echo go ${{ matrix.go }}
+      - name: Rust is in the job image
+        run: rustup --version && cargo --version
+""",
+    ".codehaven/workflows/win.yml": """name: win
+on: push
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - run: echo hi
+""",
+    ".codehaven/workflows/broken.yml": """name: broken
+on: push
+jobs:
+  b:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine
+      volumes: [/:/host]
+    steps:
+      - run: echo
+""",
+}
+
+
+def step24():
+    """Batch C3 on a real runner: matrix cells named apart, step names filled in, Rust in the job
+    image, a job no runner can take says so, a broken file shows a failed run, the badge, the logs
+    zip, the run objects, re-runs as one row and the rate limit body."""
+    a, tok = Client("10.9.2.4"), S["alice_token"]
+    r = a.api("POST", "/user/repos", js={"name": "c3", "private": True}, auth=tok)
+    check(r.status == 201, f"create c3: {r.status} {r.text[:200]}")
+    wd = os.path.join(WORK, "c3")
+    os.makedirs(os.path.join(wd, ".codehaven/workflows"))
+    for path, text in C3_FILES.items():
+        open(os.path.join(wd, path), "w").write(text)
+    git(["init", "-q", "-b", "main"], wd)
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "C3 checks"], wd)
+    git(["push", http_url("alice", tok, "alice/c3"), "main"], wd, env=gitenv("10.9.2.4"))
+    sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    runs, deadline = {}, time.time() + 400
+    while time.time() < deadline:
+        r = a.api("GET", "/repos/alice/c3/actions/runs", auth=tok)
+        if r.status == 200:
+            runs = {x["name"]: x for x in r.json().get("workflow_runs", []) if x.get("head_sha") == sha}
+            if {"c3", "broken", "win"} <= set(runs) and runs["c3"]["status"] == "completed":
+                break
+        time.sleep(3)
+    check({"c3", "broken", "win"} <= set(runs), f"runs for the push: {sorted(runs)}")
+    c3, broken, win = runs["c3"], runs["broken"], runs["win"]
+    check(c3["status"] == "completed" and c3["conclusion"] == "success", f"c3 run: {c3['status']} {c3.get('conclusion')}")
+    check(c3["head_commit"]["id"] == sha and c3["pull_requests"] == [], f"run object: {c3.get('head_commit')} {c3.get('pull_requests')}")
+    jobs = a.api("GET", f"/repos/alice/c3/actions/runs/{c3['id']}/jobs", auth=tok).json()["jobs"]
+    check(sorted(j["name"] for j in jobs) == ["Tests (1.21)", "Tests (1.22)"], f"matrix names: {[j['name'] for j in jobs]}")
+    steps = [s["name"] for j in jobs for s in j["steps"]]
+    check("Install Go 1.21" in steps and "Install Go 1.22" in steps, f"step names: {steps}")
+    # ch-xy5: the broken file is a failed run that says why.
+    check(broken["status"] == "completed" and broken["conclusion"] == "failure", f"broken run: {broken['status']} {broken.get('conclusion')}")
+    page = S["alice"].get(f"/alice/c3/actions/runs/{broken['id']}")
+    check(page.status == 200 and "could not run" in page.text and "volumes" in page.text, "the broken run's page does not say why")
+    # ch-7rq and ch-dvg: the Windows job says no runner has its label, and lists what the runner offers.
+    wj = a.api("GET", f"/repos/alice/c3/actions/runs/{win['id']}/jobs", auth=tok).json()["jobs"][0]
+    jp = S["alice"].get(f"/alice/c3/actions/runs/{win['id']}/jobs/{wj['id']}")
+    check("No runner has the labels this job asks for: windows-latest" in jp.text, "no queue note on the Windows job")
+    check("ubuntu-24.04" in jp.text and "ubuntu-latest" in jp.text, "the note does not list the runner's labels")
+    check(a.api("POST", f"/repos/alice/c3/actions/runs/{win['id']}/cancel", auth=tok).status in (202, 204), "cancel the Windows run")
+    # ch-c1d: the badge for a signed-in viewer, nothing for a stranger.
+    b = S["alice"].get("/alice/c3/actions/workflows/c3.yml/badge.svg")
+    check(b.status == 200 and b.h("content-type").startswith("image/svg+xml") and "passing" in b.text, f"badge: {b.status}")
+    anon = Client("10.9.9.3").get("/alice/c3/actions/workflows/c3.yml/badge.svg", cookies=False)
+    check(anon.status == 303 and "svg" not in anon.text, f"a stranger got the badge: {anon.status}")
+    # ch-1bp: the logs are a zip.
+    z = a.req("GET", f"/api/v3/repos/alice/c3/actions/runs/{c3['id']}/logs", auth=tok)
+    check(z.status == 200 and z.body[:2] == b"PK", f"logs zip: {z.status}")
+    # ch-zwo: a re-run replaces its row in the list, which names the workflow and the commit.
+    check(a.api("POST", f"/repos/alice/c3/actions/runs/{c3['id']}/rerun", auth=tok).status == 201, "re-run")
+    lp = S["alice"].get("/alice/c3/actions")
+    check("C3 checks" in lp.text and "attempt 2" in lp.text, "the runs list lacks the title or the attempt")
+    # ch-iw8: the rate limit body agrees with the headers of the same answer.
+    rl = a.api("GET", "/rate_limit", auth=tok)
+    body = rl.json()["rate"]
+    check(str(body["remaining"]) == rl.h("x-ratelimit-remaining") and str(body["limit"]) == rl.h("x-ratelimit-limit"), f"rate limit: {body}")
+
+
 ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1), (2, "first admin and two-factor", step2),
        (3, "invites", step3), (4, "token and ssh key", step4), (5, "rate limit and lockout", step5), (6, "create repo", step6),
        (7, "push over HTTP", step7), (8, "push over SSH", step8), (9, "collaborator and clone", step9),
@@ -1081,7 +1179,8 @@ ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1)
        (13, "open a pull request", step13), (14, "workflow run on the runner", step14), (15, "merge is blocked", step15),
        (16, "review", step16), (17, "squash merge", step17), (18, "push to main runs again, green; release file; org repository runs; job isolation", step18), (19, "audit log", step19),
        (20, "leave data for the screenshots", step20), (21, "live job log in a browser", step21),
-       (22, "workspace in a browser", step22), (23, "terminal in a browser", step23)]
+       (22, "workspace in a browser", step22), (23, "terminal in a browser", step23),
+       (24, "batch C3 on a real runner", step24)]
 
 
 THROWAWAY_PROJECT = re.compile(r"^(test|e2e|shots|tmp)-[a-z0-9][a-z0-9-]*$")
@@ -1129,11 +1228,14 @@ def refuse_unless_throwaway():
 
 def main():
     refuse_unless_throwaway()
-    a, _, b = STEPS.partition("-")
-    lo, hi = int(a), int(b or a)
+    # `0-19`, `14`, or several joined by commas: `0-14,24`.
+    wanted = set()
+    for part in STEPS.split(","):
+        a, _, b = part.strip().partition("-")
+        wanted.update(range(int(a), int(b or a) + 1))
     failed = 0
     for n, name, fn in ALL:
-        if n < lo or n > hi:
+        if n not in wanted:
             continue
         t = time.time()
         try:

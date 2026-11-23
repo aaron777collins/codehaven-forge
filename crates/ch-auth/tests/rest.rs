@@ -65,7 +65,8 @@ async fn profile_and_users(pool: PgPool) {
     let (st, bob) = call(&app, Method::GET, "/users/BOB", None).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(bob["login"], "bob");
-    assert!(bob.get("email").is_none() && bob.get("two_factor_authentication").is_none());
+    // GitHub sends `email: null` for someone else (ch-yci); the value is never there.
+    assert!(bob["email"].is_null() && bob.get("two_factor_authentication").is_none());
     let (st, err) = call(&app, Method::GET, "/users/nobody", None).await;
     assert_eq!((st, err["message"].as_str()), (StatusCode::NOT_FOUND, Some("Not Found")));
 }

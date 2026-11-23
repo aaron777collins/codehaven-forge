@@ -30,11 +30,26 @@
   <fieldset>
     <legend>Inputs</legend>
     {% for i in inputs %}
+    {% if i.control == "checkbox" %}
+    <div class="field">
+      <label class="check"><input id="wf-input-{{ loop.index }}" name="input_{{ i.label }}" type="checkbox" value="true"{% if i.checked %} checked{% endif %}> {{ i.label }}</label>
+      {% if !i.description.is_empty() %}<p class="hint">{{ i.description }}</p>{% endif %}
+    </div>
+    {% else if i.control == "select" %}
+    <div class="field">
+      <label for="wf-input-{{ loop.index }}">{{ i.label }}{% if i.required %} (required){% endif %}</label>
+      <select id="wf-input-{{ loop.index }}" name="input_{{ i.label }}"{% if i.required %} required{% endif %}>
+        {% for (o, sel) in i.choices %}<option value="{{ o }}"{% if *sel %} selected{% endif %}>{{ o }}</option>{% endfor %}
+      </select>
+      {% if !i.description.is_empty() %}<p class="hint">{{ i.description }}</p>{% endif %}
+    </div>
+    {% else %}
     <div class="field">
       <label for="wf-input-{{ loop.index }}">{{ i.label }}{% if i.required %} (required){% endif %}</label>
       <input id="wf-input-{{ loop.index }}" name="input_{{ i.label }}" type="text" value="{{ i.default }}"{% if i.required %} required{% endif %}>
       {% if !i.description.is_empty() %}<p class="hint">{{ i.description }}</p>{% endif %}
     </div>
+    {% endif %}
     {% endfor %}
   </fieldset>
   {% endif %}

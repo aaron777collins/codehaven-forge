@@ -17,15 +17,15 @@ pub struct User {
     #[serde(rename = "type")]
     pub kind: String,
     pub site_admin: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub email: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub bio: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub company: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub location: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -188,6 +188,18 @@ pub struct CreateTeam {
     pub permission: Option<String>,
 }
 
+/// `PATCH /orgs/{org}/teams/{slug}`. Only `permission` can change. A `name` or `description`
+/// that differs from the team's is refused rather than ignored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateTeam {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,7 +210,7 @@ mod tests {
             id: 20,
             url: "https://code.example.com/api/v3/orgs/haven".into(),
             html_url: "https://code.example.com/orgs/haven".into(),
-            avatar_url: "https://code.example.com/avatars/20.svg".into(),
+            avatar_url: "https://code.example.com/avatar/haven.svg".into(),
             description: Some("the forge collective".into()),
             name: Some("Haven".into()),
             created_at: crate::t0(),
@@ -210,7 +222,7 @@ mod tests {
         let value = User {
             login: "alice".into(),
             id: 1,
-            avatar_url: "https://code.example.com/avatars/1.svg".into(),
+            avatar_url: "https://code.example.com/avatar/alice.svg".into(),
             url: "https://code.example.com/api/v3/users/alice".into(),
             html_url: "https://code.example.com/alice".into(),
             kind: "User".into(),
@@ -346,7 +358,7 @@ mod tests {
             "login": "alice",
             "id": 1,
             "node_id": "MDQ6VXNlcjE=",
-            "avatar_url": "https://code.example.com/avatars/1.svg",
+            "avatar_url": "https://code.example.com/avatar/alice.svg",
             "gravatar_id": "",
             "url": "https://code.example.com/api/v3/users/alice",
             "html_url": "https://code.example.com/alice",

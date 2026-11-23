@@ -199,14 +199,13 @@ pub async fn show(ctx: Ctx, Path((owner, name, tag)): Path<(String, String, Stri
 pub async fn download(ctx: Ctx, Path((owner, name, tag, file)): Path<(String, String, String, String)>) -> WebResult<Response> {
     let rc = RepoCtx::load(&ctx, &owner, &name).await?;
     let (info, stream) = ctx.state.releases.open_asset(&ctx.actor, rc.id(), &tag, &file).await?;
-    let safe: String = info.name.chars().filter(|c| !c.is_control() && *c != '"' && *c != '\\').collect();
     let mut r = Response::new(Body::from_stream(stream));
     let h = r.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
     if let Ok(v) = HeaderValue::from_str(&info.size.to_string()) {
         h.insert(header::CONTENT_LENGTH, v);
     }
-    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{safe}\"")) {
+    if let Ok(v) = HeaderValue::from_str(&ch_core::disposition::attachment(&info.name)) {
         h.insert(header::CONTENT_DISPOSITION, v);
     }
     h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));

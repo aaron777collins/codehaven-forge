@@ -62,8 +62,26 @@ pub async fn fire(ctx: &Ctx, t: &Trigger, only: Option<&str>) -> Result<Vec<RunI
         if only.is_some_and(|p| p != d.path) {
             continue;
         }
-        let Ok(wf) = &d.workflow else { continue };
         let Some(row) = rows.get(&d.path) else { continue };
+        let wf = match &d.workflow {
+            Ok(wf) => wf,
+            // A broken file cannot say which events it wants. A push that changed it (or one
+            // whose changes are unknown) gets a failed run saying why, so the mistake is seen.
+            // Only a branch push counts. The server writes refs/pull/N/head for a fork's pull
+            // request and fires a push for it, and nothing may exist for a fork commit until
+            // someone approves it (ch-x12). A tag push would only repeat the branch's report.
+            Err(diags) => {
+                let touched = t.info.changed_paths.as_ref().is_none_or(|c| c.contains(&d.path));
+                let branch_push = t.info.name == "push" && t.git_ref.starts_with("refs/heads/") && !t.fork && !t.needs_approval;
+                if only.is_none() && branch_push && row.state == "active" && touched {
+                    let text = diags.iter().map(ToString::to_string).collect::<Vec<_>>().join(" ");
+                    if let Some(id) = record_problem(ctx, t, &info, d, row, &text).await? {
+                        made.push(id);
+                    }
+                }
+                continue;
+            }
+        };
         if row.state != "active" || !wf.matches(&t.info) {
             continue;
         }
@@ -95,14 +113,90 @@ pub async fn fire(ctx: &Ctx, t: &Trigger, only: Option<&str>) -> Result<Vec<RunI
                     made.push(c.run_id);
                 }
             }
-            // One bad workflow (a matrix that expands wrongly) must not stop the others.
+            // A manual run reports the problem to the person who asked for it.
+            Err(e @ Error::Validation(_)) if only.is_some() && t.info.name == "workflow_dispatch" => return Err(e),
+            // One bad workflow (a matrix that expands wrongly, container options refused once
+            // expressions are filled in) must not stop the others. It shows as a failed run.
             Err(Error::Validation(v)) => {
-                tracing::warn!(repo = t.repo.0, workflow = %d.path, problems = ?v, "workflow could not be planned")
+                tracing::info!(repo = t.repo.0, workflow = %d.path, problems = ?v, "workflow could not be planned");
+                let text = v.iter().filter_map(|f| f.message.clone()).collect::<Vec<_>>().join(" ");
+                if let Some(id) = record_problem(ctx, t, &info, d, row, &text).await? {
+                    made.push(id);
+                }
             }
             Err(e) => return Err(e),
         }
     }
     Ok(made)
+}
+
+/// Records a run that failed before any job: the workflow file is broken, or planning refused
+/// it. No job, no check run, nothing runs. The same event never records it twice. Returns the new
+/// run, or `None` when the event already recorded it.
+async fn record_problem(ctx: &Ctx, t: &Trigger, info: &RepoCi, d: &Discovered, row: &WorkflowRow, problem: &str) -> Result<Option<RunId>> {
+    let mut tx = ctx.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(0x0c1_0000_0000_0000_i64 | t.repo.0).execute(&mut *tx).await?;
+    let seen: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM workflow_runs WHERE repo_id = $1 AND workflow_id = $2
+           AND event_payload->'meta'->>'trigger_id' = $3 AND event_payload->'meta'->>'workflow_path' = $4 LIMIT 1",
+    )
+    .bind(t.repo.0)
+    .bind(row.id.0)
+    .bind(&t.trigger_id)
+    .bind(&d.path)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if seen.is_some() {
+        return Ok(None);
+    }
+    let problem: String = problem.chars().take(2000).collect();
+    let meta = crate::spec::RunMeta {
+        workflow_path: d.path.clone(),
+        workflow_name: d.name.clone(),
+        fork: t.fork,
+        trigger_id: Some(t.trigger_id.clone()),
+        base_ref: t.base_ref.clone(),
+        head_ref: t.head_ref.clone(),
+        actor_login: t.actor.as_ref().map(|a| a.1.clone()).unwrap_or_default(),
+        repository: info.full_name(),
+        problem: Some(if problem.trim().is_empty() { "The workflow file is not valid.".into() } else { problem }),
+        ..Default::default()
+    };
+    let (run_number,): (i64,) = sqlx::query_as("SELECT COALESCE(MAX(run_number), 0) + 1 FROM workflow_runs WHERE repo_id = $1")
+        .bind(t.repo.0)
+        .fetch_one(&mut *tx)
+        .await?;
+    let title = if t.title.is_empty() { d.name.clone() } else { t.title.clone() };
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO workflow_runs (repo_id, workflow_id, run_number, attempt, event, head_sha, head_branch, git_ref, title, actor_id,
+                                    status, conclusion, event_payload, started_at, completed_at)
+         VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8, $9, 'completed', 'failure', $10, now(), now()) RETURNING id",
+    )
+    .bind(t.repo.0)
+    .bind(row.id.0)
+    .bind(run_number)
+    .bind(&t.info.name)
+    .bind(&t.sha)
+    .bind(&t.head_branch)
+    .bind(&t.git_ref)
+    .bind(title.chars().take(300).collect::<String>())
+    .bind(t.actor.as_ref().map(|a| a.0.0))
+    .bind(crate::spec::join_payload(&t.payload, &meta))
+    .fetch_one(&mut *tx)
+    .await?;
+    ctx.events
+        .emit(
+            &mut tx,
+            DomainEvent::WorkflowRunUpdated {
+                repo_id: t.repo,
+                run_id: RunId(id),
+                status: "completed".into(),
+                conclusion: Some("failure".into()),
+            },
+        )
+        .await?;
+    tx.commit().await?;
+    Ok(Some(RunId(id)))
 }
 
 fn repo_json(info: &RepoCi) -> Json {
@@ -113,7 +207,7 @@ fn repo_json(info: &RepoCi) -> Json {
 pub async fn handle_event(ctx: &Ctx, ev: &StoredEvent) -> Result<Vec<RunId>> {
     let trigger_id = format!("evt:{}", ev.id);
     match &ev.event {
-        DomainEvent::Push { repo_id, git_ref, before, after, pusher, forced, app, .. } => {
+        DomainEvent::Push { repo_id, git_ref, before, after, pusher, forced, app, server_built } => {
             if zero_sha(after) {
                 return Ok(Vec::new());
             }
@@ -137,6 +231,12 @@ pub async fn handle_event(ctx: &Ctx, ev: &StoredEvent) -> Result<Vec<RunId>> {
                 "head_commit": head.as_ref().map(|c| json!({ "id": c.id, "message": c.message, "author": { "name": c.author_name, "email": c.author_email } })),
             });
             let title = head.as_ref().and_then(|c| c.message.lines().next()).unwrap_or("").to_string();
+            // A push made by a connected app without the workflows permission starts a run that
+            // waits for a person, because the code it would run was written by the app. A commit
+            // the server wrote for a person on top of such a push (a web edit) holds the app's
+            // code too, so its run waits as well until that push's run is approved (ch-3xn).
+            let app_held = app.is_some_and(|a| !a.ci_allowed);
+            let built_on_held = *server_built && !app_held && push_held(ctx, *repo_id, before).await?;
             let t = Trigger {
                 repo: *repo_id,
                 sha: after.clone(),
@@ -147,10 +247,14 @@ pub async fn handle_event(ctx: &Ctx, ev: &StoredEvent) -> Result<Vec<RunId>> {
                 payload,
                 inputs: Json::Null,
                 fork: false,
-                // A push made by a connected app without the workflows permission starts a run
-                // that waits for a person, because the code it would run was written by the app.
-                needs_approval: app.is_some_and(|a| !a.ci_allowed),
-                hold_reason: app.filter(|a| !a.ci_allowed).map(|_| "Started by a connected app".to_string()),
+                needs_approval: app_held || built_on_held,
+                hold_reason: if app_held {
+                    Some("Started by a connected app".to_string())
+                } else if built_on_held {
+                    Some(BUILT_ON_HELD.to_string())
+                } else {
+                    None
+                },
                 approved_by: None,
                 base_ref: String::new(),
                 head_ref: String::new(),
@@ -254,6 +358,18 @@ const UNKNOWN_PUSHER: &str = "It is not known who pushed this commit";
 /// The reason it waits when the server built it on a commit nobody let run.
 const BUILT_ON_HELD: &str = "It builds on a commit that waits for approval";
 
+/// Whether a push run of `sha` waits, or waited, for approval that nobody gave.
+async fn push_held(ctx: &Ctx, repo: RepoId, sha: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM workflow_runs WHERE repo_id = $1 AND head_sha = $2 AND event = 'push'
+           AND event_payload->'meta'->>'hold_reason' IS NOT NULL AND event_payload->'meta'->>'approved_by' IS NULL)",
+    )
+    .bind(repo.0)
+    .bind(sha)
+    .fetch_one(&ctx.db)
+    .await?)
+}
+
 /// Whether CI let this commit of the pull request run: at once, because its author and pusher
 /// could write, or after someone with write access approved it.
 async fn cleared(ctx: &Ctx, pull_id: i64, sha: &str) -> Result<bool> {
@@ -302,6 +418,7 @@ async fn pull_request(
         // event's pusher for a commit someone else may have pushed (ch-x12).
         return Ok(Vec::new());
     }
+    let reopened_unnamed = origin.sha.is_none() && origin.pusher.is_none() && origin.app.is_none();
     let HeadOrigin { known, pusher, app, built_on, .. } = origin;
     // A commit the server built for the pusher holds the commit under it too. Unless that one
     // was let run or approved, nobody can be named for all of this code, so CI waits (ch-x12).
@@ -309,7 +426,11 @@ async fn pull_request(
         Some(under) => !cleared(ctx, pull_id, under).await?,
         None => false,
     };
-    let known = known && !built_on_held;
+    // A reopen (and an event stored before the head was named) pushes nothing, so it names
+    // nobody for the head. Unless CI already let that commit run, it waits for a person: an app
+    // may have pushed it before the pull request was closed (ch-3xn).
+    let named = !reopened_unnamed || cleared(ctx, pull_id, &head_sha).await?;
+    let known = known && !built_on_held && named;
     // A branch of this repository is stored with no head repository (NULL), as ch-collab does;
     // that is not a fork. `from_fork` stays set after a fork is deleted and its head_repo_id
     // goes to NULL, so such a pull request still runs as a fork (migration 0122).
@@ -416,9 +537,11 @@ async fn pull_request(
         hold_reason,
         approved_by,
         base_ref: base_branch,
+        // GitHub names the pull request's head branch here (ch-fm9). For a fork it is the
+        // fork's branch, which may share a name with one of this repository's.
+        head_branch: Some(head_branch.clone()),
         head_ref: head_branch,
         trigger_id,
-        head_branch: None,
         sync_schedules: false,
     };
     fire(ctx, &t, None).await

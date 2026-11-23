@@ -6,8 +6,9 @@ use axum::Router;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{Json, extract::State};
+use axum::{Extension, Json, extract::State};
 use ch_api_types::common::{RateLimit, RateLimitResource, RateLimitResources, VersionInfo};
+use ch_core::access::ApiQuota;
 use ch_core::state::AppState;
 use serde_json::json;
 
@@ -55,10 +56,13 @@ async fn meta(State(s): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
-/// The real numbers arrive with the rate limiter (identity stream). Until then it reports
-/// the documented ceiling.
-async fn rate_limit() -> Json<RateLimit> {
-    let core = RateLimitResource { limit: 5000, remaining: 5000, reset: 0, used: 0 };
+/// The caller's API quota, the same numbers the guard sends in the `X-RateLimit-*` headers of
+/// this response. Search has no separate budget here, so it reports its own fixed ceiling.
+async fn rate_limit(quota: Option<Extension<ApiQuota>>) -> Json<RateLimit> {
+    let core = match quota {
+        Some(Extension(q)) => RateLimitResource { limit: q.limit, remaining: q.remaining, reset: q.reset, used: q.limit - q.remaining },
+        None => RateLimitResource { limit: 5000, remaining: 5000, reset: 0, used: 0 },
+    };
     Json(RateLimit {
         resources: RateLimitResources { core: core.clone(), search: RateLimitResource { limit: 30, remaining: 30, reset: 0, used: 0 } },
         rate: core,

@@ -430,3 +430,35 @@ async fn the_trait_objects_agree_with_the_engine(pool: PgPool) {
     assert_eq!(r.requested(&w.carol_a(), w.repo, n).await.unwrap().users.len(), 1);
     assert_eq!(r.views(&w.carol_a(), w.repo, n).await.unwrap()[0].comment_count, 1);
 }
+
+/// ch-yci: `author_association` says how the author relates to the repository, as GitHub does. A
+/// member of the owning organization with read access is `MEMBER`, not `NONE`.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn author_association_follows_github(pool: PgPool) {
+    let w = World::new(pool).await;
+    assert_eq!(w.core.association(w.repo, w.alice, true).await.unwrap(), "OWNER");
+    assert_eq!(w.core.association(w.repo, w.bob, true).await.unwrap(), "COLLABORATOR");
+    assert_eq!(w.core.association(w.repo, w.carol, false).await.unwrap(), "COLLABORATOR", "an explicit collaborator, even read");
+    assert_eq!(w.core.association(w.repo, w.eve, false).await.unwrap(), "NONE");
+
+    let org = w.env.org("acme").await;
+    let repo = w.env.repo(org, "tools").await;
+    for (u, role) in [(w.carol, "member"), (w.dave, "owner")] {
+        sqlx::query("INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, $3)")
+            .bind(org.0)
+            .bind(u.0)
+            .bind(role)
+            .execute(&w.pool)
+            .await
+            .unwrap();
+    }
+    assert_eq!(w.core.association(repo, w.carol, false).await.unwrap(), "MEMBER");
+    assert_eq!(w.core.association(repo, w.dave, true).await.unwrap(), "OWNER");
+    assert_eq!(w.core.association(repo, w.eve, false).await.unwrap(), "NONE");
+
+    // The review object carries it.
+    let n = open(&w).await;
+    w.core.review_submit(&w.bob_a(), w.repo, n, ReviewState::Approved, "", vec![], &w.c()).await.unwrap();
+    let views = w.core.review_views(&w.alice_a(), w.repo, n).await.unwrap();
+    assert_eq!(views[0].association, "COLLABORATOR");
+}

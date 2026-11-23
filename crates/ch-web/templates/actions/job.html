@@ -27,6 +27,7 @@
       <span class="spacer"></span>
       <a class="btn small" href="{{ log_txt_href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download raw log</a>
     </div>
+    {% if let Some(n) = queue_note %}<p class="notice notice-warn" role="status">{{ n }}</p>{% endif %}
     {% if active %}<p class="hint log-status" data-live-status></p>{% endif %}
     {% if steps.is_empty() %}
     {% call ui::empty("No steps yet", "The steps of this job appear as the runner reports them.") %}
