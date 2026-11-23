@@ -215,3 +215,23 @@ async fn the_trait_objects_agree_with_the_engine(pool: PgPool) {
     assert!(p.merge_gate(&w.carol_a(), w.repo, 1).await.unwrap().mergeable);
     assert!(!p.close(&w.bob_a(), w.repo, 1, &w.c()).await.unwrap().issue.open);
 }
+
+/// ch-x12: opening a pull request names the opener as the pusher of the head it was opened at.
+/// Reopening names nobody, because whoever reopens did not push the head.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn reopening_names_nobody_as_the_pusher(pool: PgPool) {
+    let w = World::new(pool).await;
+    let v = w.pull(w.carol, "x", "").await;
+    let n = v.pull.issue.number;
+    let opened: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT payload FROM outbox_events WHERE kind = 'pr_opened' ORDER BY id").fetch_all(&w.pool).await.unwrap();
+    assert_eq!(opened[0]["pusher"].as_i64(), Some(w.carol.0));
+    assert_eq!(opened[0]["head_sha"].as_str(), Some(&*v.pull.head_sha));
+    w.core.pull_close(&w.carol_a(), w.repo, n, &w.c()).await.unwrap();
+    w.core.pull_set_open(&w.bob_a(), w.repo, n, true, &w.c()).await.unwrap();
+    let opened: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT payload FROM outbox_events WHERE kind = 'pr_opened' ORDER BY id").fetch_all(&w.pool).await.unwrap();
+    assert_eq!(opened.len(), 2);
+    assert!(opened[1]["pusher"].is_null(), "reopening is not pushing: {}", opened[1]);
+    assert_eq!(opened[1]["actor"].as_i64(), Some(w.bob.0));
+}

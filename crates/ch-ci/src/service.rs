@@ -203,6 +203,7 @@ impl Ci for CiImpl {
             fork: false,
             needs_approval: false,
             hold_reason: None,
+            approved_by: None,
             base_ref: String::new(),
             head_ref: String::new(),
             // A manual run is always new: there is no event to deduplicate against.
@@ -373,6 +374,26 @@ impl Ci for CiImpl {
             tracing::error!(error = %e, "could not record a run approval");
         }
         Ok(())
+    }
+
+    async fn pending_fork_approval(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Option<String>> {
+        self.ctx.authz.require(actor, repo, Permission::Read).await?;
+        triggers::pending_fork_approval(&self.ctx, repo, number).await
+    }
+
+    async fn approve_fork_commit(&self, actor: &Actor, repo: RepoId, number: i64, sha: &str, client: &ClientInfo) -> Result<Vec<RunId>> {
+        // Approval is a person's decision. A connected app never makes it, whatever it was given.
+        actor.deny_app("approve a workflow run")?;
+        self.ctx.authz.require(actor, repo, Permission::Write).await?;
+        let who = actor.user_id().ok_or_else(|| Error::forbidden("Only a person can approve a run."))?;
+        let runs = triggers::approve_fork_commit(&self.ctx, repo, number, sha, who).await?;
+        let ev = AuditEvent::new(actor, client, action::RUN_APPROVED, Outcome::Success)
+            .target("pull_request", number)
+            .details(json!({"repo_id": repo.0, "head_sha": sha, "runs": runs.iter().map(|r| r.0).collect::<Vec<_>>()}));
+        if let Err(e) = self.ctx.audit.record_standalone(ev).await {
+            tracing::error!(error = %e, "could not record a fork commit approval");
+        }
+        Ok(runs)
     }
 
     async fn runners(&self, actor: &Actor) -> Result<Vec<RunnerSummary>> {

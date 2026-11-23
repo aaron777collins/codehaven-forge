@@ -1006,8 +1006,25 @@ pub trait Ci: Send + Sync {
     async fn artifacts(&self, _actor: &Actor, _repo: RepoId, _run: RunId) -> Result<Vec<ArtifactInfo>> {
         Err(Error::unavailable("CI is not available"))
     }
-    /// A maintainer lets a pull request from a fork run. Needs write access.
+    /// A person with write access lets a held run go ahead (one a connected app started).
     async fn approve_run(&self, _actor: &Actor, _repo: RepoId, _run: RunId, _client: &ClientInfo) -> Result<()> {
+        Err(Error::unavailable("CI is not available"))
+    }
+    /// The latest commit of pull request `number` when it comes from a fork and waits for
+    /// someone with write access to approve it. No run exists for it until then.
+    async fn pending_fork_approval(&self, _actor: &Actor, _repo: RepoId, _number: i64) -> Result<Option<String>> {
+        Ok(None)
+    }
+    /// Approves commit `sha` of pull request `number` from a fork and starts its runs. Needs a
+    /// person with write access; `sha` must be the pull request's latest commit.
+    async fn approve_fork_commit(
+        &self,
+        _actor: &Actor,
+        _repo: RepoId,
+        _number: i64,
+        _sha: &str,
+        _client: &ClientInfo,
+    ) -> Result<Vec<RunId>> {
         Err(Error::unavailable("CI is not available"))
     }
     /// Site admins only.

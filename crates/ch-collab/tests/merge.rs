@@ -366,6 +366,13 @@ async fn strict_branches_must_be_current_and_can_be_updated(pool: PgPool) {
     );
     assert_eq!(req.expected_base_sha, sha_of(2));
     assert!(w.events().await.contains(&"pr_synchronized".to_string()));
+    // ch-x12: the merge commit holds the old head's code, so CI is told what it was built on.
+    let p: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM outbox_events WHERE kind = 'pr_synchronized' ORDER BY id DESC LIMIT 1")
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!((p["pusher"].as_i64(), p["built_on"].as_str()), (Some(w.bob.0), Some(&*sha_of(2))), "{p}");
     assert!(gate(&w, n).await.mergeable);
 }
 

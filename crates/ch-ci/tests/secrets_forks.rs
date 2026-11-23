@@ -166,7 +166,16 @@ async fn open_pull(w: &World, repo: ch_core::RepoId, head_repo: Option<ch_core::
         .execute(w.pool())
         .await
         .unwrap();
-    w.emit_and_process(DomainEvent::PrOpened { repo_id: repo, pull_id: ch_core::PullId(issue), number: 1, actor: author, app: None }).await;
+    w.emit_and_process(DomainEvent::PrOpened {
+        repo_id: repo,
+        pull_id: ch_core::PullId(issue),
+        number: 1,
+        actor: author,
+        app: None,
+        head_sha: None,
+        pusher: Some(author),
+    })
+    .await;
     issue
 }
 
@@ -178,20 +187,39 @@ async fn a_pull_request_from_a_fork_waits_for_approval_and_gets_no_secrets(pool:
     w.dirs_alias(fork, repo);
     let alice = Who::User(w.alice);
     put_secret(&w, "/api/v3/repos/alice/demo/actions/secrets/DEPLOY_KEY", &alice, "hunter2").await;
+    let (s, _) = w.post("/api/v3/repos/alice/demo/actions/variables", &alice, json!({"name": "GREETING", "value": "hello"})).await;
+    assert_eq!(s, StatusCode::CREATED);
     open_pull(&w, repo, Some(fork), w.bob, &git.head()).await;
-    let run = w.run_ids().await[0];
-    // Held: the run is waiting and no job is offered.
-    assert_eq!(w.run_status(run).await.0, "waiting");
+    // Held: nothing exists until the commit is approved, and no job is offered.
+    assert!(w.run_ids().await.is_empty(), "no run before approval");
     let r = w.runner("r", &["x"]).await;
     assert!(r.request(&w, 0).await.is_none());
-    assert_eq!(w.jobs(run).await[0].1, "waiting");
-    // Bob cannot approve his own run. Alice can.
-    let uri = format!("/api/v3/repos/alice/demo/actions/runs/{run}/approve");
-    assert_eq!(w.post(&uri, &Who::User(w.bob), json!({})).await.0, StatusCode::NOT_FOUND);
-    assert_eq!(w.post(&uri, &alice, json!({})).await.0, StatusCode::CREATED);
-    assert_eq!(w.post(&uri, &alice, json!({})).await.0, StatusCode::CONFLICT, "approving twice is refused");
+    let uri = "/api/v3/repos/alice/demo/actions/pulls/1/approval";
+    let (s, pending) = w.get(uri, &alice).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(pending["pending"], true);
+    assert_eq!(pending["head_sha"], git.head());
+    // Bob cannot approve his own pull request. Alice can, once.
+    let body = json!({"head_sha": git.head()});
+    assert_eq!(w.post(uri, &Who::User(w.bob), body.clone()).await.0, StatusCode::NOT_FOUND);
+    assert!(w.run_ids().await.is_empty());
+    let (s, made) = w.post(uri, &alice, body.clone()).await;
+    assert_eq!(s, StatusCode::CREATED, "{made}");
+    assert_eq!(made["run_ids"].as_array().unwrap().len(), 1);
+    assert_eq!(w.post(uri, &alice, body).await.0, StatusCode::CONFLICT, "approving twice is refused");
+    let run = w.run_ids().await[0];
+    assert_eq!(w.run_status(run).await.0, "queued");
+    let approved: Option<i64> =
+        sqlx::query_scalar("SELECT (event_payload->'meta'->>'approved_by')::bigint FROM workflow_runs WHERE id = $1")
+            .bind(run)
+            .fetch_one(w.pool())
+            .await
+            .unwrap();
+    assert_eq!(approved, Some(w.alice.0), "the run records who approved it");
+    assert_eq!(w.get(uri, &alice).await.1["pending"], false);
     let job = r.request(&w, 0).await.expect("approved");
     assert!(job.secrets.is_empty(), "a fork's code never sees secrets: {:?}", job.secrets);
+    assert!(job.vars.is_empty(), "nor the repository's or owner's variables: {:?}", job.vars);
     assert_eq!(job.context.event_name, "pull_request");
     assert_eq!(job.context.git_ref, "refs/pull/1/merge");
     assert_eq!(job.context.event["pull_request"]["head"]["repo"]["full_name"], "bob/demo");
@@ -300,15 +328,16 @@ async fn a_pull_request_whose_fork_was_deleted_stays_a_fork(pool: PgPool) {
         number: 1,
         head_sha: git.head(),
         app: None,
+        pusher: Some(w.bob),
+        origin_known: true,
+        built_on: None,
     })
     .await;
-    let runs = w.run_ids().await;
-    assert_eq!(runs.len(), 2);
-    let run = runs[1];
+    assert!(w.run_ids().await.is_empty(), "still held after the fork was deleted");
+    let uri = "/api/v3/repos/alice/demo/actions/pulls/1/approval";
+    assert_eq!(w.post(uri, &Who::User(w.alice), json!({"head_sha": git.head()})).await.0, StatusCode::CREATED);
+    let run = w.run_ids().await[0];
     assert!(run_is_fork(&w, run).await, "still a fork after the fork was deleted");
-    assert_eq!(w.run_status(run).await.0, "waiting");
-    let uri = format!("/api/v3/repos/alice/demo/actions/runs/{run}/approve");
-    assert_eq!(w.post(&uri, &Who::User(w.alice), json!({})).await.0, StatusCode::CREATED);
     let r = w.runner("r", &["x"]).await;
     let job = r.request(&w, 0).await.expect("approved");
     assert!(job.secrets.is_empty(), "{:?}", job.secrets);

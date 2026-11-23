@@ -109,7 +109,14 @@ impl GitTransport for GitCore {
         if writing && mode != GitMode::AdvertiseRefs {
             // A store rebuild waits for this push to end, and a push waits for a rebuild.
             ticket = Some(self.writes.write(repo.id).await?);
-            let g = self.pushes.register(PushCtx { actor, repo: repo.id, client: client.clone(), origin: Origin::Push, deploy_write });
+            let g = self.pushes.register(PushCtx {
+                actor,
+                repo: repo.id,
+                client: client.clone(),
+                origin: Origin::Push,
+                deploy_write,
+                server_built: false,
+            });
             cmd = cmd.env(ENV_PUSH_ID, g.id()).env(ENV_REPO_ID, repo.id.0.to_string()).env(ENV_SOCKET, self.hook_socket.to_string_lossy());
             guard = Some(g);
         }

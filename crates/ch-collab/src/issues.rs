@@ -257,7 +257,17 @@ impl Core {
         let ev = match (row.is_pull, open) {
             (false, true) => DomainEvent::IssueReopened { repo_id, issue_id, number, actor: user },
             (false, false) => DomainEvent::IssueClosed { repo_id, issue_id, number, actor: user },
-            (true, true) => DomainEvent::PrOpened { repo_id, pull_id: ch_core::PullId(issue_id.0), number, actor: user, app: None },
+            // Reopening is not pushing: whoever reopens did not put the head there, so CI
+            // names nobody for it and a fork's commit waits for approval (ch-x12).
+            (true, true) => DomainEvent::PrOpened {
+                repo_id,
+                pull_id: ch_core::PullId(issue_id.0),
+                number,
+                actor: user,
+                app: None,
+                head_sha: None,
+                pusher: None,
+            },
             (true, false) => {
                 DomainEvent::PrClosed { repo_id, pull_id: ch_core::PullId(issue_id.0), number, merged: false, actor: Some(user) }
             }

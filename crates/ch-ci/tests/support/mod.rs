@@ -490,6 +490,7 @@ impl World {
             pusher: Some(self.alice),
             forced: false,
             app: None,
+            server_built: false,
         };
         self.emit_and_process(ev).await
     }

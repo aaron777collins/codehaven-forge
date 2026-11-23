@@ -560,6 +560,28 @@ struct ShowPage {
     is_draft: bool,
     label_choices: Vec<Choice>,
     can_triage: bool,
+    fork_approval: Option<ForkApproval>,
+}
+
+/// A fork's commit that waits for approval before any workflow runs (ch-x12).
+struct ForkApproval {
+    sha: String,
+    short: String,
+    action: String,
+    can_approve: bool,
+}
+
+async fn fork_approval(ctx: &Ctx, l: &Loaded) -> Option<ForkApproval> {
+    if ctx.actor.is_anonymous() {
+        return None;
+    }
+    let sha = ctx.state.ci.pending_fork_approval(&ctx.actor, l.rc.id(), l.pr.issue.number).await.ok().flatten()?;
+    Some(ForkApproval {
+        short: fmt::short_sha(&sha),
+        action: format!("{}/pulls/{}/approve-runs", l.rc.base(), l.pr.issue.number),
+        can_approve: l.rc.perm.allows(Permission::Write) && !l.rc.repo.archived && ctx.signed_in(),
+        sha,
+    })
 }
 
 pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>) -> WebResult<Response> {
@@ -695,8 +717,10 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
         let runs = ctx.state.checks.check_runs_for_sha(l.rc.id(), &l.pr.head_sha).await.unwrap_or_default();
         status_from_runs(&runs)
     };
+    let fork_approval = fork_approval(&ctx, &l).await;
     let c = pr_chrome(&ctx, &l, &format!("{} (#{number})", l.pr.issue.title)).await;
     ctx.page(&ShowPage {
+        fork_approval,
         c,
         owner: l.rc.repo.owner_name.clone(),
         repo: l.rc.repo.name.clone(),
@@ -754,6 +778,7 @@ struct ChecksPage {
     rows: Vec<CheckRow>,
     summary: Option<StatusView>,
     sha: String,
+    fork_approval: Option<ForkApproval>,
 }
 
 pub async fn checks(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>) -> WebResult<Response> {
@@ -761,8 +786,25 @@ pub async fn checks(ctx: Ctx, Path((owner, name, number)): Path<(String, String,
     let rows = check_rows(&ctx, &l.rc, &l.pr.head_sha).await;
     let h = head(&ctx, &mut l, "checks", rows.len()).await?;
     let runs = ctx.state.checks.check_runs_for_sha(l.rc.id(), &l.pr.head_sha).await.unwrap_or_default();
+    let fork_approval = fork_approval(&ctx, &l).await;
     let c = pr_chrome(&ctx, &l, &format!("Checks - {} (#{number})", l.pr.issue.title)).await;
-    ctx.page(&ChecksPage { c, h, rows, summary: status_from_runs(&runs), sha: fmt::short_sha(&l.pr.head_sha) })
+    ctx.page(&ChecksPage { c, h, rows, summary: status_from_runs(&runs), sha: fmt::short_sha(&l.pr.head_sha), fork_approval })
+}
+
+/// A person with write access approves the latest commit of a pull request from a fork, which
+/// starts its runs. The service refuses anything but a person, and the approval is audited.
+pub async fn approve_runs_post(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Write)?;
+    let url = pr_url(&rc, number, "checks");
+    match ctx.state.ci.approve_fork_commit(&ctx.actor, rc.id(), number, form.get("sha"), &ctx.client).await {
+        Ok(_) => Ok(ctx.redirect_flash(&url, "ok", "Approved. The workflows start when a runner is free.")),
+        Err(Error::Conflict(m)) => Ok(ctx.redirect_flash(&url, "error", &m)),
+        Err(Error::Validation(_)) => {
+            Ok(ctx.redirect_flash(&url, "error", "The pull request has a newer commit since this page loaded. Approve that one."))
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 // ------------------------------------------------------------------ files tab

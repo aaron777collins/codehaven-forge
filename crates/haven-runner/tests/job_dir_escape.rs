@@ -237,3 +237,77 @@ async fn checkout_replaces_links_in_the_workspace_instead_of_following_them() {
     let l = h.server.step_log(6, 3);
     assert!(l.contains("# demo") && l.contains("note 1") && l.contains("kept") && l.contains(&sha), "{l}");
 }
+
+/// The ch-ctk.1 cache finding, as reproduced on a throwaway stack: a job saves a cache, swaps
+/// its workspace for a link to the runner's home and restores the cache. Nothing may land there.
+#[tokio::test]
+async fn a_cache_restore_does_not_follow_a_linked_workspace() {
+    let t = tempfile::tempdir().unwrap();
+    let home = t.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("credential"), "secret\n").unwrap();
+    let hd = home.display();
+    let job = TestJob::new(7)
+        .run("mkdir -p c && echo pwned > c/pwned.txt && echo replaced > credential")
+        .uses("actions/cache/save@v4", &[("key", "k1"), ("path", "c\ncredential")])
+        .run(&format!(r#"cd /; rm -rf "$GITHUB_WORKSPACE"; ln -s {hd} "$GITHUB_WORKSPACE""#))
+        .uses("actions/cache/restore@v4", &[("key", "k1"), ("path", "c\ncredential")])
+        .build();
+    let h = Harness::new().await;
+    let r = h.run(job).await;
+    assert_eq!(std::fs::read_to_string(home.join("credential")).unwrap(), "secret\n", "the runner's credential was replaced");
+    let left: Vec<_> = std::fs::read_dir(&home).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(left, vec![std::ffi::OsString::from("credential")], "the restore wrote into the runner's home");
+    assert_eq!(r.conclusion, "failure", "{}", h.server.log_text(7));
+    assert!(h.server.cache_keys().contains(&"k1".to_string()), "the save step really saved: {}", h.server.log_text(7));
+}
+
+/// A step's output file grown to any size (sparse, so it costs the job nothing) is not read into
+/// the runner's memory: the step fails and says why.
+#[tokio::test]
+async fn an_oversized_step_file_is_refused_not_read() {
+    let h = Harness::new().await;
+    let job = TestJob::new(8).run(r#"echo ok=1 >> "$GITHUB_OUTPUT"; truncate -s 64M "$GITHUB_OUTPUT""#).run("echo after").build();
+    let r = h.run(job).await;
+    assert_eq!(r.conclusion, "failure", "{}", h.server.log_text(8));
+    let l = h.server.step_log(8, 1);
+    assert!(l.contains("$GITHUB_OUTPUT is larger than 16 MiB"), "{l}");
+    assert!(h.server.step_outputs(8, 1).is_empty());
+}
+
+/// A submodule whose URL is a local path (here, a repository standing in for something in the
+/// runner's home) is never fetched: a fork's .gitmodules chooses that URL.
+#[tokio::test]
+async fn a_submodule_from_a_local_path_is_not_fetched() {
+    let t = tempfile::tempdir().unwrap();
+    // The "secret" repository on the runner's disk.
+    let secret = t.path().join("home-repo");
+    std::fs::create_dir_all(&secret).unwrap();
+    git(&secret, &["init", "-q", "-b", "main"]);
+    std::fs::write(secret.join("credential"), "secret\n").unwrap();
+    git(&secret, &["add", "."]);
+    git(&secret, &["commit", "-q", "-m", "s"]);
+    // The repository the job checks out names it as a submodule.
+    let work = t.path().join("src");
+    std::fs::create_dir_all(&work).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    std::fs::write(work.join("README.md"), "# demo\n").unwrap();
+    git(&work, &["-c", "protocol.file.allow=always", "submodule", "add", "-q", secret.to_str().unwrap(), "leak"]);
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-q", "-m", "with a submodule"]);
+    let bare = t.path().join("remote.git");
+    git(t.path(), &["clone", "-q", "--bare", work.to_str().unwrap(), bare.to_str().unwrap()]);
+    let sha = git(&work, &["rev-parse", "HEAD"]);
+    let job = TestJob::new(9)
+        .clone_url(&format!("file://{}", bare.display()))
+        .context({
+            let sha = sha.clone();
+            move |c| c.sha = sha
+        })
+        .uses("actions/checkout@v4", &[("submodules", "true")])
+        .build();
+    let h = Harness::new().await;
+    let r = h.run(job).await;
+    assert!(!h.server.log_text(9).contains("secret"), "{}", h.server.log_text(9));
+    assert_eq!(r.conclusion, "failure", "the submodule was fetched from a local path: {}", h.server.log_text(9));
+}

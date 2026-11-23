@@ -905,7 +905,14 @@ impl Core {
                     pull_id: PullId(issue.id.0),
                     number: issue.number,
                     head_sha: new_sha.clone(),
-                    app: None,
+                    // A connected app applying a suggestion is still an app's commit.
+                    app: actor.app_origin(repo),
+                    pusher: Some(user),
+                    // The server made this exact commit for this person, on top of a head they
+                    // did not necessarily write. CI counts them only if that head was itself
+                    // let run or approved (ch-x12).
+                    origin_known: true,
+                    built_on: Some(pull.head_sha.clone()),
                 },
             )
             .await?;

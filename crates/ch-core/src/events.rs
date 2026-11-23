@@ -19,6 +19,11 @@ pub enum DomainEvent {
         /// Set when a connected app made the push. Old events have none.
         #[serde(default)]
         app: Option<crate::actor::AppOrigin>,
+        /// True when the server wrote `after` for the pusher on top of whatever the branch held
+        /// (`before`): a file edit from the web, the contents API or a suggestion, or Update
+        /// branch. The pusher vouches for their own change, not for `before` (ch-x12).
+        #[serde(default)]
+        server_built: bool,
     },
     RefCreated {
         repo_id: RepoId,
@@ -92,6 +97,15 @@ pub enum DomainEvent {
         actor: UserId,
         #[serde(default)]
         app: Option<crate::actor::AppOrigin>,
+        /// The head commit the pull request was opened at. CI skips the event when the head
+        /// has moved on since, because `pusher` describes this commit only. None on a reopen
+        /// and in events stored before this field.
+        #[serde(default)]
+        head_sha: Option<String>,
+        /// Who CI may count as having pushed `head_sha`: the person who opened the pull
+        /// request. None on a reopen, because reopening is not pushing (ch-x12).
+        #[serde(default)]
+        pusher: Option<UserId>,
     },
     PrSynchronized {
         repo_id: RepoId,
@@ -100,6 +114,21 @@ pub enum DomainEvent {
         head_sha: String,
         #[serde(default)]
         app: Option<crate::actor::AppOrigin>,
+        /// Who put the new head there. CI runs a fork's code at once only when both the pull
+        /// request's author and this person have write access; unknown counts as no.
+        #[serde(default)]
+        pusher: Option<UserId>,
+        /// True when `pusher` and `app` describe exactly `head_sha`. False when the branch moved
+        /// on before the push was handled, so nobody can be named for the commit it holds now,
+        /// and in events stored before this field. CI then waits for a person (ch-x12).
+        #[serde(default)]
+        origin_known: bool,
+        /// Set when the server wrote `head_sha` for `pusher` on top of this commit: Update
+        /// branch, an applied suggestion, a file edit from the web. The pusher vouches for their
+        /// own change only, so CI counts them for `head_sha` only when this commit was itself
+        /// let run or approved for the pull request. Otherwise CI waits for a person (ch-x12).
+        #[serde(default)]
+        built_on: Option<String>,
     },
     PrClosed {
         repo_id: RepoId,
@@ -252,6 +281,13 @@ mod tests {
         assert!(matches!(serde_json::from_str::<DomainEvent>(old).unwrap(), DomainEvent::PrOpened { app: None, .. }));
         let old = r#"{"type":"pr_synchronized","repo_id":5,"pull_id":1,"number":2,"head_sha":"a"}"#;
         assert!(matches!(serde_json::from_str::<DomainEvent>(old).unwrap(), DomainEvent::PrSynchronized { app: None, .. }));
+        // Events stored before the head's origin was recorded name nobody for it.
+        assert!(matches!(
+            serde_json::from_str::<DomainEvent>(old).unwrap(),
+            DomainEvent::PrSynchronized { pusher: None, origin_known: false, .. }
+        ));
+        let old = r#"{"type":"pr_opened","repo_id":5,"pull_id":1,"number":2,"actor":9}"#;
+        assert!(matches!(serde_json::from_str::<DomainEvent>(old).unwrap(), DomainEvent::PrOpened { head_sha: None, pusher: None, .. }));
         let with = DomainEvent::Push {
             repo_id: RepoId(1),
             git_ref: "r".into(),
@@ -260,6 +296,7 @@ mod tests {
             pusher: None,
             forced: false,
             app: Some(crate::actor::AppOrigin { grant_id: crate::ids::GrantId(3), ci_allowed: false }),
+            server_built: false,
         };
         assert_eq!(serde_json::from_str::<DomainEvent>(&serde_json::to_string(&with).unwrap()).unwrap(), with);
     }
@@ -274,6 +311,7 @@ mod tests {
             pusher: Some(UserId(9)),
             forced: false,
             app: None,
+            server_built: false,
         };
         let s = serde_json::to_string(&e).unwrap();
         assert_eq!(serde_json::from_str::<DomainEvent>(&s).unwrap(), e);

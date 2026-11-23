@@ -49,6 +49,8 @@ pub fn routes() -> Router<AppState> {
         .route("/repos/{owner}/{repo}/actions/runs/{id}/rerun", post(rerun_run))
         .route("/repos/{owner}/{repo}/actions/runs/{id}/rerun-failed-jobs", post(rerun_failed))
         .route("/repos/{owner}/{repo}/actions/runs/{id}/approve", post(approve_run))
+        // Codehaven's own: a pull request from a fork runs nothing until its commit is approved.
+        .route("/repos/{owner}/{repo}/actions/pulls/{number}/approval", get(fork_approval).post(approve_fork_commit))
         .route("/repos/{owner}/{repo}/actions/runs/{id}/jobs", get(list_run_jobs))
         .route("/repos/{owner}/{repo}/actions/runs/{id}/logs", get(run_logs))
         .route("/repos/{owner}/{repo}/actions/runs/{id}/artifacts", get(list_run_artifacts))
@@ -647,6 +649,35 @@ async fn approve_run(
     let repo = repo_for(&state, &actor, &o, &n, Permission::Write).await?;
     state.ci.approve_run(&actor, repo.id, RunId(id), &client(c)).await?;
     Ok(StatusCode::CREATED)
+}
+
+#[derive(serde::Deserialize)]
+struct ApproveCommit {
+    head_sha: String,
+}
+
+/// `{"pending": true, "head_sha": ...}` while the pull request's latest commit waits for approval.
+async fn fork_approval(
+    State(state): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Path((o, n, number)): Path<(String, String, i64)>,
+) -> Result<Json<serde_json::Value>> {
+    let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
+    let sha = state.ci.pending_fork_approval(&actor, repo.id, number).await?;
+    Ok(Json(serde_json::json!({ "pending": sha.is_some(), "head_sha": sha })))
+}
+
+/// Approves the pull request's latest commit, named in `head_sha`, and starts its runs.
+async fn approve_fork_commit(
+    State(state): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    c: Option<Extension<ClientInfo>>,
+    Path((o, n, number)): Path<(String, String, i64)>,
+    Json(body): Json<ApproveCommit>,
+) -> Result<(StatusCode, Json<serde_json::Value>)> {
+    let repo = repo_for(&state, &actor, &o, &n, Permission::Write).await?;
+    let runs = state.ci.approve_fork_commit(&actor, repo.id, number, &body.head_sha, &client(c)).await?;
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "run_ids": runs.iter().map(|r| r.0).collect::<Vec<_>>() }))))
 }
 
 async fn job_dto(ctx: &Ctx, urls: &Urls, j: &JobRow, attempt: u32) -> Result<dto::WorkflowJob> {

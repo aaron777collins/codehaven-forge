@@ -81,12 +81,19 @@ pub fn header_scope(clone_url: &str) -> Option<String> {
 /// Settings on every git command the checkout runs. The repository is out of the job's reach
 /// (see `Stage`), so these are a second wall (ch-ctk.1): they outrank the repository's own
 /// config, and `-c` reaches the git processes these start (submodules) too. No hooks and no
-/// fsmonitor run, and no helper or ext transport is used.
+/// fsmonitor run, and no helper or ext transport is used. Submodule URLs come from the commit,
+/// which may be a fork's, so a submodule may never be fetched from a local path (`file` is
+/// allowed only for the runner's own top-level fetch, which tests use), and no attributes file
+/// outside the repository is read. With global and system config off (see `git`), the only
+/// config files git reads are the ones it writes itself in the private stage, so no filter,
+/// include or command can come from anything the job wrote.
 pub const SAFE_CONFIG: &[&str] = &[
     "core.hooksPath=/dev/null",
     "core.fsmonitor=false",
     "core.untrackedCache=false",
+    "core.attributesFile=/dev/null",
     "protocol.ext.allow=never",
+    "protocol.file.allow=user",
     "credential.helper=",
     "safe.bareRepository=explicit",
 ];
@@ -148,6 +155,15 @@ async fn git(ctx: &ActionCtx<'_>, stage: &Stage, global: &[String], args: &[&str
         .env_remove("GIT_TEMPLATE_DIR")
         .env_remove("GIT_ASKPASS")
         .env_remove("SSH_ASKPASS")
+        .env_remove("GIT_SSH")
+        .env_remove("GIT_SSH_COMMAND")
+        .env_remove("GIT_PROXY_COMMAND")
+        .env_remove("GIT_EXTERNAL_DIFF")
+        .env_remove("GIT_ALLOW_PROTOCOL")
+        // Unset means "from the user": the runner's own fetch. git sets it to 0 for submodules.
+        .env_remove("GIT_PROTOCOL_FROM_USER")
+        .env_remove("GIT_CONFIG_SYSTEM")
+        .env_remove("XDG_CONFIG_HOME")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -344,7 +360,15 @@ mod tests {
     #[test]
     fn every_git_call_turns_hooks_and_fsmonitor_off() {
         let a = safe_config_args();
-        for want in ["core.hooksPath=/dev/null", "core.fsmonitor=false", "protocol.ext.allow=never"] {
+        for want in [
+            "core.hooksPath=/dev/null",
+            "core.fsmonitor=false",
+            "protocol.ext.allow=never",
+            // Pinned, not left to the git version's default: a fork's .gitmodules must not fetch
+            // a local path such as the runner's home.
+            "protocol.file.allow=user",
+            "core.attributesFile=/dev/null",
+        ] {
             let i = a.iter().position(|x| x == want).unwrap_or_else(|| panic!("{want} is missing"));
             assert_eq!(a[i - 1], "-c");
         }

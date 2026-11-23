@@ -48,6 +48,7 @@
         <ul class="gate-reasons">{% for r in gate.reasons %}<li><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>{{ r }}</li>{% endfor %}</ul>
       {% endif %}
       {% if let Some(s) = checks_summary %}<div class="merge-line">{% call ui::status(s) %} <span>Checks: {{ s.label }}</span> <a href="{{ h.href }}/checks">Details</a></div>{% endif %}
+      {% include "pulls/fork_approval.html" %}
       {% if can_merge %}
       <form method="post" action="{{ base }}/pulls/{{ h.number }}/merge" class="merge-form row">
         {% call ui::csrf_field(c.csrf) %}

@@ -330,7 +330,8 @@ async fn push_create_delete_status_and_pull_request_payloads(pool: PgPool) {
             after: sha.clone(),
             pusher: Some(owner),
             forced: false,
-            app: None
+            app: None,
+            server_built: false,
         })
         .await,
         1
@@ -353,7 +354,19 @@ async fn push_create_delete_status_and_pull_request_payloads(pool: PgPool) {
     );
     let pull = issue(&c.pool, repo, 2, owner, "Add a thing", "Closes #1", true).await;
     sqlx::query("INSERT INTO pull_requests (issue_id, repo_id, head_repo_id, head_ref, head_sha, base_ref, base_sha) VALUES ($1, $2, $2, 'feature', $3, 'main', $4)").bind(pull).bind(repo.0).bind(&sha).bind(&zero).execute(&c.pool).await.unwrap();
-    assert_eq!(post(DomainEvent::PrOpened { repo_id: repo, pull_id: ch_core::PullId(pull), number: 2, actor: owner, app: None }).await, 1);
+    assert_eq!(
+        post(DomainEvent::PrOpened {
+            repo_id: repo,
+            pull_id: ch_core::PullId(pull),
+            number: 2,
+            actor: owner,
+            app: None,
+            head_sha: None,
+            pusher: Some(owner)
+        })
+        .await,
+        1
+    );
     assert_eq!(
         post(DomainEvent::PrMerged { repo_id: repo, pull_id: ch_core::PullId(pull), number: 2, merge_sha: sha.clone(), actor: owner })
             .await,
@@ -441,6 +454,7 @@ async fn org_hooks_see_events_from_the_orgs_repositories_only(pool: PgPool) {
         pusher: Some(owner),
         forced: false,
         app: None,
+        server_built: false,
     };
     assert_eq!(ch_notify::webhooks::enqueue_event(&c.pool, &c.state.config, &push(org_repo)).await.unwrap(), 1);
     assert_eq!(ch_notify::webhooks::enqueue_event(&c.pool, &c.state.config, &push(personal)).await.unwrap(), 0);

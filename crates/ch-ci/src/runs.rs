@@ -97,6 +97,8 @@ pub struct NewRun {
     pub needs_approval: bool,
     /// Why it waits, shown on the run page. Set whenever `needs_approval` is.
     pub hold_reason: Option<String>,
+    /// Who approved the commit, for a pull request from a fork that needed it.
+    pub approved_by: Option<UserId>,
     pub trigger_id: Option<String>,
     pub base_ref: String,
     pub head_ref: String,
@@ -166,8 +168,13 @@ pub fn github_context(base_url: &str, run: &RunRow, meta: &RunMeta, event: &Json
     })
 }
 
-/// Variables visible to a repository: the owner's, overridden by the repository's own.
-pub async fn load_vars(ctx: &Ctx, repo: i64) -> Result<BTreeMap<String, String>> {
+/// Variables visible to a repository: the owner's, overridden by the repository's own. A run
+/// from a fork sees none, the same as secrets: neither the owner's nor the repository's
+/// variables reach code the repository's people did not write (ch-x12).
+pub async fn load_vars(ctx: &Ctx, repo: i64, fork: bool) -> Result<BTreeMap<String, String>> {
+    if fork {
+        return Ok(BTreeMap::new());
+    }
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT name, value, scope FROM variables
          WHERE (scope = 'repo' AND repo_id = $1) OR (scope = 'org' AND org_id = (SELECT owner_id FROM repositories WHERE id = $1))",
@@ -239,11 +246,11 @@ pub async fn create_run(ctx: &Ctx, n: NewRun) -> Result<Created> {
         head_ref: n.head_ref.clone(),
         actor_login: n.actor.as_ref().map(|a| a.1.clone()).unwrap_or_default(),
         repository: info.full_name(),
-        approved_by: None,
+        approved_by: n.approved_by.map(|u| u.0),
         hold_reason: if n.needs_approval { Some(n.hold_reason.clone().unwrap_or_else(|| "Waiting for approval".into())) } else { None },
         cancel_in_progress: false,
     };
-    let vars = load_vars(ctx, n.repo_id.0).await?;
+    let vars = load_vars(ctx, n.repo_id.0, n.fork).await?;
 
     let mut tx = ctx.db.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(0x0c1_0000_0000_0000_i64 | n.repo_id.0).execute(&mut *tx).await?;
@@ -678,7 +685,7 @@ pub async fn advance_run(ctx: &Ctx, run_id: i64) -> Result<()> {
     // 3. Promote or skip waiting jobs until nothing changes.
     let held = run.status == "waiting" || group_held(&mut tx, &run).await?;
     if !held && !meta.cancel_requested {
-        let vars = load_vars_tx(&mut tx, run.repo_id).await?;
+        let vars = load_vars_tx(&mut tx, run.repo_id, meta.fork).await?;
         let github = github_context(&ctx.base_url(), &run, &meta, &event);
         loop {
             let mut progressed = false;
@@ -888,7 +895,10 @@ pub async fn advance_run(ctx: &Ctx, run_id: i64) -> Result<()> {
     Ok(())
 }
 
-async fn load_vars_tx(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, repo: i64) -> Result<BTreeMap<String, String>> {
+async fn load_vars_tx(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, repo: i64, fork: bool) -> Result<BTreeMap<String, String>> {
+    if fork {
+        return Ok(BTreeMap::new());
+    }
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT name, value, scope FROM variables
          WHERE (scope = 'repo' AND repo_id = $1) OR (scope = 'org' AND org_id = (SELECT owner_id FROM repositories WHERE id = $1))",
@@ -976,8 +986,13 @@ pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool, by: Option<UserId>
             return Err(Error::invalid("Dispatch", "ref", crate::source::CHOOSE_REF));
         }
     }
-    let old_jobs = fetch_jobs(ctx, old.id).await?;
     let (event, mut meta) = split_payload(&old.event_payload);
+    // A run that waited for approval and was cancelled before anyone gave it never ran with a
+    // person's say-so. Starting it again must not skip that (ch-x12).
+    if meta.hold_reason.is_some() && meta.approved_by.is_none() {
+        return Err(Error::conflict("This run was never approved, so it cannot be re-run. Push again or approve a new run."));
+    }
+    let old_jobs = fetch_jobs(ctx, old.id).await?;
     meta.cancel_requested = false;
     let base = ctx.base_url();
     let mut tx = ctx.db.begin().await?;
@@ -1082,11 +1097,18 @@ pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool, by: Option<UserId>
 /// A maintainer lets a run from a fork go ahead.
 pub async fn approve_run(ctx: &Ctx, run_id: i64, approver: UserId) -> Result<()> {
     let mut tx = ctx.db.begin().await?;
-    let status: Option<String> =
-        sqlx::query_scalar("SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE").bind(run_id).fetch_optional(&mut *tx).await?;
-    match status.as_deref() {
+    let row: Option<(String, bool)> = sqlx::query_as(
+        "SELECT status, COALESCE((event_payload->'meta'->>'fork')::boolean, false) FROM workflow_runs WHERE id = $1 FOR UPDATE",
+    )
+    .bind(run_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    match row {
         None => return Err(Error::NotFound),
-        Some("waiting") => {}
+        // A fork's runs are approved by commit, before they exist (ch-x12). One waiting from
+        // before that was cancelled when the change went in.
+        Some((_, true)) => return Err(Error::conflict("Runs from a fork are approved on the pull request, one commit at a time.")),
+        Some((s, false)) if s == "waiting" => {}
         Some(_) => return Err(Error::conflict("This workflow run does not need approval.")),
     }
     sqlx::query("UPDATE workflow_runs SET status = 'queued', event_payload = jsonb_set(event_payload, '{meta,approved_by}', to_jsonb($2::bigint)) WHERE id = $1")

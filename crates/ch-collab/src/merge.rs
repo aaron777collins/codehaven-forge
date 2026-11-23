@@ -584,6 +584,12 @@ impl Core {
                             number: issue.number,
                             head_sha: sha,
                             app: actor.app_origin(repo),
+                            pusher: Some(user),
+                            // The server made this exact commit for this person, on top of a
+                            // head they did not necessarily write. CI counts them only if that
+                            // head was itself let run or approved (ch-x12).
+                            origin_known: true,
+                            built_on: Some(head_sha.clone()),
                         },
                     )
                     .await?;

@@ -98,12 +98,14 @@ async fn defaults(core: &Core, ev: &StoredEvent) -> Result<()> {
 
 async fn pr_sync(core: &Core, ev: &StoredEvent) -> Result<()> {
     match &ev.event {
-        DomainEvent::Push { repo_id, git_ref, before, after, pusher, app, .. } => {
+        DomainEvent::Push { repo_id, git_ref, before, after, pusher, app, server_built, .. } => {
             let Some(branch) = git_ref.strip_prefix("refs/heads/") else { return Ok(()) };
             if after == ZERO_SHA {
                 return Ok(());
             }
-            head_moved(core, *repo_id, branch, *pusher, *app).await?;
+            // A commit the server wrote on top of the branch holds what the branch held.
+            let built_on = server_built.then(|| before.clone());
+            head_moved(core, *repo_id, branch, after, *pusher, *app, built_on).await?;
             base_moved(core, *repo_id, branch, before, after, *pusher, app.is_some()).await?;
             keywords_from_push(core, *repo_id, branch, before, after, *pusher, app.is_some()).await?;
         }
@@ -118,7 +120,15 @@ async fn pr_sync(core: &Core, ev: &StoredEvent) -> Result<()> {
     Ok(())
 }
 
-async fn head_moved(core: &Core, repo: RepoId, branch: &str, pusher: Option<UserId>, app: Option<ch_core::AppOrigin>) -> Result<()> {
+async fn head_moved(
+    core: &Core,
+    repo: RepoId,
+    branch: &str,
+    after: &str,
+    pusher: Option<UserId>,
+    app: Option<ch_core::AppOrigin>,
+    built_on: Option<String>,
+) -> Result<()> {
     for (issue, pull) in core.open_pulls_by_head(repo, branch).await? {
         let old_head = pull.head_sha.clone();
         core.refresh_pull(&issue, &pull).await;
@@ -126,17 +136,27 @@ async fn head_moved(core: &Core, repo: RepoId, branch: &str, pusher: Option<User
         if fresh.head_sha == old_head {
             continue;
         }
+        // The pusher and app on this push describe its own commit only. When the branch moved
+        // on before this event was handled, it holds a later commit someone else may have
+        // pushed, and that push's own event will find nothing new. Nobody is named for the
+        // head then, so CI waits for a person instead of running it as this pusher's (ch-x12).
+        let origin_known = fresh.head_sha == after;
+        let (pusher, app) = if origin_known { (pusher, app) } else { (None, None) };
+        // When the server built the commit for the pusher, they vouch for their change only, not
+        // for the commit under it. CI counts them only if that commit was itself let run.
+        let built_on = if origin_known { built_on.clone() } else { None };
         let mut tx = core.db().begin().await?;
         Core::add_event(&mut tx, issue.id, pusher, "head_ref_updated", json!({ "before": old_head, "after": fresh.head_sha })).await?;
-        if app.is_some() && pull.auto_merge_method.is_some() {
-            // New code from a connected app is not what the person approved for auto-merge. It
-            // is cleared before anything can try to merge, and the timeline says so.
+        if (app.is_some() || !origin_known) && pull.auto_merge_method.is_some() {
+            // New code from a connected app, or from nobody that can be named, is not what the
+            // person approved for auto-merge. It is cleared before anything can try to merge,
+            // and the timeline says so.
             sqlx::query("UPDATE pull_requests SET auto_merge_method = NULL, auto_merge_by = NULL WHERE issue_id = $1")
                 .bind(issue.id)
                 .execute(&mut *tx)
                 .await?;
-            Core::add_event(&mut tx, issue.id, pusher, "auto_merge_disabled", json!({ "reason": "a connected app pushed to this branch" }))
-                .await?;
+            let reason = if origin_known { "a connected app pushed to this branch" } else { "it is not known who pushed to this branch" };
+            Core::add_event(&mut tx, issue.id, pusher, "auto_merge_disabled", json!({ "reason": reason })).await?;
         }
         Core::touch(&mut tx, issue.id).await?;
         core.d
@@ -149,6 +169,9 @@ async fn head_moved(core: &Core, repo: RepoId, branch: &str, pusher: Option<User
                     number: issue.number,
                     head_sha: fresh.head_sha.clone(),
                     app,
+                    pusher,
+                    origin_known,
+                    built_on,
                 },
             )
             .await?;

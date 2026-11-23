@@ -1,0 +1,11 @@
+{% if let Some(fa) = fork_approval %}
+<div class="notice" role="status">
+  <p><strong>Workflows are waiting for approval.</strong> This pull request comes from a fork. Nothing runs for commit <code>{{ fa.short }}</code> until someone with write access approves it, and each new commit needs its own approval.</p>
+  {% if fa.can_approve %}
+  <form method="post" action="{{ fa.action }}" class="inline">
+    {% call ui::csrf_field(c.csrf) %}<input type="hidden" name="sha" value="{{ fa.sha }}">
+    <button class="btn btn-primary" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Approve and run</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}

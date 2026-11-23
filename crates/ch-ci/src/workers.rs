@@ -123,6 +123,7 @@ async fn fire_schedule(
         fork: false,
         needs_approval: false,
         hold_reason: None,
+        approved_by: None,
         base_ref: String::new(),
         head_ref: String::new(),
         // One run per schedule per minute, even if two servers fire it.

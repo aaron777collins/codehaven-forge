@@ -21,6 +21,11 @@ use std::path::{Path, PathBuf};
 ///
 /// The job can change anything under `<root>`, including the runner's part, so the runner reads
 /// and writes there only through `crate::safefs`, which never follows a link (ch-ctk.1).
+/// The most the runner reads back from one of a step's files (`$GITHUB_OUTPUT`, `$GITHUB_ENV`,
+/// `$GITHUB_PATH`, `$GITHUB_STEP_SUMMARY`). A job could otherwise make one a sparse file of any
+/// size and have the runner read it all into memory.
+pub const MAX_STEP_FILE: u64 = 16 * 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct JobDirs {
     pub root: PathBuf,
@@ -102,9 +107,10 @@ impl JobDirs {
         crate::safefs::write_new(&self.root, path, data, mode)
     }
 
-    /// Reads a file the job may have written, refusing links and anything but a regular file.
+    /// Reads a file the job may have written, refusing links, anything but a regular file and
+    /// anything over `MAX_STEP_FILE` bytes (an error of kind `FileTooLarge`).
     pub fn read_file(&self, path: &Path) -> std::io::Result<String> {
-        crate::safefs::read_to_string(&self.root, path)
+        crate::safefs::read_to_string(&self.root, path, MAX_STEP_FILE)
     }
 
     pub fn script_path(&self, step: i32, ext: &str) -> PathBuf {

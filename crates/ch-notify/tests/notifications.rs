@@ -227,7 +227,18 @@ async fn state_changes_and_pull_requests(pool: PgPool) {
         .await
         .unwrap();
 
-    w.fan.process(&DomainEvent::PrOpened { repo_id: w.repo, pull_id: PullId(pull), number: 3, actor: w.alice, app: None }).await.unwrap();
+    w.fan
+        .process(&DomainEvent::PrOpened {
+            repo_id: w.repo,
+            pull_id: PullId(pull),
+            number: 3,
+            actor: w.alice,
+            app: None,
+            head_sha: None,
+            pusher: Some(w.alice),
+        })
+        .await
+        .unwrap();
     let bob = w.inbox(w.bob).await;
     assert_eq!((reasons(&bob), bob[0].subject_type.as_str()), (vec!["review_requested".to_string()], "pull"));
     assert_eq!(reasons(&w.inbox(w.carol).await), vec!["subscribed"]);
@@ -322,7 +333,16 @@ async fn suspended_accounts_and_events_nobody_cares_about(pool: PgPool) {
     assert_eq!(w.fan.process(&DomainEvent::RepoCreated { repo_id: w.repo, actor: None }).await.unwrap(), 0);
     assert_eq!(
         w.fan
-            .process(&DomainEvent::PrSynchronized { repo_id: w.repo, pull_id: PullId(1), number: 1, head_sha: "a".into(), app: None })
+            .process(&DomainEvent::PrSynchronized {
+                repo_id: w.repo,
+                pull_id: PullId(1),
+                number: 1,
+                head_sha: "a".into(),
+                app: None,
+                pusher: None,
+                origin_known: true,
+                built_on: None,
+            })
             .await
             .unwrap(),
         0

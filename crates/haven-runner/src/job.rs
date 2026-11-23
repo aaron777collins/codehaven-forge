@@ -1095,9 +1095,26 @@ impl<'a> Engine<'a> {
         StepRun { end, outputs: set_outputs.into_iter().collect() }
     }
 
+    /// One of a step's files. A file over the size limit fails the step with an error saying so;
+    /// one the job removed or replaced with a link or something else is quietly left out.
+    async fn read_step_file(&mut self, n: i32, path: &std::path::Path, name: &str, run: &mut StepRun) -> Option<String> {
+        match self.dirs.read_file(path) {
+            Ok(t) => Some(t),
+            Err(e) if e.kind() == std::io::ErrorKind::FileTooLarge => {
+                let max = crate::jobenv::MAX_STEP_FILE / (1024 * 1024);
+                self.log.line(n, &format!("##[error]{name} is larger than {max} MiB, so the runner did not read it.")).await;
+                if matches!(run.end, StepEnd::Success) {
+                    run.end = StepEnd::Failure;
+                }
+                None
+            }
+            Err(_) => None,
+        }
+    }
+
     /// Reads `$GITHUB_OUTPUT`, `$GITHUB_ENV`, `$GITHUB_PATH` and `$GITHUB_STEP_SUMMARY` after a step.
     async fn collect_files(&mut self, n: i32, files: &StepFiles, run: &mut StepRun) {
-        if let Ok(t) = self.dirs.read_file(&files.output) {
+        if let Some(t) = self.read_step_file(n, &files.output, "$GITHUB_OUTPUT", run).await {
             match commands::parse_env_file(&t) {
                 Ok(pairs) => {
                     for (k, v) in pairs {
@@ -1112,7 +1129,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        if let Ok(t) = self.dirs.read_file(&files.env) {
+        if let Some(t) = self.read_step_file(n, &files.env, "$GITHUB_ENV", run).await {
             match commands::parse_env_file(&t) {
                 Ok(pairs) => {
                     for (k, v) in pairs {
@@ -1131,12 +1148,12 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        if let Ok(t) = self.dirs.read_file(&files.path) {
+        if let Some(t) = self.read_step_file(n, &files.path, "$GITHUB_PATH", run).await {
             for p in commands::parse_path_file(&t) {
                 self.extra_path.insert(0, p);
             }
         }
-        if let Ok(t) = self.dirs.read_file(&files.summary)
+        if let Some(t) = self.read_step_file(n, &files.summary, "$GITHUB_STEP_SUMMARY", run).await
             && !t.trim().is_empty()
         {
             self.log.line(n, "##[group]Step summary").await;

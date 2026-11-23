@@ -271,6 +271,13 @@ async fn suggestions_become_commits_on_the_head_branch(pool: PgPool) {
     let threads = w.core.review_threads(&w.carol_a(), w.repo, n).await.unwrap();
     assert!(threads[0].resolved && threads[0].outdated);
     assert!(w.events().await.contains(&"pr_synchronized".to_string()));
+    // ch-x12: the new commit holds the old head's code, so CI is told what it was built on.
+    let p: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM outbox_events WHERE kind = 'pr_synchronized' ORDER BY id DESC LIMIT 1")
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!((p["head_sha"].as_str(), p["built_on"].as_str()), (Some(new_sha.as_str()), Some(&*sha_of(2))), "{p}");
     // The same suggestion cannot be applied twice.
     assert!(matches!(w.core.review_apply_suggestion(&w.alice_a(), w.repo, c.comment.id, &w.c()).await, Err(Error::Conflict(_))));
 }

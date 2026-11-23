@@ -490,6 +490,44 @@ async fn an_update_branch_merge_obeys_the_direct_push_rule(pool: PgPool) {
     assert_eq!(b.f.branch_sha(&b.repo, "main").await, base, "main did not move");
 }
 
+/// ch-x12: a commit the server writes on top of whatever a branch holds says so on its push
+/// event, so CI does not count the person for the commits underneath it. A ref set to a commit
+/// the person names, and a gated merge, are not built that way.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_push_says_when_the_server_built_the_commit_on_the_branch(pool: PgPool) {
+    let b = pr_setup(pool).await;
+    let (git, a, c) = (&b.f.state.git, b.f.actor(b.alice), b.f.client());
+    let f = &b.f;
+    let on = move |ref_name: &'static str| async move {
+        f.events("push").await.into_iter().filter(|p| p["git_ref"] == ref_name).collect::<Vec<_>>()
+    };
+    let feature = on("refs/heads/feature").await;
+    assert_eq!(feature.len(), 4, "{feature:?}");
+    assert_eq!(feature[0]["server_built"], false, "a ref created at a commit the person named");
+    assert!(feature[1..].iter().all(|p| p["server_built"] == true), "file edits are built on the branch: {feature:?}");
+
+    // Update branch: main merged into feature, on top of whatever feature holds.
+    b.f.commit(&b.repo, b.alice, "main", "m.txt", "m\n", "Main moves").await;
+    let head = b.f.branch_sha(&b.repo, "feature").await;
+    let up = MergeRequest {
+        base_ref: "feature".into(),
+        head_ref: "main".into(),
+        update_branch: true,
+        ..merge_req(&b, MergeMethod::Merge, &head)
+    };
+    let MergeOutcome::Merged { sha } = git.merge(&a, up, &c).await.unwrap() else { panic!("not merged") };
+    let last = on("refs/heads/feature").await.pop().unwrap();
+    assert_eq!((last["after"].as_str(), last["server_built"].as_bool()), (Some(sha.as_str()), Some(true)), "{last}");
+
+    // A gated merge into the base, and a fast-forward to a named commit, are not.
+    let base = b.f.branch_sha(&b.repo, "main").await;
+    git.merge(&a, merge_req(&b, MergeMethod::Merge, &base), &c).await.unwrap();
+    assert_eq!(on("refs/heads/main").await.pop().unwrap()["server_built"], false);
+    git.create_ref(&a, b.repo.id, "refs/heads/topic", &head, &c).await.unwrap();
+    git.update_ref(&a, b.repo.id, "refs/heads/topic", &sha, false, &c).await.unwrap();
+    assert_eq!(on("refs/heads/topic").await.pop().unwrap()["server_built"], false);
+}
+
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
 async fn merging_something_already_merged_is_an_error_not_an_empty_commit(pool: PgPool) {
     let b = pr_setup(pool).await;

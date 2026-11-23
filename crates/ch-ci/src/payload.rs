@@ -52,7 +52,7 @@ pub async fn build_payload(ctx: &Ctx, job: &JobRow, token: String) -> Result<rn:
     };
     let refs = job_refs(&shell, &spec.job);
     let secrets = resolve_for_job(ctx, job.repo_id, &refs.secrets, refs.all_secrets, meta.fork).await?;
-    let vars = resolve_vars_for_job(ctx, job.repo_id, &refs.vars, refs.all_vars).await?;
+    let vars = resolve_vars_for_job(ctx, job.repo_id, &refs.vars, refs.all_vars, meta.fork).await?;
 
     // What the jobs this one needs reported.
     let siblings = fetch_jobs(ctx, job.run_id).await?;
@@ -63,7 +63,7 @@ pub async fn build_payload(ctx: &Ctx, job: &JobRow, token: String) -> Result<rn:
     }
 
     let github = github_context(&base, &run, &meta, &event);
-    let all_vars = crate::runs::load_vars(ctx, job.repo_id).await?;
+    let all_vars = crate::runs::load_vars(ctx, job.repo_id, meta.fork).await?;
     let mut cx = base_context(&github, &meta.inputs, &all_vars);
     cx.set("matrix", Value::from_json(&json!(spec.matrix.clone().unwrap_or_default())));
 

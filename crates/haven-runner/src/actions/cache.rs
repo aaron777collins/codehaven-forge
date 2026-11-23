@@ -64,10 +64,11 @@ pub async fn run(ctx: &ActionCtx<'_>, mode: CacheMode) -> Result<ActionOutput> {
         Some(h) => {
             let archive = ctx.dirs.private.join(format!("cache-{}.tar.gz", h.id));
             ctx.client.cache_download(&ctx.payload.token, h.id, &archive).await.map_err(|e| anyhow!("cache download failed: {e}"))?;
-            let ws = ctx.dirs.workspace.clone();
+            let (root, ws) = (ctx.dirs.root.clone(), ctx.dirs.workspace.clone());
             let a2 = archive.clone();
-            let n = tokio::task::spawn_blocking(move || unpack(&a2, &ws)).await.map_err(|e| anyhow!("unpack task failed: {e}"))??;
+            let n = tokio::task::spawn_blocking(move || unpack(&a2, &root, &ws)).await.map_err(|e| anyhow!("unpack task failed: {e}"));
             let _ = std::fs::remove_file(&archive);
+            let n = n??;
             ctx.info(format!(
                 "Restored {n} files from cache {}{}",
                 h.key,
@@ -145,19 +146,22 @@ pub fn pack(root: &Path, files: &[std::path::PathBuf], archive: &Path) -> Result
     Ok((n, std::fs::metadata(archive)?.len()))
 }
 
-/// Unpacks a cache archive into `dest`. Only regular files and directories are written; links,
-/// devices, absolute paths and `..` are skipped, and setuid bits are dropped.
-pub fn unpack(archive: &Path, dest: &Path) -> Result<u64> {
+/// Unpacks a cache archive into `dest`, which lies inside `root` (the job root). Only regular
+/// files and directories are written; links, devices, absolute paths and `..` are skipped, and
+/// setuid bits are dropped. Every directory and file is made through `safefs` from a handle on
+/// `root`, so a link the job planted anywhere between `root` and an entry, `dest` included, is
+/// an error, never a way out (ch-ctk.1). tar's own `unpack_in` is not used: it resolves `dest`
+/// through links and creates and opens files by path.
+pub fn unpack(archive: &Path, root: &Path, dest: &Path) -> Result<u64> {
+    use std::io::{Read, Write};
     let f = std::fs::File::open(archive).with_context(|| format!("opening {}", archive.display()))?;
     let mut ar = tar::Archive::new(flate2::read::GzDecoder::new(f));
-    ar.set_preserve_permissions(true);
-    ar.set_preserve_mtime(true);
-    ar.set_unpack_xattrs(false);
-    ar.set_overwrite(true);
-    ar.set_mask(0o7000);
+    let refused = |p: &Path, e: std::io::Error| anyhow!("cannot restore the cache at {}: {e}", p.display());
+    crate::safefs::create_dir_all(root, dest, 0o755).map_err(|e| refused(dest, e))?;
     let mut files = 0u64;
     let mut entries = 0u64;
     let mut bytes = 0u64;
+    let mut buf = vec![0u8; 64 * 1024];
     for entry in ar.entries().context("the cache archive is not readable")? {
         let mut entry = entry.context("the cache archive is damaged")?;
         entries += 1;
@@ -168,16 +172,58 @@ pub fn unpack(archive: &Path, dest: &Path) -> Result<u64> {
         if !(kind.is_file() || kind.is_dir()) {
             continue;
         }
-        bytes = bytes.saturating_add(entry.header().size().unwrap_or(0));
-        if bytes > MAX_UNPACK_BYTES {
-            bail!("the cache archive is too large to unpack");
+        let Some(rel) = entry_path(&entry) else {
+            tracing::warn!("cache entry {:?} is outside the workspace and was skipped", String::from_utf8_lossy(&entry.path_bytes()));
+            continue;
+        };
+        let target = dest.join(&rel);
+        if kind.is_dir() {
+            crate::safefs::create_dir_all(root, &target, 0o755).map_err(|e| refused(&target, e))?;
+            continue;
         }
-        // `unpack_in` returns false for a path that would land outside `dest`.
-        if entry.unpack_in(dest)? && kind.is_file() {
-            files += 1;
+        if let Some(parent) = target.parent() {
+            crate::safefs::create_dir_all(root, parent, 0o755).map_err(|e| refused(parent, e))?;
         }
+        // Permissions as packed, without setuid, setgid or sticky.
+        let mode = entry.header().mode().unwrap_or(0o644) & 0o777;
+        let mtime = entry.header().mtime().ok();
+        // Whatever the job left at this name, a link included, is replaced, never written through.
+        let mut out = crate::safefs::create_new(root, &target, mode).map_err(|e| refused(&target, e))?;
+        loop {
+            let n = entry.read(&mut buf).context("the cache archive is damaged")?;
+            if n == 0 {
+                break;
+            }
+            // Count what is really written, not what a header claims.
+            bytes = bytes.saturating_add(n as u64);
+            if bytes > MAX_UNPACK_BYTES {
+                bail!("the cache archive is too large to unpack");
+            }
+            out.write_all(&buf[..n])?;
+        }
+        out.flush()?;
+        // Times are set on the open file, never by path.
+        if let Some(t) = mtime {
+            let _ = out.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(t));
+        }
+        files += 1;
     }
     Ok(files)
+}
+
+/// An entry's path as plain names, or `None` when it is absolute, climbs with `..` or is empty.
+fn entry_path<R: std::io::Read>(entry: &tar::Entry<'_, R>) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let p = entry.path().ok()?;
+    let mut out = std::path::PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::Normal(n) => out.push(n),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    (!out.as_os_str().is_empty()).then_some(out)
 }
 
 #[cfg(test)]
@@ -209,7 +255,7 @@ mod tests {
         let (n, size) = pack(src.path(), &[PathBuf::from("a.txt"), PathBuf::from("d/e/f.txt")], &archive).unwrap();
         assert_eq!((n, size > 0), (2, true));
         let dest = tempfile::tempdir().unwrap();
-        assert_eq!(unpack(&archive, dest.path()).unwrap(), 2);
+        assert_eq!(unpack(&archive, dest.path(), dest.path()).unwrap(), 2);
         assert_eq!(std::fs::read_to_string(dest.path().join("a.txt")).unwrap(), "one");
         assert_eq!(std::fs::read_to_string(dest.path().join("d/e/f.txt")).unwrap(), "two");
     }
@@ -224,7 +270,7 @@ mod tests {
         let archive = src.path().join("c.tar.gz");
         pack(src.path(), &[PathBuf::from("run.sh")], &archive).unwrap();
         let dest = tempfile::tempdir().unwrap();
-        unpack(&archive, dest.path()).unwrap();
+        unpack(&archive, dest.path(), dest.path()).unwrap();
         let mode = std::fs::metadata(dest.path().join("run.sh")).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o755);
         assert_eq!(mode & 0o7000, 0, "setuid is dropped");
@@ -271,7 +317,7 @@ mod tests {
                 ("hard", tar::EntryType::Link, "/etc/passwd", ""),
             ],
         );
-        let r = unpack(&archive, &ws);
+        let r = unpack(&archive, &ws, &ws);
         // Whether it stops with an error or skips the bad entries, nothing may land outside.
         let _ = r;
         assert!(!t.path().join("escape.txt").exists(), "../ entry escaped");
@@ -287,7 +333,95 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let p = t.path().join("bad.tar.gz");
         std::fs::write(&p, b"this is not gzip").unwrap();
-        assert!(unpack(&p, t.path()).is_err());
-        assert!(unpack(&t.path().join("missing"), t.path()).is_err());
+        assert!(unpack(&p, t.path(), t.path()).is_err());
+        assert!(unpack(&t.path().join("missing"), t.path(), t.path()).is_err());
+    }
+
+    fn outside_is_untouched(outside: &Path) {
+        let left: Vec<_> = std::fs::read_dir(outside).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("credential")], "something was written outside the job directory");
+        assert_eq!(std::fs::read_to_string(outside.join("credential")).unwrap(), "secret");
+    }
+
+    /// The ch-ctk.1 reproduction: the job swaps its workspace for a link to the runner's home and
+    /// restores a cache. Nothing may land there.
+    #[cfg(unix)]
+    #[test]
+    fn a_workspace_swapped_for_a_link_is_refused_not_followed() {
+        let t = tempfile::tempdir().unwrap();
+        let (root, outside) = (t.path().join("job"), t.path().join("home"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("credential"), "secret").unwrap();
+        let src = t.path().join("src");
+        write(&src, "pwned.txt", "x");
+        write(&src, "credential", "replaced");
+        let archive = t.path().join("c.tar.gz");
+        pack(&src, &[PathBuf::from("pwned.txt"), PathBuf::from("credential")], &archive).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("workspace")).unwrap();
+        assert!(unpack(&archive, &root, &root.join("workspace")).is_err());
+        outside_is_untouched(&outside);
+    }
+
+    /// A directory inside the workspace that is a link, there before the restore or swapped in
+    /// while it runs, is refused for every entry below it.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_directory_inside_the_workspace_is_never_followed() {
+        let t = tempfile::tempdir().unwrap();
+        let (root, outside) = (t.path().join("job"), t.path().join("home"));
+        let ws = root.join("workspace");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("credential"), "secret").unwrap();
+        let src = t.path().join("src");
+        let mut rels = Vec::new();
+        for i in 0..400 {
+            write(&src, &format!("d/f{i}"), "x");
+            rels.push(PathBuf::from(format!("d/f{i}")));
+        }
+        write(&src, "d/credential", "replaced");
+        rels.push(PathBuf::from("d/credential"));
+        let archive = t.path().join("c.tar.gz");
+        pack(&src, &rels, &archive).unwrap();
+        // Before the restore.
+        std::os::unix::fs::symlink(&outside, ws.join("d")).unwrap();
+        assert!(unpack(&archive, &root, &ws).is_err());
+        outside_is_untouched(&outside);
+        // During it: another thread keeps swapping `d` between a directory and the link.
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let swapper = {
+            let (stop, d, outside) = (stop.clone(), ws.join("d"), outside.clone());
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = std::fs::remove_file(&d);
+                    let _ = std::fs::create_dir(&d);
+                    std::thread::yield_now();
+                    let aside = d.with_extension("old");
+                    let _ = std::fs::remove_dir_all(&aside);
+                    let _ = std::fs::rename(&d, &aside);
+                    let _ = std::os::unix::fs::symlink(&outside, &d);
+                }
+            })
+        };
+        for _ in 0..30 {
+            let _ = unpack(&archive, &root, &ws);
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        swapper.join().unwrap();
+        outside_is_untouched(&outside);
+    }
+
+    #[test]
+    fn modification_times_are_restored() {
+        let src = tempfile::tempdir().unwrap();
+        write(src.path(), "a.txt", "one");
+        let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+        std::fs::File::options().write(true).open(src.path().join("a.txt")).unwrap().set_modified(when).unwrap();
+        let archive = src.path().join("c.tar.gz");
+        pack(src.path(), &[PathBuf::from("a.txt")], &archive).unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        unpack(&archive, dest.path(), dest.path()).unwrap();
+        assert_eq!(std::fs::metadata(dest.path().join("a.txt")).unwrap().modified().unwrap(), when);
     }
 }

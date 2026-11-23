@@ -60,6 +60,11 @@ the one public CI route. Nothing in `ch-ci` reads an identity header.
 - **git** must emit `Push`, `PrOpened` and `PrSynchronized`, and for a pull request the objects at its
   head sha must be readable in the base repository (`refs/pull/<n>/head`) before `PrOpened` is emitted,
   because the workflow files are read from there.
+- **git and collab** mark a commit the server writes on top of a branch for someone (a file edit,
+  an applied suggestion, Update branch): `Push.server_built` and `PrSynchronized.built_on`. That
+  person vouches for their own change only, so CI counts them only when the commit under it is in
+  `pull_cleared_commits` (CI ran it at once) or was approved. Otherwise the new commit waits like
+  any commit nobody can be named for (ch-x12).
 - **collab** calls `Checks::required_satisfied` for the merge gate, and may read `Checks::combined`.
   A commit with no checks and no statuses is `Pending`, never `Success`.
 - **web** uses the `Ci` trait (new default-bodied methods: `availability`, `workflows`, `jobs`, `job`,

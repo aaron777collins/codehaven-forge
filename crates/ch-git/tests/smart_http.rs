@@ -66,6 +66,7 @@ async fn clone_commit_push_pull_round_trip(pool: PgPool) {
     assert_eq!(last["git_ref"], "refs/heads/main");
     assert_eq!(last["pusher"], w.alice.0);
     assert_eq!(last["forced"], false);
+    assert_eq!(last["server_built"], false, "the person pushed this commit themselves");
     assert!(w.f.state.repos.get(&w.f.actor(w.alice), w.repo.id).await.unwrap().pushed_at.is_some());
 }
 

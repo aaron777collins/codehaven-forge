@@ -14,6 +14,10 @@ use tokio_util::sync::CancellationToken;
 const ZERO: &str = "0000000000000000000000000000000000000000";
 
 async fn push(w: &World, branch: &str, before: &str, after: &str, pusher: Option<UserId>) {
+    push_built(w, branch, before, after, pusher, false).await
+}
+
+async fn push_built(w: &World, branch: &str, before: &str, after: &str, pusher: Option<UserId>, server_built: bool) {
     let mut tx = w.pool.begin().await.unwrap();
     w.core
         .d
@@ -28,6 +32,7 @@ async fn push(w: &World, branch: &str, before: &str, after: &str, pusher: Option
                 pusher,
                 forced: false,
                 app: None,
+                server_built,
             },
         )
         .await
@@ -131,6 +136,7 @@ async fn pushes_elsewhere_leave_pull_requests_alone(pool: PgPool) {
                 pusher: None,
                 forced: false,
                 app: None,
+                server_built: false,
             },
         )
         .await
@@ -148,6 +154,7 @@ async fn pushes_elsewhere_leave_pull_requests_alone(pool: PgPool) {
                 pusher: None,
                 forced: false,
                 app: None,
+                server_built: false,
             },
         )
         .await
@@ -316,4 +323,72 @@ async fn a_cancelled_consumer_stops_promptly(pool: PgPool) {
     for h in handles {
         tokio::time::timeout(std::time::Duration::from_secs(5), h).await.expect("worker stops within the time limit").unwrap();
     }
+}
+
+async fn last_payload(w: &World, kind: &str) -> serde_json::Value {
+    sqlx::query_scalar("SELECT payload FROM outbox_events WHERE kind = $1 ORDER BY id DESC LIMIT 1")
+        .bind(kind)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap()
+}
+
+/// ch-x12: the pusher on a push describes that push's own commit. When the branch moved on
+/// before the event was handled, the head holds a later commit nobody can be named for.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_push_names_its_pusher_only_for_its_own_commit(pool: PgPool) {
+    let w = World::new(pool).await;
+    let n = w.pull(w.carol, "x", "").await.pull.issue.number;
+    let start = w.git.sha_of_branch(w.repo, "feature");
+
+    // Bob pushes B, and the branch still holds B when the event is handled.
+    w.git.branch(w.repo, "feature", &sha_of(20));
+    push(&w, "feature", &start, &sha_of(20), Some(w.bob)).await;
+    sync::run_pr_sync_once(&w.core).await.unwrap();
+    let p = last_payload(&w, "pr_synchronized").await;
+    assert_eq!(
+        (p["head_sha"].as_str(), p["pusher"].as_i64(), p["origin_known"].as_bool()),
+        (Some(&*sha_of(20)), Some(w.bob.0), Some(true))
+    );
+
+    // Bob pushes C, then someone else pushes D before the first event is handled.
+    w.git.branch(w.repo, "feature", &sha_of(22));
+    push(&w, "feature", &sha_of(20), &sha_of(21), Some(w.bob)).await;
+    push(&w, "feature", &sha_of(21), &sha_of(22), Some(w.carol)).await;
+    sync::run_pr_sync_once(&w.core).await.unwrap();
+    let synced: Vec<serde_json::Value> = sqlx::query_scalar("SELECT payload FROM outbox_events WHERE kind = 'pr_synchronized' ORDER BY id")
+        .fetch_all(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 2, "one synchronize for the head that moved: {synced:?}");
+    let p = &synced[1];
+    assert_eq!(p["head_sha"].as_str(), Some(&*sha_of(22)));
+    assert!(p["pusher"].is_null(), "Bob did not push {}: {p}", sha_of(22));
+    assert_eq!(p["origin_known"].as_bool(), Some(false));
+    assert_eq!(w.core.pull_view(&w.carol_a(), w.repo, n).await.unwrap().pull.head_sha, sha_of(22));
+}
+
+/// ch-x12: a commit the server wrote on top of the branch for someone (a web edit, the contents
+/// API) holds what the branch held before. The synchronize says which commit that was, so CI
+/// counts the person only if that commit was itself let run. A plain push names nothing.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_commit_the_server_built_names_the_commit_under_it(pool: PgPool) {
+    let w = World::new(pool).await;
+    w.pull(w.carol, "x", "").await;
+    let start = w.git.sha_of_branch(w.repo, "feature");
+    w.git.branch(w.repo, "feature", &sha_of(30));
+    push(&w, "feature", &start, &sha_of(30), Some(w.bob)).await;
+    sync::run_pr_sync_once(&w.core).await.unwrap();
+    let p = last_payload(&w, "pr_synchronized").await;
+    assert!(p["built_on"].is_null(), "a push names nothing under it: {p}");
+
+    w.git.branch(w.repo, "feature", &sha_of(31));
+    push_built(&w, "feature", &sha_of(30), &sha_of(31), Some(w.bob), true).await;
+    sync::run_pr_sync_once(&w.core).await.unwrap();
+    let p = last_payload(&w, "pr_synchronized").await;
+    assert_eq!(
+        (p["head_sha"].as_str(), p["pusher"].as_i64(), p["built_on"].as_str()),
+        (Some(&*sha_of(31)), Some(w.bob.0), Some(&*sha_of(30))),
+        "{p}"
+    );
 }

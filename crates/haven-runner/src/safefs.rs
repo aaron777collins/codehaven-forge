@@ -10,7 +10,7 @@
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 fn invalid(msg: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, msg)
@@ -103,15 +103,102 @@ mod imp {
         let names = names_below(root, file)?;
         let Some((last, parents)) = names.split_last() else { return Err(invalid("no file name".into())) };
         let parent = descend(open_root(root)?, parents, false, 0)?;
-        // Non-blocking so that opening a FIFO returns at once; the check below then refuses it.
-        let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-        let fd = openat(&parent, last.as_os_str(), flags, Mode::empty())?;
+        let not_regular = || invalid(format!("{} is not a regular file", file.display()));
+        let fd = open_if_regular(&parent, last).map_err(|e| if e.kind() == io::ErrorKind::Unsupported { not_regular() } else { e })?;
         let st = fstat(&fd)?;
         if FileType::from_raw_mode(st.st_mode) != FileType::RegularFile {
-            return Err(invalid(format!("{} is not a regular file", file.display())));
+            return Err(not_regular());
         }
-        // Reads of a regular file never block, so the flag can stay.
+        // Reads of a regular file never block, so the non-blocking flag can stay.
         Ok(File::from(fd))
+    }
+
+    /// Opens `name` in `parent` for reading only when it is a regular file, so a device node or
+    /// FIFO the job made is never opened at all (opening one can have effects of its own). On
+    /// Linux the name is first opened as a bare handle (`O_PATH`, which opens nothing), checked,
+    /// and only then reopened through that handle, so nothing can be swapped in between. A
+    /// non-regular file comes back as `Unsupported`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn open_if_regular(parent: &OwnedFd, name: &OsString) -> io::Result<OwnedFd> {
+        use std::os::fd::AsRawFd;
+        let path = openat(parent, name.as_os_str(), OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?;
+        let st = fstat(&path)?;
+        if FileType::from_raw_mode(st.st_mode) != FileType::RegularFile {
+            return Err(io::Error::from(io::ErrorKind::Unsupported));
+        }
+        let fd = openat(
+            rustix::fs::CWD,
+            format!("/proc/self/fd/{}", path.as_raw_fd()),
+            OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        let again = fstat(&fd)?;
+        if (again.st_dev, again.st_ino) != (st.st_dev, st.st_ino) {
+            return Err(invalid("the file changed while it was opened".into()));
+        }
+        Ok(fd)
+    }
+
+    /// Elsewhere there is no `O_PATH`: the name is checked without following it, opened
+    /// non-blocking and checked again by handle. Only Linux runs jobs; this keeps tests working.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    fn open_if_regular(parent: &OwnedFd, name: &OsString) -> io::Result<OwnedFd> {
+        let st = statat(parent, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
+        if FileType::from_raw_mode(st.st_mode) != FileType::RegularFile {
+            return Err(io::Error::from(io::ErrorKind::Unsupported));
+        }
+        let fd = openat(parent, name.as_os_str(), OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC, Mode::empty())?;
+        let again = fstat(&fd)?;
+        if (again.st_dev, again.st_ino) != (st.st_dev, st.st_ino) {
+            return Err(invalid("the file changed while it was opened".into()));
+        }
+        Ok(fd)
+    }
+
+    /// Every regular file below `root`, relative to it and sorted. Each directory is opened from
+    /// its parent's handle with `O_NOFOLLOW`, so a directory the job swaps for a link mid-walk is
+    /// skipped, never followed out of the tree (ch-ctk.1). Unreadable or vanished entries are
+    /// skipped; more than `max` files is an error.
+    pub fn walk_files(root: &Path, max: usize) -> io::Result<Vec<PathBuf>> {
+        let fd = open_root(root)?;
+        let mut out = Vec::new();
+        walk(&fd, &PathBuf::new(), 0, max, &mut out)?;
+        out.sort();
+        Ok(out)
+    }
+
+    fn walk(fd: &OwnedFd, rel: &Path, depth: usize, max: usize, out: &mut Vec<PathBuf>) -> io::Result<()> {
+        if depth > MAX_DEPTH {
+            return Ok(());
+        }
+        let names = match entries(fd) {
+            Ok(n) => n,
+            Err(e) if matches!(e.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::NotFound) => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        for n in names {
+            let st = match statat(fd, n.as_os_str(), AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(st) => st,
+                Err(rustix::io::Errno::NOENT | rustix::io::Errno::ACCESS) => continue,
+                Err(e) => return Err(e.into()),
+            };
+            match FileType::from_raw_mode(st.st_mode) {
+                FileType::RegularFile => {
+                    out.push(rel.join(&n));
+                    if out.len() > max {
+                        return Err(invalid(format!("more than {max} files")));
+                    }
+                }
+                FileType::Directory => match openat(fd, n.as_os_str(), DIR, Mode::empty()) {
+                    Ok(sub) => walk(&sub, &rel.join(&n), depth + 1, max, out)?,
+                    // Gone, unreadable, or swapped for a link or a file since the stat.
+                    Err(rustix::io::Errno::NOENT | rustix::io::Errno::ACCESS | rustix::io::Errno::LOOP | rustix::io::Errno::NOTDIR) => {}
+                    Err(e) => return Err(e.into()),
+                },
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     /// The names in the directory `fd`, without `.` and `..`, read before any is changed.
@@ -226,65 +313,33 @@ mod imp {
     }
 }
 
+/// There is no way to open a path one component at a time without following links here, and a
+/// check of the path before using it can be raced. So every operation is refused: the runner
+/// runs jobs on Linux only, and fails closed anywhere else (ch-ctk.1).
 #[cfg(not(unix))]
 mod imp {
     use super::*;
 
-    fn check(root: &Path, path: &Path) -> io::Result<()> {
-        let mut p = root.to_path_buf();
-        for n in names_below(root, path)? {
-            p.push(n);
-            if std::fs::symlink_metadata(&p).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
-                return Err(invalid(format!("{} is a link", p.display())));
-            }
-        }
-        Ok(())
+    fn unsupported() -> io::Error {
+        io::Error::new(io::ErrorKind::Unsupported, "safe file access inside a job directory needs a Unix system")
     }
-    pub fn create_dir_all(root: &Path, dir: &Path, _mode: u32) -> io::Result<()> {
-        check(root, dir)?;
-        std::fs::create_dir_all(dir)
+    pub fn create_dir_all(_root: &Path, _dir: &Path, _mode: u32) -> io::Result<()> {
+        Err(unsupported())
     }
-    pub fn fresh_dir(root: &Path, dir: &Path, _mode: u32) -> io::Result<()> {
-        if std::fs::symlink_metadata(dir).is_ok_and(|m| !m.is_dir()) {
-            std::fs::remove_file(dir)?;
-        }
-        create_dir_all(root, dir, 0)
+    pub fn fresh_dir(_root: &Path, _dir: &Path, _mode: u32) -> io::Result<()> {
+        Err(unsupported())
     }
-    pub fn create_new(root: &Path, file: &Path, _mode: u32) -> io::Result<File> {
-        check(root, file)?;
-        let _ = std::fs::remove_file(file);
-        std::fs::OpenOptions::new().write(true).create_new(true).open(file)
+    pub fn create_new(_root: &Path, _file: &Path, _mode: u32) -> io::Result<File> {
+        Err(unsupported())
     }
-    pub fn open_regular(root: &Path, file: &Path) -> io::Result<File> {
-        check(root, file)?;
-        let f = File::open(file)?;
-        if !f.metadata()?.is_file() {
-            return Err(invalid(format!("{} is not a regular file", file.display())));
-        }
-        Ok(f)
+    pub fn open_regular(_root: &Path, _file: &Path) -> io::Result<File> {
+        Err(unsupported())
     }
-
-    pub fn move_into(root: &Path, from: &Path, to: &Path) -> io::Result<()> {
-        check(root, to)?;
-        merge(from, to)
+    pub fn walk_files(_root: &Path, _max: usize) -> io::Result<Vec<PathBuf>> {
+        Err(unsupported())
     }
-    fn merge(from: &Path, to: &Path) -> io::Result<()> {
-        for e in std::fs::read_dir(from)? {
-            let e = e?;
-            let (src, dst) = (e.path(), to.join(e.file_name()));
-            let src_dir = e.file_type()?.is_dir();
-            match std::fs::symlink_metadata(&dst) {
-                Ok(m) if m.is_dir() && src_dir && e.file_name() != ".git" => {
-                    merge(&src, &dst)?;
-                    continue;
-                }
-                Ok(m) if m.is_dir() => std::fs::remove_dir_all(&dst)?,
-                Ok(_) => std::fs::remove_file(&dst)?,
-                Err(_) => {}
-            }
-            std::fs::rename(&src, &dst)?;
-        }
-        Ok(())
+    pub fn move_into(_root: &Path, _from: &Path, _to: &Path) -> io::Result<()> {
+        Err(unsupported())
     }
 }
 
@@ -318,11 +373,29 @@ pub fn open_regular(root: &Path, file: &Path) -> io::Result<File> {
     imp::open_regular(root, file)
 }
 
-/// Reads `file` as `open_regular` opens it.
-pub fn read_to_string(root: &Path, file: &Path) -> io::Result<String> {
+/// Reads `file` as `open_regular` opens it. A file over `max` bytes is refused with
+/// `FileTooLarge` before anything is read, so a sparse file of any size cannot fill the runner's
+/// memory.
+pub fn read_to_string(root: &Path, file: &Path, max: u64) -> io::Result<String> {
+    let f = open_regular(root, file)?;
+    let too_large = || io::Error::new(io::ErrorKind::FileTooLarge, format!("{} is larger than {max} bytes", file.display()));
+    if f.metadata()?.len() > max {
+        return Err(too_large());
+    }
     let mut s = String::new();
-    open_regular(root, file)?.read_to_string(&mut s)?;
+    // The job may still be appending to it.
+    f.take(max + 1).read_to_string(&mut s)?;
+    if s.len() as u64 > max {
+        return Err(too_large());
+    }
     Ok(s)
+}
+
+/// Every regular file below `root`, as paths relative to it, sorted. `root` must not be a link,
+/// links below it are skipped, and no directory is entered through a link, even one swapped in
+/// during the walk. More than `max` files is an error.
+pub fn walk_files(root: &Path, max: usize) -> io::Result<Vec<std::path::PathBuf>> {
+    imp::walk_files(root, max)
 }
 
 /// Moves everything in `from`, a directory the job cannot reach, into `to`, a directory under
@@ -346,8 +419,8 @@ mod tests {
         std::fs::write(out.path().join("f"), "outside").unwrap();
         symlink(out.path(), root.path().join("d")).unwrap();
         symlink(out.path().join("f"), root.path().join("l")).unwrap();
-        assert!(read_to_string(root.path(), &root.path().join("d/f")).is_err());
-        assert!(read_to_string(root.path(), &root.path().join("l")).is_err());
+        assert!(read_to_string(root.path(), &root.path().join("d/f"), 1 << 20).is_err());
+        assert!(read_to_string(root.path(), &root.path().join("l"), 1 << 20).is_err());
         assert!(create_new(root.path(), &root.path().join("d/f"), 0o644).is_err());
         assert!(create_dir_all(root.path(), &root.path().join("d/x"), 0o755).is_err());
         assert_eq!(std::fs::read_to_string(out.path().join("f")).unwrap(), "outside");
@@ -375,14 +448,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let p = root.path().join("fifo");
         rustix::fs::mknodat(rustix::fs::CWD, &p, rustix::fs::FileType::Fifo, rustix::fs::Mode::from_raw_mode(0o644), 0).unwrap();
-        assert!(read_to_string(root.path(), &p).is_err());
+        assert!(read_to_string(root.path(), &p, 1 << 20).is_err());
     }
 
     #[test]
     fn paths_outside_the_root_are_refused() {
         let root = tempfile::tempdir().unwrap();
-        assert!(read_to_string(root.path(), Path::new("/etc/hostname")).is_err());
-        assert!(read_to_string(root.path(), &root.path().join("a/../../b")).is_err());
+        assert!(read_to_string(root.path(), Path::new("/etc/hostname"), 1 << 20).is_err());
+        assert!(read_to_string(root.path(), &root.path().join("a/../../b"), 1 << 20).is_err());
     }
 
     #[test]
@@ -418,5 +491,64 @@ mod tests {
         }
         assert!(!r.join("ws/.git/hooks").exists(), "an old .git is replaced whole, not merged");
         assert!(move_into(r, f, &r.join("nope/x")).is_err());
+    }
+
+    /// A FIFO or device node is refused before it is opened at all (inventory G2). A writer
+    /// blocked on opening a FIFO wakes the moment a reader opens it, so it shows whether
+    /// `open_regular` opened it.
+    #[test]
+    fn a_fifo_is_never_opened() {
+        let root = tempfile::tempdir().unwrap();
+        let p = root.path().join("fifo");
+        rustix::fs::mknodat(rustix::fs::CWD, &p, rustix::fs::FileType::Fifo, rustix::fs::Mode::from_raw_mode(0o644), 0).unwrap();
+        let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = {
+            let (p, opened) = (p.clone(), opened.clone());
+            std::thread::spawn(move || {
+                let f = std::fs::OpenOptions::new().write(true).open(&p);
+                opened.store(true, std::sync::atomic::Ordering::SeqCst);
+                drop(f);
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(open_regular(root.path(), &p).is_err());
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let was_opened = opened.load(std::sync::atomic::Ordering::SeqCst);
+        // Let the writer finish whatever happened.
+        let _reader = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new().read(true).custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32).open(&p)
+        };
+        writer.join().unwrap();
+        assert!(!was_opened, "open_regular opened the FIFO before refusing it");
+    }
+
+    #[test]
+    fn an_oversized_file_is_refused_before_it_is_read() {
+        let root = tempfile::tempdir().unwrap();
+        let p = root.path().join("big");
+        std::fs::File::create(&p).unwrap().set_len(1 << 30).unwrap();
+        let e = read_to_string(root.path(), &p, 1 << 20).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::FileTooLarge);
+        std::fs::write(&p, "small").unwrap();
+        assert_eq!(read_to_string(root.path(), &p, 1 << 20).unwrap(), "small");
+    }
+
+    #[test]
+    fn walking_lists_regular_files_and_skips_links() {
+        let root = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        std::fs::write(out.path().join("secret"), "x").unwrap();
+        std::fs::create_dir_all(root.path().join("a/b")).unwrap();
+        std::fs::write(root.path().join("a/b/f"), "x").unwrap();
+        std::fs::write(root.path().join("top"), "x").unwrap();
+        symlink(out.path(), root.path().join("a/l")).unwrap();
+        symlink(out.path().join("secret"), root.path().join("fl")).unwrap();
+        let got = walk_files(root.path(), 100).unwrap();
+        assert_eq!(got, vec![PathBuf::from("a/b/f"), PathBuf::from("top")]);
+        assert!(walk_files(root.path(), 1).is_err(), "more files than allowed");
+        let linked = tempfile::tempdir().unwrap();
+        symlink(root.path(), linked.path().join("ws")).unwrap();
+        assert!(walk_files(&linked.path().join("ws"), 100).is_err(), "a root that is a link is refused");
     }
 }

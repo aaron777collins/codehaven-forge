@@ -425,6 +425,10 @@ impl Core {
                     number: row.number,
                     actor: user,
                     app: actor.app_origin(base_repo.id),
+                    // The person opening it chose this head. A push that lands before CI
+                    // handles this event is judged by its own event instead.
+                    head_sha: Some(head_sha.clone()),
+                    pusher: Some(user),
                 },
             )
             .await?;

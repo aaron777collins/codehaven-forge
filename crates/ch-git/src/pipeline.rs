@@ -205,6 +205,7 @@ pub async fn record(core: &GitCore, ctx: &PushCtx, updates: &[RefUpdate]) -> Res
                         pusher,
                         forced: u.forced,
                         app: ctx.actor.app_origin(repo.id),
+                        server_built: ctx.server_built,
                     },
                 )
                 .await?;
@@ -240,6 +241,10 @@ pub struct RefChange {
     pub old: Option<String>,
     /// What it should point at. `None` deletes it.
     pub new: Option<String>,
+    /// True when the server wrote `new` on top of whatever the ref held, for the actor: a file
+    /// edit or Update branch. The push event says so, so CI does not count the actor for the
+    /// commits underneath (ch-x12). False when the actor named the commit.
+    pub server_built: bool,
 }
 
 impl GitCore {
@@ -279,7 +284,14 @@ impl GitCore {
             _ => false,
         };
         let update = RefUpdate { old: old.clone(), new: new.clone(), name: change.name.clone(), forced };
-        let ctx = PushCtx { actor: actor.clone(), repo: repo.id, client: client.clone(), origin, deploy_write: None };
+        let ctx = PushCtx {
+            actor: actor.clone(),
+            repo: repo.id,
+            client: client.clone(),
+            origin,
+            deploy_write: None,
+            server_built: change.server_built,
+        };
         // `require` has already run for the caller, and archived is checked in `check`.
         if let Err(msg) = authorize(self, &ctx, std::slice::from_ref(&update)).await {
             return Err(Error::forbidden(msg));

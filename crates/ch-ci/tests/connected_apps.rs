@@ -29,6 +29,7 @@ fn push_by_app(repo: RepoId, git: &GitRepo, w: &World, ci_allowed: bool) -> Doma
         pusher: Some(w.alice),
         forced: false,
         app: Some(AppOrigin { grant_id: GrantId(9), ci_allowed }),
+        server_built: false,
     }
 }
 

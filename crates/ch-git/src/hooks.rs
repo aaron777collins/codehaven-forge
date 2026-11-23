@@ -64,6 +64,9 @@ pub struct PushCtx {
     /// A deploy key pushing. `Some(true)` when it may write. Deploy keys are not accounts, so
     /// they are checked here and not by the permission service.
     pub deploy_write: Option<bool>,
+    /// The server wrote the new commit on top of the branch for the actor (see `RefChange`).
+    /// Always false for a client's push.
+    pub server_built: bool,
 }
 
 /// Pushes in flight, by push id.
@@ -294,7 +297,14 @@ mod tests {
     use super::*;
 
     fn ctx() -> PushCtx {
-        PushCtx { actor: Actor::Anonymous, repo: RepoId(1), client: ClientInfo::local(), origin: Origin::Push, deploy_write: None }
+        PushCtx {
+            actor: Actor::Anonymous,
+            repo: RepoId(1),
+            client: ClientInfo::local(),
+            origin: Origin::Push,
+            deploy_write: None,
+            server_built: false,
+        }
     }
 
     #[test]

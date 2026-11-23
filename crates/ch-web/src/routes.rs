@@ -227,6 +227,7 @@ pub fn build_for(mcp: bool) -> Registry {
         .post("/{owner}/{repo}/pulls/{number}/edit", pulls::edit_post)
         .post("/{owner}/{repo}/pulls/{number}/labels", pulls::labels_post)
         .post("/{owner}/{repo}/pulls/{number}/merge", pulls::merge_post)
+        .post("/{owner}/{repo}/pulls/{number}/approve-runs", pulls::approve_runs_post)
         .post("/{owner}/{repo}/pulls/{number}/review", pulls::review_post)
         .post("/{owner}/{repo}/pulls/{number}/inline", pulls::inline_post)
         .post("/{owner}/{repo}/pulls/{number}/resolve", pulls::resolve_post)

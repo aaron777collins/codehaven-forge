@@ -88,6 +88,7 @@ async fn an_owner_without_permission_gets_no_runs(pool: PgPool) {
         pusher: Some(w.bob),
         forced: false,
         app: None,
+        server_built: false,
     };
     assert_eq!(w.emit_and_process(ev).await.len(), 1);
     sqlx::query("UPDATE repositories SET has_actions = false WHERE id = $1").bind(repo.0).execute(w.pool()).await.unwrap();

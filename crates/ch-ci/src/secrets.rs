@@ -224,9 +224,16 @@ pub async fn resolve_for_job(ctx: &Ctx, repo: i64, names: &BTreeSet<String>, all
     Ok(out.into_iter().map(|(k, (_, v))| (k, v)).collect())
 }
 
-/// The variables a job may see: those it references, or all of them when it reads `vars`.
-pub async fn resolve_vars_for_job(ctx: &Ctx, repo: i64, names: &BTreeSet<String>, all: bool) -> Result<BTreeMap<String, String>> {
-    let vars = crate::runs::load_vars(ctx, repo).await?;
+/// The variables a job may see: those it references, or all of them when it reads `vars`. A
+/// fork's job sees none.
+pub async fn resolve_vars_for_job(
+    ctx: &Ctx,
+    repo: i64,
+    names: &BTreeSet<String>,
+    all: bool,
+    fork: bool,
+) -> Result<BTreeMap<String, String>> {
+    let vars = crate::runs::load_vars(ctx, repo, fork).await?;
     Ok(vars.into_iter().filter(|(k, _)| all || names.contains(k)).collect())
 }
 

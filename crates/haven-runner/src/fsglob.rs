@@ -88,6 +88,9 @@ fn relative_pattern(root: &Path, pattern: &str) -> Result<String, ()> {
     Ok(if rel == "." { "**".to_string() } else { rel })
 }
 
+/// The most files a walk of the workspace will list.
+pub const MAX_FILES: usize = 2_000_000;
+
 /// Every regular file under `root` that the patterns select, as paths relative to `root`,
 /// sorted. Symbolic links are skipped, whether to files or directories.
 pub fn expand(root: &Path, patterns: &[String]) -> Result<Vec<PathBuf>, GlobError> {
@@ -95,30 +98,26 @@ pub fn expand(root: &Path, patterns: &[String]) -> Result<Vec<PathBuf>, GlobErro
     if !c.has_include {
         return Ok(Vec::new());
     }
-    let mut out = Vec::new();
-    // Not even the root is followed when it is a link: the job can swap its workspace for one.
-    for entry in walkdir::WalkDir::new(root).follow_links(false).follow_root_links(false).sort_by_file_name() {
-        let entry = match entry {
-            Ok(e) => e,
-            // A file that vanishes mid-walk, or a directory we cannot read, is not fatal.
-            Err(e)
-                if e.io_error()
-                    .is_some_and(|io| matches!(io.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied)) =>
-            {
-                continue;
-            }
-            Err(e) => return Err(GlobError::Io(e.to_string())),
-        };
-        if !entry.file_type().is_file() {
-            continue;
+    // Walked from directory handles, never by path: not even the root is followed when it is a
+    // link, and a directory swapped for a link mid-walk is skipped (ch-ctk.1).
+    let all = match crate::safefs::walk_files(root, MAX_FILES) {
+        Ok(all) => all,
+        // No workspace, or one the job replaced with a link or a file: nothing to match.
+        Err(e)
+            if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory)
+                || rustix::io::Errno::from_io_error(&e) == Some(rustix::io::Errno::LOOP) =>
+        {
+            return Ok(Vec::new());
         }
-        let Ok(rel) = entry.path().strip_prefix(root) else { continue };
+        Err(e) => return Err(GlobError::Io(e.to_string())),
+    };
+    let mut out = Vec::new();
+    for rel in all {
         let rel_str = rel.to_string_lossy().replace('\\', "/");
         if c.include.is_match(&rel_str) && !c.exclude.is_match(&rel_str) {
-            out.push(rel.to_path_buf());
+            out.push(rel);
         }
     }
-    out.sort();
     Ok(out)
 }
 
@@ -312,5 +311,57 @@ mod tests {
         outer.update(Sha256::digest(b"one"));
         outer.update(Sha256::digest(b"two"));
         assert_eq!(hash_files(d.path(), &pats(&["*"])).unwrap(), hex::encode(outer.finalize()));
+    }
+
+    /// The race the old path-based walk lost (inventory C1): a directory that is real when the
+    /// walk looks at it and a link to somewhere else by the time the walk opens it. Another
+    /// thread keeps swapping it while the walk runs; no name from outside may ever turn up.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_swapped_for_a_link_mid_walk_is_never_entered() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let d = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        for i in 0..50 {
+            std::fs::write(outside.path().join(format!("outside-{i}")), "x").unwrap();
+        }
+        // Plenty of directories, so the walk spends time between looking at and opening each.
+        for i in 0..200 {
+            std::fs::create_dir_all(d.path().join(format!("d{i:03}"))).unwrap();
+            std::fs::write(d.path().join(format!("d{i:03}/f")), "x").unwrap();
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let swappers: Vec<_> = (0..4)
+            .map(|t| {
+                let (stop, root, out) = (stop.clone(), d.path().to_path_buf(), outside.path().to_path_buf());
+                std::thread::spawn(move || {
+                    let mut i = t;
+                    while !stop.load(Ordering::Relaxed) {
+                        let dir = root.join(format!("d{:03}", i % 200));
+                        let aside = root.join(format!("aside-{t}"));
+                        if std::fs::rename(&dir, &aside).is_ok() {
+                            let _ = std::os::unix::fs::symlink(&out, &dir);
+                            std::thread::yield_now();
+                            let _ = std::fs::remove_file(&dir);
+                            let _ = std::fs::rename(&aside, &dir);
+                        }
+                        i += 4;
+                    }
+                })
+            })
+            .collect();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut leaked = Vec::new();
+        while std::time::Instant::now() < deadline && leaked.is_empty() {
+            if let Ok(found) = expand(d.path(), &pats(&["**"])) {
+                leaked = names(found).into_iter().filter(|n| n.contains("outside-")).collect();
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        for s in swappers {
+            s.join().unwrap();
+        }
+        assert!(leaked.is_empty(), "the walk followed a link out of the tree: {leaked:?}");
     }
 }

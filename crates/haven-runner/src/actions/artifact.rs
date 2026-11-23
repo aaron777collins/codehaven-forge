@@ -82,10 +82,17 @@ pub fn zip_files(workspace: &Path, root: &Path, files: &[PathBuf], out: &Path) -
     let mut z = zip::ZipWriter::new(f);
     for rel in files {
         let full = workspace.join(rel);
-        let meta = match std::fs::symlink_metadata(&full) {
-            Ok(m) if m.file_type().is_file() => m,
-            _ => continue,
+        // Opened one directory at a time without following any link, and its size and mode read
+        // from the open handle, so nothing outside the workspace is opened or even looked at
+        // (ch-ctk.1). A file that is gone or became a link since the walk is left out.
+        let mut src = match crate::safefs::open_regular(workspace, &full) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::debug!("artifact: skipping {}: {e}", rel.display());
+                continue;
+            }
         };
+        let meta = src.metadata().with_context(|| format!("reading {}", full.display()))?;
         let entry = rel.strip_prefix(root).unwrap_or(rel).to_string_lossy().replace('\\', "/");
         let mut opts =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).large_file(meta.len() >= 0xFFFF_FFFF);
@@ -95,8 +102,6 @@ pub fn zip_files(workspace: &Path, root: &Path, files: &[PathBuf], out: &Path) -
             opts = opts.unix_permissions(meta.permissions().mode() & 0o777);
         }
         z.start_file(entry, opts)?;
-        // Opened without following any link, so a link swapped in after the walk is refused.
-        let mut src = crate::safefs::open_regular(workspace, &full).with_context(|| format!("reading {}", full.display()))?;
         std::io::copy(&mut src, &mut z)?;
     }
     let mut f = z.finish()?;

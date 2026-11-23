@@ -138,7 +138,14 @@ impl GitCore {
             return Err(Error::Validation(vec![ch_core::FieldError::new("Reference", "ref", "already_exists")]));
         }
         let origin = if actor.is_system() { Origin::System } else { Origin::Web };
-        self.apply_ref_change(actor, &repo, RefChange { name: full, old: None, new: Some(sha.to_string()) }, origin, client).await
+        self.apply_ref_change(
+            actor,
+            &repo,
+            RefChange { name: full, old: None, new: Some(sha.to_string()), server_built: false },
+            origin,
+            client,
+        )
+        .await
     }
 
     pub(crate) async fn do_delete_ref(&self, actor: &Actor, repo_id: RepoId, name: &str, client: &ClientInfo) -> Result<()> {
@@ -152,7 +159,7 @@ impl GitCore {
         let raw = self.exec(self.git(repo_id).args(["rev-parse", "--verify", "--quiet", &full])).await?.stdout_str();
         let old = if is_sha(&raw) { raw } else { current.sha };
         let origin = if actor.is_system() { Origin::System } else { Origin::Web };
-        self.apply_ref_change(actor, &repo, RefChange { name: full, old: Some(old), new: None }, origin, client).await
+        self.apply_ref_change(actor, &repo, RefChange { name: full, old: Some(old), new: None, server_built: false }, origin, client).await
     }
 
     pub(crate) async fn do_update_ref(
@@ -184,7 +191,14 @@ impl GitCore {
             return Err(Error::invalid("Reference", "sha", "that update is not a fast-forward"));
         }
         let origin = if actor.is_system() { Origin::System } else { Origin::Web };
-        self.apply_ref_change(actor, &repo, RefChange { name: full, old: Some(old), new: Some(sha.to_string()) }, origin, client).await
+        self.apply_ref_change(
+            actor,
+            &repo,
+            RefChange { name: full, old: Some(old), new: Some(sha.to_string()), server_built: false },
+            origin,
+            client,
+        )
+        .await
     }
 
     /// Create, edit, rename and delete files in one commit, then move the branch.
@@ -330,7 +344,14 @@ impl GitCore {
             None => (source_ref, base.clone()),
         };
         let origin = if actor.is_system() { Origin::System } else { Origin::Web };
-        self.apply_ref_change(actor, &repo, RefChange { name: target, old, new: Some(new_sha.clone()) }, origin, client).await?;
+        self.apply_ref_change(
+            actor,
+            &repo,
+            RefChange { name: target, old, new: Some(new_sha.clone()), server_built: true },
+            origin,
+            client,
+        )
+        .await?;
         Ok(new_sha)
     }
 
@@ -496,7 +517,9 @@ impl GitCore {
             }
         };
 
-        let change = RefChange { name: base_ref, old: Some(base), new: Some(new_sha.clone()) };
+        // Update branch builds on whatever the head branch holds, for the person who clicked, so
+        // its push says so (ch-x12). A gated merge into the base is the merge the person chose.
+        let change = RefChange { name: base_ref, old: Some(base), new: Some(new_sha.clone()), server_built: req.update_branch };
         // "Update branch" writes into a pull request's head branch, past no merge gate, so it is a
         // direct write as far as branch protection goes (ch-jnm).
         let origin = if req.update_branch { Origin::Web } else { Origin::PullRequestMerge };

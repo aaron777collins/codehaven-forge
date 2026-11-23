@@ -80,7 +80,15 @@ mod tests {
     use ch_core::{PullId, RepoId, UserId};
 
     fn ev(n: i64) -> DomainEvent {
-        DomainEvent::PrOpened { repo_id: RepoId(1), pull_id: PullId(n), number: n, actor: UserId(1), app: None }
+        DomainEvent::PrOpened {
+            repo_id: RepoId(1),
+            pull_id: PullId(n),
+            number: n,
+            actor: UserId(1),
+            app: None,
+            head_sha: None,
+            pusher: Some(UserId(1)),
+        }
     }
 
     async fn emit_one(bus: &PgEventBus, pool: &PgPool, n: i64) -> i64 {
