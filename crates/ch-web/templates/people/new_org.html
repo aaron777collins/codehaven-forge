@@ -12,7 +12,7 @@
         <label for="name">Organization name</label>
         <input id="name" name="name" type="text" value="{{ name }}" maxlength="39" required>
         {% call ui::field_error(errors.get("name")) %}
-        <p class="hint">Letters, numbers, dashes, dots and underscores. It becomes part of your repository addresses.</p>
+        <p class="hint">Up to 39 letters, numbers and single hyphens, starting and ending with a letter or number. It becomes part of your repository addresses.</p>
       </div>
       <div class="field">
         <label for="display_name">Display name <span class="muted">(optional)</span></label>

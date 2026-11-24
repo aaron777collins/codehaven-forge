@@ -202,15 +202,16 @@ async fn base_moved(core: &Core, repo: RepoId, branch: &str, _before: &str, afte
 
 /// True when every commit of the pull request is already on the base now.
 async fn merged_by_push(core: &Core, issue: &IssueRow, pull: &PullRow, base_tip: &str) -> Result<bool> {
-    let head = match core.d.git.resolve(pull.head_repo(), &full_branch(&pull.head_ref)).await {
-        Ok(h) => h,
-        Err(_) => pull.head_sha.clone(),
+    // A deleted fork's head stays where it was. The base's branch of that name is not it.
+    let head = match pull.head_repo() {
+        Some(head_repo) => core.d.git.resolve(head_repo, &full_branch(&pull.head_ref)).await.unwrap_or_else(|_| pull.head_sha.clone()),
+        None => pull.head_sha.clone(),
     };
     if head == pull.base_sha {
         return Ok(false);
     }
     // A head that never left the base (no commits of its own) is not "merged".
-    match core.d.git.compare(pull.git_repo(), base_tip, &head).await {
+    match core.compare_pull(pull, base_tip, &head).await {
         Ok(c) => Ok(c.ahead_by == 0 && c.commits.is_empty() && c.merge_base == head && issue.open),
         Err(_) => Ok(false),
     }

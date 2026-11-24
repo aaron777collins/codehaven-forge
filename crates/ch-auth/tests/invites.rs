@@ -281,3 +281,41 @@ async fn revoke_and_audit(pool: PgPool) {
         .unwrap();
     assert_eq!(leaked, 0);
 }
+
+/// ch-m5i: an invite for an email that already belongs to an account could never be used, so
+/// it is refused when made, with a way forward.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn an_invite_for_an_email_already_in_use_is_refused(pool: PgPool) {
+    let c = ctx(pool).await;
+    let (_, admin) = site_admin(&c, "alice").await;
+    match c.state.invites.create(&admin, new_invite(Some("ALICE@example.org")), &c1()).await {
+        Err(Error::Validation(v)) => assert!(format!("{v:?}").contains("An account already uses this email"), "{v:?}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(c.state.invites.create(&admin, new_invite(Some("bob@example.org")), &c1()).await.is_ok());
+}
+
+/// ch-bfa: asking for a reset link by email. It names only an active person with an email, at
+/// most once in ten minutes, and ends no session until it is used, since anyone can ask.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_reset_link_by_email_is_limited_and_signs_out_only_when_used(pool: PgPool) {
+    let c = ctx(pool).await;
+    let bob = make_user(&c, "bob", false).await;
+    let (cookie, _) = session(&c, "bob").await;
+    let (email, link) = c.state.accounts.request_password_reset("bob", &c1()).await.unwrap().expect("a link for bob");
+    assert_eq!(email, "bob@example.org");
+    assert!(link.path.starts_with("/password/cho_"));
+    assert!(c.state.accounts.request_password_reset("BOB@example.org", &c1()).await.unwrap().is_none(), "once in ten minutes");
+    assert!(c.state.accounts.request_password_reset("nobody", &c1()).await.unwrap().is_none());
+    assert!(c.state.accounts.request_password_reset("", &c1()).await.unwrap().is_none());
+    // Asking signed nobody out.
+    assert!(actor_for_cookie(&c, &cookie).await.user_id().is_some(), "the request alone ends no session");
+    // Using it does.
+    c.state.sessions.redeem_link(&link.token, "a much newer passphrase 42", &c1()).await.unwrap();
+    assert!(actor_for_cookie(&c, &cookie).await.user_id().is_none(), "redeeming signs out everywhere");
+    // A suspended account gets nothing.
+    let carol = make_user(&c, "carol", false).await;
+    c.state.accounts.suspend(&Actor::System, carol, &c1()).await.unwrap();
+    assert!(c.state.accounts.request_password_reset("carol", &c1()).await.unwrap().is_none());
+    let _ = bob;
+}

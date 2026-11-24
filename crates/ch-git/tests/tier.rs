@@ -149,3 +149,40 @@ async fn widening_a_parent_first_makes_old_borrowing_forks_independent(pool: PgP
     let fsck = f.core.store.cmd(fork.id).args(["fsck", "--connectivity-only"]).run().await;
     assert!(fsck.is_ok(), "and is complete on its own: {fsck:?}");
 }
+
+/// ch-8tj and ch-ugt: forks are listed and counted only when the viewer can read them, anyone
+/// signed in who can see an internal repository may fork and star it, and a star is per person.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn forks_and_stars_follow_what_each_person_can_see(pool: PgPool) {
+    let f = Fixture::new(pool).await;
+    let (alice, bob, carol, dave) = (f.user("alice").await, f.user("bob").await, f.user("carol").await, f.user("dave").await);
+    let root = f.repo(alice, "proj", true).await;
+    f.state.repos.set_tier(&f.actor(alice), root.id, Visibility::Internal, &f.client()).await.unwrap();
+    // Bob has no grant: the tier lets him fork into his own account, at most internal.
+    let open = f.state.repos.fork_as(&f.actor(bob), root.id, bob, Visibility::Internal, &f.client()).await.unwrap();
+    let hidden = f.state.repos.fork(&f.actor(carol), root.id, carol, &f.client()).await.unwrap();
+    assert_eq!(hidden.visibility, Visibility::Private, "a fork starts private");
+
+    let names = |v: Vec<Repo>| v.into_iter().map(|r| r.full_name()).collect::<Vec<_>>();
+    assert_eq!(names(f.state.repos.forks(&f.actor(dave), root.id).await.unwrap()), vec!["bob/proj"]);
+    let mut carols = names(f.state.repos.forks(&f.actor(carol), root.id).await.unwrap());
+    carols.sort();
+    assert_eq!(carols, vec!["bob/proj", "carol/proj"]);
+    assert_eq!(f.state.repos.social(&f.actor(dave), root.id).await.unwrap().forks, 1, "carol's private fork is not counted for dave");
+    assert_eq!(f.state.repos.social(&f.actor(carol), root.id).await.unwrap().forks, 2);
+
+    f.state.repos.set_star(&f.actor(dave), root.id, true).await.unwrap();
+    f.state.repos.set_star(&f.actor(dave), root.id, true).await.unwrap();
+    let s = f.state.repos.social(&f.actor(dave), root.id).await.unwrap();
+    assert_eq!((s.stars, s.starred), (1, true), "starring twice is one star");
+    assert!(!f.state.repos.social(&f.actor(bob), root.id).await.unwrap().starred);
+    f.state.repos.set_star(&f.actor(dave), root.id, false).await.unwrap();
+    assert_eq!(f.state.repos.social(&f.actor(dave), root.id).await.unwrap().stars, 0);
+
+    // Nothing about a private repository for someone who cannot read it, and no anonymous star.
+    let private = f.repo(alice, "secret", true).await;
+    assert!(matches!(f.state.repos.set_star(&f.actor(dave), private.id, true).await, Err(Error::NotFound)));
+    assert!(matches!(f.state.repos.forks(&f.actor(dave), private.id).await, Err(Error::NotFound)));
+    assert!(f.state.repos.set_star(&Actor::Anonymous, root.id, true).await.is_err());
+    let _ = open;
+}

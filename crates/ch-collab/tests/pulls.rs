@@ -235,3 +235,41 @@ async fn reopening_names_nobody_as_the_pusher(pool: PgPool) {
     assert!(opened[1]["pusher"].is_null(), "reopening is not pushing: {}", opened[1]);
     assert_eq!(opened[1]["actor"].as_i64(), Some(w.bob.0));
 }
+
+/// ch-8tj: someone with no grant on the base sends a pull request from their own fork only.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn without_a_grant_a_pull_request_comes_from_your_own_fork(pool: PgPool) {
+    let w = World::new(pool).await;
+    sqlx::query("UPDATE repositories SET access_tier = 'internal' WHERE id = $1").bind(w.repo).execute(&w.pool).await.unwrap();
+    let fork_of = |owner: ch_core::UserId| {
+        let pool = w.pool.clone();
+        let base = w.repo;
+        async move {
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO repositories (owner_id, name, visibility, fork_parent_id, fork_root_id) VALUES ($1, 'demo', 'public', $2, $2) RETURNING id",
+            )
+            .bind(owner)
+            .bind(base)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            RepoId(id)
+        }
+    };
+    let bobs = fork_of(w.bob).await;
+    let eves = fork_of(w.eve).await;
+    w.git.branch(bobs, "patch", &sha_of(9));
+    w.git.branch(eves, "patch", &sha_of(9));
+    let mut np = new_pull(&w, "patch", "main");
+    np.head_repo_id = bobs;
+    let r = w.core.pull_create(&w.a(w.eve), np.clone(), &w.c()).await;
+    assert!(matches!(&r, Err(Error::Validation(v)) if format!("{v:?}").contains("a fork you own")), "someone else's fork: {r:?}");
+    np.head_ref = "feature".into();
+    np.head_repo_id = w.repo;
+    let r = w.core.pull_create(&w.a(w.eve), np.clone(), &w.c()).await;
+    assert!(matches!(&r, Err(Error::Validation(v)) if format!("{v:?}").contains("a fork you own")), "a branch of the base: {r:?}");
+    np.head_ref = "patch".into();
+    np.head_repo_id = eves;
+    let v = w.core.pull_create(&w.a(w.eve), np, &w.c()).await.unwrap();
+    assert_eq!(v.pull.head_repo_id, Some(eves));
+}

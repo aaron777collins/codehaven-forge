@@ -380,20 +380,42 @@ async fn review_requests(pool: PgPool) {
     assert!(matches!(w.core.review_request(&w.a(frank), w.repo, n, vec![w.bob], vec![], &w.c()).await, Err(Error::Forbidden(_))));
     assert!(matches!(w.core.review_remove_request(&w.a(frank), w.repo, n, vec![w.bob], vec![], &w.c()).await, Err(Error::Forbidden(_))));
 
-    let team = w.team("acme", "docs").await;
-    w.core.review_request(&w.dave_a(), w.repo, n, vec![], vec![team], &w.c()).await.unwrap();
-    let asked = w.core.review_requested(&w.carol_a(), w.repo, n).await.unwrap();
-    assert_eq!((asked.teams[0].org.as_str(), asked.teams[0].name.as_str()), ("acme", "docs"));
+    // A team of an organization that does not own this repository cannot be asked (ch-4dv).
+    let stray = w.team("acme", "docs").await;
+    assert!(is_validation(&w.core.review_request(&w.dave_a(), w.repo, n, vec![], vec![stray], &w.c()).await));
     assert!(is_validation(&w.core.review_request(&w.dave_a(), w.repo, n, vec![], vec![ch_core::TeamId(999_999)], &w.c()).await));
 
-    w.core.review_remove_request(&w.carol_a(), w.repo, n, vec![w.bob], vec![team], &w.c()).await.unwrap();
+    w.core.review_remove_request(&w.carol_a(), w.repo, n, vec![w.bob], vec![], &w.c()).await.unwrap();
     let asked = w.core.review_requested(&w.carol_a(), w.repo, n).await.unwrap();
     assert_eq!((asked.users.len(), asked.teams.len()), (1, 0));
     let kinds: Vec<String> = w.core.timeline(&w.carol_a(), w.repo, n).await.unwrap().into_iter().map(|e| e.kind).collect();
-    assert_eq!(kinds.iter().filter(|k| *k == "review_request_removed").count(), 2);
+    assert_eq!(kinds.iter().filter(|k| *k == "review_request_removed").count(), 1);
     // A closed pull request takes no new requests.
     w.core.pull_close(&w.carol_a(), w.repo, n, &w.c()).await.unwrap();
     assert!(is_validation(&w.core.review_request(&w.carol_a(), w.repo, n, vec![w.bob], vec![], &w.c()).await));
+}
+
+/// The author asks for reviews only with a grant. Read that comes from the repository's tier
+/// alone is not one (ch-4dv), the way it is not one for contributing.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn an_author_without_a_grant_cannot_request_reviews(pool: PgPool) {
+    let w = World::new(pool).await;
+    let n = open(&w).await;
+    w.core.review_request(&w.carol_a(), w.repo, n, vec![w.dave], vec![], &w.c()).await.unwrap();
+    // Carol loses her grant, and the repository still lets every account read it.
+    sqlx::query("UPDATE repositories SET visibility = 'public' WHERE id = $1").bind(w.repo).execute(&w.pool).await.unwrap();
+    sqlx::query("DELETE FROM repo_collaborators WHERE repo_id = $1 AND user_id = $2")
+        .bind(w.repo)
+        .bind(w.carol)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    assert!(matches!(w.core.review_request(&w.carol_a(), w.repo, n, vec![w.bob], vec![], &w.c()).await, Err(Error::Forbidden(_))));
+    assert!(matches!(w.core.review_remove_request(&w.carol_a(), w.repo, n, vec![w.dave], vec![], &w.c()).await, Err(Error::Forbidden(_))));
+    let asked = w.core.review_requested(&w.alice_a(), w.repo, n).await.unwrap();
+    assert_eq!(asked.users.iter().map(|u| u.username.as_str()).collect::<Vec<_>>(), vec!["dave"]);
+    // Someone with triage still can.
+    w.core.review_request(&w.dave_a(), w.repo, n, vec![w.bob], vec![], &w.c()).await.unwrap();
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
@@ -461,4 +483,42 @@ async fn author_association_follows_github(pool: PgPool) {
     w.core.review_submit(&w.bob_a(), w.repo, n, ReviewState::Approved, "", vec![], &w.c()).await.unwrap();
     let views = w.core.review_views(&w.alice_a(), w.repo, n).await.unwrap();
     assert_eq!(views[0].association, "COLLABORATOR");
+}
+
+/// ch-4dv: a requested team carries its real access to the repository, not a fixed "pull".
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_requested_team_shows_its_access_to_the_repository(pool: PgPool) {
+    let w = World::new(pool).await;
+    let core_team = w.team("haven", "core").await;
+    let org: i64 = sqlx::query_scalar("SELECT org_id FROM teams WHERE id = $1").bind(core_team).fetch_one(&w.pool).await.unwrap();
+    let docs: i64 =
+        sqlx::query_scalar("INSERT INTO teams (org_id, name) VALUES ($1, 'docs') RETURNING id").bind(org).fetch_one(&w.pool).await.unwrap();
+    let repo = w.env.repo(ch_core::UserId(org), "lib").await;
+    sqlx::query("INSERT INTO team_repos (team_id, repo_id, permission) VALUES ($1, $2, 'write')")
+        .bind(core_team)
+        .bind(repo)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let issue: i64 = sqlx::query_scalar(
+        "INSERT INTO issues (repo_id, number, author_id, title, body, is_pull) VALUES ($1, 1, $2, 'x', '', true) RETURNING id",
+    )
+    .bind(repo)
+    .bind(w.alice)
+    .fetch_one(&w.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO pull_requests (issue_id, repo_id, head_repo_id, head_ref, head_sha, base_ref, base_sha) VALUES ($1, $2, $2, 'f', 'a', 'main', 'b')")
+        .bind(issue)
+        .bind(repo)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    for t in [core_team.0, docs] {
+        sqlx::query("INSERT INTO review_requests (pull_id, team_id) VALUES ($1, $2)").bind(issue).bind(t).execute(&w.pool).await.unwrap();
+    }
+    let admin = session(w.alice, true);
+    let asked = w.core.review_requested(&admin, repo, 1).await.unwrap();
+    let perms: Vec<(&str, Option<&str>)> = asked.teams.iter().map(|t| (t.name.as_str(), t.permission.as_deref())).collect();
+    assert_eq!(perms, vec![("core", Some("push")), ("docs", None)]);
 }

@@ -132,7 +132,9 @@ fn build(qb: &mut QueryBuilder<'_, Postgres>, spec: &Spec, plan: &Plan) {
     if let Some((owner, branch)) = &spec.head {
         qb.push(" AND EXISTS (SELECT 1 FROM pull_requests p WHERE p.issue_id = i.id AND p.head_ref = ").push_bind(branch.clone());
         if let Some(o) = owner {
-            qb.push(" AND COALESCE(p.head_repo_id, p.repo_id) IN (SELECT r.id FROM repositories r JOIN users u ON u.id = r.owner_id WHERE u.username = ")
+            qb.push(" AND ");
+            qb.push(crate::pulls::HEAD_REPO_SQL);
+            qb.push(" IN (SELECT r.id FROM repositories r JOIN users u ON u.id = r.owner_id WHERE u.username = ")
                 .push_bind(o.clone())
                 .push("::citext)");
         }

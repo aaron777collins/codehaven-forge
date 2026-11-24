@@ -1,0 +1,30 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<h2 class="page-h">Fork {{ full_name }}</h2>
+<p class="muted">A fork is your own copy of this repository. Change it freely, then send a pull request back. <a href="{{ base }}/forks">See the forks you can read</a>.</p>
+<form method="post" action="{{ base }}/fork" class="card pad stack">
+  {% call ui::csrf_field(c.csrf) %}
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="field">
+    <label for="owner_id">Owner</label>
+    <select id="owner_id" name="owner_id">
+      {% for o in owners %}<option value="{{ o.id }}"{% if o.selected %} selected{% endif %}>{{ o.login }}</option>{% endfor %}
+    </select>
+    {% call ui::field_error(errors.get("owner_id")) %}
+    <p class="hint">Organizations you own also appear here.</p>
+  </div>
+  <fieldset class="field">
+    <legend>Visibility</legend>
+    <label class="choice"><input type="radio" name="visibility" value="private"{% if tier == "private" %} checked{% endif %}> <strong>Private.</strong> {{ text_private }}</label>
+    <label class="choice"><input type="radio" name="visibility" value="internal"{% if tier == "internal" %} checked{% endif %}{% if !allow_internal %} disabled{% endif %}> <strong>Internal.</strong> {{ text_internal }}{% if !allow_internal %} <span class="hint">{{ cap_text }}</span>{% endif %}</label>
+    <label class="choice"><input type="radio" name="visibility" value="public"{% if tier == "public" %} checked{% endif %}{% if !allow_public %} disabled{% endif %}> <strong>Public.</strong> {{ text_public }}{% if !switch_on %} <span class="hint">Public repositories are off on this server.</span>{% else if !allow_public %} <span class="hint">{{ cap_text }}</span>{% endif %}</label>
+    {% call ui::field_error(errors.get("visibility")) %}
+    <p class="hint">A public fork is made private first, then you confirm it on the next page.</p>
+  </fieldset>
+  <div class="row">
+    <button class="btn btn-primary" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-git-fork"/></svg>Create fork</button>
+    <a class="btn btn-quiet" href="{{ base }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

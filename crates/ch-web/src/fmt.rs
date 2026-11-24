@@ -95,6 +95,43 @@ pub fn plural(n: i64, one: &str, many: &str) -> String {
     if n == 1 { format!("{n} {one}") } else { format!("{n} {many}") }
 }
 
+/// A title as HTML: escaped, with `backtick` spans drawn as code, the way issue and pull
+/// request titles read on GitHub. An unpaired backtick stays as it is.
+pub fn title_html(title: &str) -> String {
+    fn esc(s: &str, out: &mut String) {
+        for ch in s.chars() {
+            match ch {
+                '&' => out.push_str("&amp;"),
+                '<' => out.push_str("&lt;"),
+                '>' => out.push_str("&gt;"),
+                '"' => out.push_str("&quot;"),
+                '\'' => out.push_str("&#39;"),
+                c => out.push(c),
+            }
+        }
+    }
+    let mut out = String::with_capacity(title.len() + 16);
+    let mut rest = title;
+    while let Some(open) = rest.find('`') {
+        esc(&rest[..open], &mut out);
+        let after = &rest[open + 1..];
+        match after.find('`') {
+            Some(close) if close > 0 => {
+                out.push_str("<code>");
+                esc(&after[..close], &mut out);
+                out.push_str("</code>");
+                rest = &after[close + 1..];
+            }
+            _ => {
+                out.push('`');
+                rest = after;
+            }
+        }
+    }
+    esc(rest, &mut out);
+    out
+}
+
 pub fn short_sha(sha: &str) -> String {
     sha.chars().take(7).collect()
 }
@@ -270,5 +307,15 @@ mod tests {
         assert_eq!(status("queued", None).class, "queued");
         assert_eq!(status("completed", Some("cancelled")).class, "cancel");
         assert!(is_active("queued") && !is_active("completed"));
+    }
+
+    #[test]
+    fn titles_draw_backtick_spans_as_code_and_escape_the_rest() {
+        assert_eq!(title_html("Fix `ch-web` <b>"), "Fix <code>ch-web</code> &lt;b&gt;");
+        assert_eq!(title_html("a `b` and `c`"), "a <code>b</code> and <code>c</code>");
+        assert_eq!(title_html("one ` alone"), "one ` alone");
+        assert_eq!(title_html("empty `` pair"), "empty `` pair");
+        assert_eq!(title_html("`<script>`"), "<code>&lt;script&gt;</code>");
+        assert_eq!(title_html("plain"), "plain");
     }
 }

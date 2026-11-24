@@ -312,12 +312,20 @@ impl Fanout {
                 continue;
             }
             let as_user = Actor::User { id: UserId(user), is_admin: false, has_2fa: false, via: AuthVia::Session };
-            if self.authz.repo_permission(&as_user, RepoId(s.repo)).await? < Permission::Read {
+            // Anyone who can see the repository with an account (ch-4pn: fanout needs View).
+            if self.authz.repo_permission(&as_user, RepoId(s.repo)).await? < Permission::View {
                 continue;
             }
             sqlx::query(
                 "INSERT INTO notifications (user_id, repo_id, reason, subject_type, subject_id, title, unread, done, updated_at) VALUES ($1, $2, $3, $4, $5, $6, true, false, now())
-                 ON CONFLICT (user_id, subject_type, subject_id) DO UPDATE SET reason = EXCLUDED.reason, title = EXCLUDED.title, repo_id = EXCLUDED.repo_id, unread = true, done = false, updated_at = now()",
+                 ON CONFLICT (user_id, subject_type, subject_id) DO UPDATE SET
+                   -- While unread, a mention stays a mention: being assigned right after it
+                   -- still reads as the mention. Everything else says what happened last.
+                   reason = CASE WHEN notifications.unread AND NOT notifications.done
+                                  AND notifications.reason IN ('mention', 'team_mention')
+                                  AND EXCLUDED.reason NOT IN ('mention', 'team_mention')
+                                 THEN notifications.reason ELSE EXCLUDED.reason END,
+                   title = EXCLUDED.title, repo_id = EXCLUDED.repo_id, unread = true, done = false, updated_at = now()",
             )
             .bind(user)
             .bind(s.repo)

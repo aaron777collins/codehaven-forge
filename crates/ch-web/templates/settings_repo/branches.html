@@ -32,9 +32,13 @@
   </fieldset>
   <div class="field">
     <label for="required_checks">Required checks</label>
-    <input id="required_checks" name="required_checks" type="text" value="{{ f.required_checks }}" maxlength="500" placeholder="build, test">
-    <p class="hint">Check names, separated by commas. Every one must pass before merging.</p>
+    <textarea id="required_checks" name="required_checks" rows="3" maxlength="2000" placeholder="ci / test" autocapitalize="none" spellcheck="false" aria-describedby="required_checks_hint">{{ f.required_checks }}</textarea>
+    <p class="hint" id="required_checks_hint">One check name per line, exactly as it shows on a pull request, such as <code>workflow / job</code> or <code>workflow / job (matrix values)</code>. Every one must pass before merging.</p>
     {% call ui::field_error(errors.get("required_checks")) %}
+    {% if !suggestions.is_empty() %}
+    <p class="hint">Checks that ran recently. Select one to copy its name:</p>
+    <ul class="rule-flags check-suggestions">{% for n in suggestions %}<li><button type="button" class="chip" data-copy="{{ n }}">{{ n }}</button></li>{% endfor %}</ul>
+    {% endif %}
   </div>
   <div class="row">
     <button class="btn btn-primary" type="submit">{% if editing %}Save rule{% else %}Add rule{% endif %}</button>

@@ -54,6 +54,42 @@ fn visible(actor: &Actor, r: &Repo) -> bool {
     }
 }
 
+/// A demo pull request with the parts a `PullView` adds, as far as the pages use them.
+fn demo_pull_view(pr: PullRequest) -> ch_core::collab::PullView {
+    let who = |id: UserId| UserRef {
+        id,
+        username: users().into_iter().find(|u| u.id == id).map(|u| u.username).unwrap_or_else(|| "ghost".into()),
+        display_name: String::new(),
+        kind: UserKind::User,
+    };
+    let repo = ch_core::collab::RepoRef { id: LIGHTHOUSE, owner: "ada".into(), name: "lighthouse".into() };
+    ch_core::collab::PullView {
+        issue: ch_core::collab::IssueView {
+            issue: pr.issue.clone(),
+            author: who(pr.issue.author_id),
+            assignees: Vec::new(),
+            labels: Vec::new(),
+            milestone: None,
+            closed_by: None,
+            reactions: Default::default(),
+            lock_reason: None,
+            pinned: false,
+            merged_at: pr.merged_at,
+            repo_full_name: "ada/lighthouse".into(),
+        },
+        head_repo: Some(repo.clone()),
+        base_repo: repo,
+        merged_by: pr.merged_by.map(who),
+        merge_method: None,
+        stats: Default::default(),
+        requested: Default::default(),
+        review_comments: 0,
+        auto_merge: None,
+        maintainer_can_modify: false,
+        pull: pr,
+    }
+}
+
 fn uid(actor: &Actor) -> Option<UserId> {
     actor.user_id()
 }
@@ -332,6 +368,35 @@ impl Repos for Demo {
     async fn fork(&self, _a: &Actor, id: RepoId, _i: UserId, _c: &ClientInfo) -> Result<Repo> {
         find_repo(id)
     }
+    async fn fork_as(&self, _a: &Actor, id: RepoId, into: UserId, v: Visibility, _c: &ClientInfo) -> Result<Repo> {
+        let mut r = find_repo(id)?;
+        if v > r.visibility {
+            return Err(Error::invalid("Repository", "visibility", "A fork cannot be more visible than the repository it came from."));
+        }
+        r.owner_id = into;
+        r.owner_name = users().into_iter().find(|u| u.id == into).map(|u| u.username).unwrap_or_default();
+        r.fork_parent_id = Some(id);
+        r.visibility = v;
+        Ok(r)
+    }
+    async fn forks(&self, a: &Actor, id: RepoId) -> Result<Vec<Repo>> {
+        // Bob's internal fork of lighthouse. A private fork would not be listed to Ada here.
+        if !is_lh(id) {
+            return Ok(vec![]);
+        }
+        let mut f = find_repo(id)?;
+        f.id = RepoId(90);
+        f.owner_id = BOB;
+        f.owner_name = "bob".into();
+        f.fork_parent_id = Some(id);
+        Ok(if visible(a, &f) { vec![f] } else { vec![] })
+    }
+    async fn social(&self, _a: &Actor, id: RepoId) -> Result<RepoSocial> {
+        Ok(if is_lh(id) { RepoSocial { stars: 12, forks: 1, starred: false } } else { RepoSocial::default() })
+    }
+    async fn set_star(&self, _a: &Actor, _id: RepoId, _on: bool) -> Result<()> {
+        Ok(())
+    }
     async fn delete(&self, _a: &Actor, _id: RepoId, _c: &ClientInfo) -> Result<()> {
         Ok(())
     }
@@ -428,6 +493,8 @@ fn resolve_rev(repo: RepoId, rev: &str) -> Result<String> {
         "main" | "HEAD" => sha(6),
         "feature/signal-colours" => sha(21),
         "feature/fog" | "fix/typo" => sha(5),
+        // The merged pull request 7 kept its branch, so its page offers to delete it.
+        "refs/heads/fix/long-messages" => sha(5),
         "v0.2.0" => sha(3),
         "v0.1.0" => sha(1),
         other => {
@@ -771,6 +838,24 @@ impl Pulls for Demo {
         }
         Pulls::get(self, a, repo, n).await
     }
+    async fn view(&self, a: &Actor, repo: RepoId, n: i64) -> Result<ch_core::collab::PullView> {
+        Ok(demo_pull_view(Pulls::get(self, a, repo, n).await?))
+    }
+    async fn merge_with(
+        &self,
+        a: &Actor,
+        repo: RepoId,
+        n: i64,
+        o: ch_core::collab::MergeOptions,
+        c: &ClientInfo,
+    ) -> Result<ch_core::collab::PullView> {
+        let pr = Pulls::get(self, a, repo, n).await?;
+        if o.expected_head_sha.as_deref().is_some_and(|s| s != pr.head_sha) {
+            return Err(Error::conflict("The head branch was modified. Review the changes and try again"));
+        }
+        let pr = Pulls::merge(self, a, repo, n, o.method.unwrap_or(MergeMethod::Merge), c).await?;
+        Ok(demo_pull_view(pr))
+    }
     async fn close(&self, a: &Actor, repo: RepoId, n: i64, _c: &ClientInfo) -> Result<PullRequest> {
         Pulls::get(self, a, repo, n).await
     }
@@ -801,11 +886,28 @@ impl Reviews for Demo {
             submitted_at: Some(Utc::now()),
         })
     }
+    async fn requested(&self, _a: &Actor, repo: RepoId, n: i64) -> Result<ch_core::collab::RequestedReviewers> {
+        let mut r = ch_core::collab::RequestedReviewers::default();
+        if is_lh(repo) && n == 14 {
+            r.users.push(UserRef { id: BOB, username: "bob".into(), display_name: "Bob".into(), kind: UserKind::User });
+        }
+        Ok(r)
+    }
+    async fn remove_request(&self, _a: &Actor, _repo: RepoId, _n: i64, _u: Vec<UserId>, _t: Vec<TeamId>, _c: &ClientInfo) -> Result<()> {
+        Ok(())
+    }
     async fn request_review(&self, _a: &Actor, _repo: RepoId, _n: i64, _u: Vec<UserId>, _t: Vec<TeamId>, _c: &ClientInfo) -> Result<()> {
         Ok(())
     }
     async fn threads(&self, _a: &Actor, _repo: RepoId, n: i64) -> Result<Vec<ThreadView>> {
         Ok(if n == 14 { threads() } else { vec![] })
+    }
+    async fn apply_suggestion(&self, _a: &Actor, _repo: RepoId, comment: CommentId, _c: &ClientInfo) -> Result<String> {
+        if comment == CommentId(33) {
+            Ok(sha(22))
+        } else {
+            Err(Error::invalid("PullRequestReviewComment", "body", "This comment has no suggestion to apply"))
+        }
     }
     async fn resolve_thread(&self, _a: &Actor, _repo: RepoId, thread: i64, _r: bool, _c: &ClientInfo) -> Result<()> {
         // Like the real service: a thread that is not there is a NotFound, not a quiet ok.
@@ -899,8 +1001,29 @@ impl Search for Demo {
             .map(|u| SearchHit { kind: "user".into(), id: u.id.0, title: u.username, snippet: u.display_name })
             .collect())
     }
-    async fn code(&self, _a: &Actor, _r: RepoId, _q: &str, _l: u32) -> Result<Vec<SearchHit>> {
-        Ok(vec![])
+    async fn code(&self, _a: &Actor, r: RepoId, q: &str, _l: u32) -> Result<Vec<SearchHit>> {
+        Ok(if is_lh(r) && "pub struct Beam {".contains(q) {
+            vec![SearchHit { kind: "code".into(), id: 4, title: "src/beam.rs".into(), snippet: "pub struct Beam {".into() }]
+        } else {
+            vec![]
+        })
+    }
+    async fn code_all(&self, a: &Actor, q: &str, l: u32) -> Result<Vec<CodeHit>> {
+        if a.is_anonymous() {
+            return Ok(vec![]);
+        }
+        Ok(Search::code(self, a, LIGHTHOUSE, q, l)
+            .await?
+            .into_iter()
+            .map(|h| CodeHit {
+                repo_id: LIGHTHOUSE,
+                repo: "ada/lighthouse".into(),
+                branch: "main".into(),
+                path: h.title,
+                line: h.id,
+                text: h.snippet,
+            })
+            .collect())
     }
 }
 

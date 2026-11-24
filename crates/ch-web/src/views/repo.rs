@@ -577,6 +577,8 @@ pub async fn archive(ctx: Ctx, Path((owner, name, rest)): Path<(String, String, 
 struct BlamePage {
     c: Chrome,
     crumbs: Vec<Crumb>,
+    /// The branch, tag or short commit the crumbs start from, as on the file page.
+    ref_name: String,
     root_href: String,
     file_name: String,
     table: String,
@@ -628,6 +630,11 @@ pub async fn blame(ctx: Ctx, Path((owner, name, rest)): Path<(String, String, St
     let c = rc.chrome(&ctx, &format!("Blame {}", rp.path), "code").await;
     ctx.page(&BlamePage {
         c,
+        ref_name: if rp.name.len() == 40 && rp.name.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            fmt::short_sha(&rp.name)
+        } else {
+            rp.name.clone()
+        },
         crumbs: crumbs(&rc, &rp, "tree", &rp.path),
         root_href: format!("{base}/tree/{}", rp.enc()),
         file_name: rp.path.rsplit('/').next().unwrap_or("").to_string(),
@@ -862,8 +869,14 @@ struct ComparePage {
     base_ref: String,
     head_ref: String,
     branches: Vec<String>,
+    /// Tags, so a release can be either side (ch-9vo).
+    tags: Vec<String>,
     has_result: bool,
     same: bool,
+    /// Both sides are the very same commit.
+    same_commit: bool,
+    /// Why there is no comparison to show: no shared history, or a name that is not here.
+    problem: String,
     ahead: u32,
     behind: u32,
     rows: Vec<CommitRow>,
@@ -900,7 +913,25 @@ async fn compare_inner(ctx: Ctx, rc: RepoCtx, spec: &str, q: Params) -> WebResul
         Some((b, h)) => (b.to_string(), h.to_string()),
         None => (rc.repo.default_branch.clone(), q.get("head").cloned().unwrap_or_else(|| rc.repo.default_branch.clone())),
     };
-    let result = if spec.contains("...") { Some(ctx.state.git.compare(rc.id(), &b, &h).await?) } else { None };
+    let tags = super::repo_common::tag_names(&ctx, rc.id()).await.unwrap_or_default();
+    // A comparison that cannot be made says why on the page, not as a bare error (ch-9vo).
+    let mut problem = String::new();
+    let result = if spec.contains("...") {
+        match ctx.state.git.compare(rc.id(), &b, &h).await {
+            Ok(c) => Some(c),
+            Err(Error::NotFound) => {
+                problem = "One of these is not a branch, tag or commit in this repository.".into();
+                None
+            }
+            Err(Error::Validation(_)) | Err(Error::Conflict(_)) => {
+                problem = "These two have no history in common, so there is nothing to compare.".into();
+                None
+            }
+            Err(e) => return Err(e.into()),
+        }
+    } else {
+        None
+    };
     let mode = DiffMode::from_query(q.get("diff").map(String::as_str));
     let c = rc.chrome(&ctx, "Compare", "code").await;
     let here = format!("{base}/compare/{}...{}", fmt::enc_path(&b), fmt::enc_path(&h));
@@ -913,6 +944,9 @@ async fn compare_inner(ctx: Ctx, rc: RepoCtx, spec: &str, q: Params) -> WebResul
                 c,
                 has_result: true,
                 same: cmp.head_sha == cmp.base_sha || (cmp.ahead_by == 0 && cmp.diff.files.is_empty()),
+                same_commit: cmp.head_sha == cmp.base_sha,
+                problem: String::new(),
+                tags: tags.clone(),
                 ahead: cmp.ahead_by,
                 behind: cmp.behind_by,
                 rows,
@@ -934,6 +968,9 @@ async fn compare_inner(ctx: Ctx, rc: RepoCtx, spec: &str, q: Params) -> WebResul
             c,
             has_result: false,
             same: false,
+            same_commit: false,
+            problem,
+            tags,
             ahead: 0,
             behind: 0,
             rows: Vec::new(),

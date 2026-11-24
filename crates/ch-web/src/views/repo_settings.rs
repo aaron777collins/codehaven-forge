@@ -94,10 +94,10 @@ fn events_from_form(form: &FormData) -> Vec<String> {
     out
 }
 
-/// A comma separated list of names: trimmed, empties dropped, repeats dropped.
-fn split_list(raw: &str) -> Vec<String> {
+/// One name per line. Check names can hold commas, as in `test (ubuntu, 1.22)`.
+fn split_lines(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for part in raw.split(',') {
+    for part in raw.lines() {
         let p = part.trim();
         if !p.is_empty() && !out.iter().any(|x| x == p) {
             out.push(p.to_string());
@@ -161,7 +161,7 @@ fn protection_from_form(form: &FormData) -> Result<BranchProtection, FieldErrors
             }
         }
     };
-    let required_checks = split_list(form.get("required_checks"));
+    let required_checks = split_lines(form.get("required_checks"));
     if required_checks.iter().any(|c| c.len() > 100) {
         errors = errors.with("required_checks", "Keep each check name to 100 characters or fewer.");
     }
@@ -634,7 +634,7 @@ impl ProtectionForm {
             block_deletion: p.block_deletion,
             allow_direct_push: p.allow_direct_push,
             strict: p.strict,
-            required_checks: p.required_checks.join(", "),
+            required_checks: p.required_checks.join("\n"),
         }
     }
 }
@@ -656,6 +656,37 @@ struct BranchesPage {
     editing: bool,
     rules: Vec<RuleCard>,
     errors: FieldErrors,
+    /// Check names seen on recent runs, to copy into the field.
+    suggestions: Vec<String>,
+}
+
+/// Names of checks and statuses that reported on the last few commits CI ran on. A failure to
+/// read them only means no suggestions.
+async fn recent_check_names(ctx: &Ctx, rc: &RepoCtx) -> Vec<String> {
+    let Ok(runs) = ctx.state.ci.runs(&ctx.actor, rc.id(), 1, 30).await else { return Vec::new() };
+    let mut shas: Vec<String> = Vec::new();
+    for r in runs {
+        if !shas.contains(&r.head_sha) {
+            shas.push(r.head_sha);
+        }
+        if shas.len() == 5 {
+            break;
+        }
+    }
+    let mut names: Vec<String> = Vec::new();
+    for sha in &shas {
+        if let Ok(list) = ctx.state.checks.check_runs_for_sha(rc.id(), sha).await {
+            names.extend(list.into_iter().map(|c| c.name));
+        }
+        if let Ok(list) = ctx.state.checks.statuses_for_sha(rc.id(), sha).await {
+            names.extend(list.into_iter().map(|s| s.context));
+        }
+    }
+    names.retain(|n| !n.is_empty() && n.len() <= 100);
+    names.sort();
+    names.dedup();
+    names.truncate(40);
+    names
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -678,8 +709,11 @@ async fn branches_view(
             checks: p.required_checks.clone(),
         })
         .collect();
+    let chosen = split_lines(&f.required_checks);
+    let mut suggestions = recent_check_names(ctx, rc).await;
+    suggestions.retain(|n| !chosen.contains(n));
     let c = rc.chrome(ctx, "Branch protection", "settings").await;
-    ctx.page_status(status, &BranchesPage { c, base: rc.base(), f, editing, rules: cards, errors })
+    ctx.page_status(status, &BranchesPage { c, base: rc.base(), f, editing, rules: cards, errors, suggestions })
 }
 
 async fn branches_again(ctx: &Ctx, rc: &RepoCtx, form: &FormData, errors: FieldErrors) -> WebResult<Response> {
@@ -880,14 +914,14 @@ mod tests {
     #[test]
     fn protection_parses_from_a_form() {
         let f = FormData::parse(
-            b"pattern=release%2F*&required_approvals=2&dismiss_stale_reviews=1&strict=1&required_checks=build%2C+test%2C+build",
+            b"pattern=release%2F*&required_approvals=2&dismiss_stale_reviews=1&strict=1&required_checks=build%0D%0Atest+%28ubuntu%2C+1.22%29%0Abuild%0A+%0A",
         );
         let p = protection_from_form(&f).unwrap();
         assert_eq!(p.pattern, "release/*");
         assert_eq!(p.required_approvals, 2);
         assert!(p.dismiss_stale_reviews && p.strict);
         assert!(!p.block_deletion && !p.allow_direct_push);
-        assert_eq!(p.required_checks, vec!["build", "test"]);
+        assert_eq!(p.required_checks, vec!["build", "test (ubuntu, 1.22)"], "one name per line, commas kept");
     }
 
     #[test]

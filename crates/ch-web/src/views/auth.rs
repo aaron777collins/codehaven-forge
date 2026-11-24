@@ -18,6 +18,8 @@ use ch_core::web_contract::{NewSession, SignInOutcome};
 use std::collections::HashMap;
 
 const BAD_LOGIN: &str = "That username and password don't match.";
+/// The one answer to "forgot your password", whether or not an account matched.
+const RESET_SENT: &str = "If an account here matches, we have emailed it a link to choose a new password. The link works for an hour.";
 const BAD_CODE: &str = "That code did not work. Try the next one, or use a recovery code.";
 
 fn notice_text(code: &str) -> Option<&'static str> {
@@ -25,6 +27,7 @@ fn notice_text(code: &str) -> Option<&'static str> {
         "signed-out" => Some("You are signed out."),
         "invite-accepted" => Some("Your account is ready. Sign in to start."),
         "password-set" => Some("Your password is saved. Sign in with it."),
+        "reset-sent" => Some(RESET_SENT),
         _ => None,
     }
 }
@@ -290,6 +293,68 @@ pub async fn invite_post(ctx: Ctx, Path(token): Path<String>, form: FormData) ->
     }
 }
 
+// ------------------------------------------------------------------ forgot password (ch-bfa)
+
+#[derive(Template)]
+#[template(path = "auth/forgot.html")]
+struct ForgotPage {
+    c: Chrome,
+    csrf: String,
+    mail_on: bool,
+}
+
+pub async fn forgot_get(ctx: Ctx) -> WebResult<Response> {
+    if ctx.signed_in() {
+        return Ok(redirect("/settings/password"));
+    }
+    let (token, cookie) = ctx.anon_csrf();
+    let mut c = ctx.chrome("Forgot your password").await;
+    c.csrf = token.clone();
+    let mut r = ctx.page(&ForgotPage { c, csrf: token, mail_on: ctx.state.mail.enabled() })?;
+    if let Some(cookie) = cookie {
+        add_cookie(&mut r, &cookie);
+    }
+    Ok(r)
+}
+
+/// Always the same answer, sent before any mail goes out, so neither the words nor the time
+/// taken say whether an account matched. With mail off nothing is looked up at all.
+pub async fn forgot_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
+    if ctx.signed_in() {
+        return Ok(redirect("/settings/password"));
+    }
+    if !ctx.state.mail.enabled() {
+        return Ok(redirect("/password/forgot"));
+    }
+    let login = form.get("login").trim().to_string();
+    if !login.is_empty() {
+        let state = ctx.state.clone();
+        let client = ctx.client.clone();
+        let base = state.config.server.external_url.trim_end_matches('/').to_string();
+        let instance = ctx.chrome("").await.instance;
+        tokio::spawn(async move {
+            match state.accounts.request_password_reset(&login, &client).await {
+                Ok(Some((email, link))) => {
+                    let body = reset_mail(&instance, &format!("{base}{}", link.path));
+                    if let Err(e) = state.mail.send(&email, &format!("Choose a new password for {instance}"), &body).await {
+                        tracing::warn!(error = %e, "a password reset mail was not sent");
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(error = %e, "a password reset request failed"),
+            }
+        });
+    }
+    Ok(redirect("/login?notice=reset-sent"))
+}
+
+/// The reset mail. Plain text, the link on a line of its own.
+pub fn reset_mail(instance: &str, url: &str) -> String {
+    format!(
+        "Someone asked to reset the password of your account on {instance}.\n\nTo choose a new password, open this link within an hour:\n\n{url}\n\nUsing it signs your account out everywhere else. If you did not ask for this, ignore this mail: your password stays as it is.\n"
+    )
+}
+
 // ------------------------------------------------------------------ one-time password links
 
 #[derive(Template)]
@@ -356,7 +421,21 @@ pub async fn password_post(ctx: Ctx, Path(token): Path<String>, form: FormData) 
         return password_page(&ctx, &token, &peek.username, first, errors, StatusCode::UNPROCESSABLE_ENTITY).await;
     }
     match ctx.state.sessions.redeem_link(&token, form.get("password"), &ctx.client).await {
-        Ok(()) => Ok(redirect("/login?notice=password-set")),
+        // Signed in straight away with the new password, through the same steps as the sign-in
+        // form, so two-factor still asks for a code (ch-9vo).
+        Ok(()) => match ctx.state.sessions.sign_in(&peek.username, form.get("password"), &ctx.client).await {
+            Ok(SignInOutcome::Session(s)) => {
+                let mut r = redirect("/");
+                add_cookie(&mut r, &session_cookie(&ctx, &s));
+                Ok(r)
+            }
+            Ok(SignInOutcome::TwoFactorRequired { pending }) => {
+                let mut r = redirect("/login/two-factor?next=%2F");
+                add_cookie(&mut r, &ctx.set_cookie(PENDING_COOKIE, &pending, Some(300), true, "Lax", "/login"));
+                Ok(r)
+            }
+            _ => Ok(redirect("/login?notice=password-set")),
+        },
         Err(Error::NotFound) => bad_link(&ctx, "password link").await,
         Err(e) => match FieldErrors::from_error(&e) {
             Some(errors) => password_page(&ctx, &token, &peek.username, first, errors, StatusCode::UNPROCESSABLE_ENTITY).await,
@@ -385,6 +464,13 @@ mod tests {
         assert!(!token_ok("a/b"));
         assert!(!token_ok(&"x".repeat(200)));
         assert!(!token_ok("a b"));
+    }
+
+    #[test]
+    fn the_reset_mail_holds_the_link_on_its_own_line() {
+        let m = reset_mail("Codehaven", "https://code.example/password/cho_x");
+        assert!(m.contains("\n\nhttps://code.example/password/cho_x\n\n"));
+        assert!(m.contains("If you did not ask for this"));
     }
 
     #[test]

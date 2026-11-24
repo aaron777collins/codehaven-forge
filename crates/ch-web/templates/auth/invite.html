@@ -11,7 +11,7 @@
       <div class="field">
         <label for="username">Username</label>
         <input id="username" name="username" type="text" value="{{ username }}" autocomplete="username" autocapitalize="none" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]*" maxlength="39" required autofocus>
-        <p class="hint">Letters, numbers, dashes, dots and underscores. It becomes part of your repository addresses.</p>
+        <p class="hint">Up to 39 letters, numbers and single hyphens, starting and ending with a letter or number. It becomes part of your repository addresses.</p>
         {% call ui::field_error(errors.get("username")) %}
       </div>
       <div class="field">

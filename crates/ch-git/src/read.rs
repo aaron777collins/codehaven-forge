@@ -6,7 +6,7 @@
 //! needs no second implementation of git's rules to keep in step, and is fast enough at this
 //! scale. The functions here are the seam: swapping one for a `gix` version changes no caller.
 
-use crate::command::{GitError, check_path, check_rev};
+use crate::command::{GitCommand, GitError, check_path, check_rev};
 use crate::core::GitCore;
 use crate::diff::{DiffLimits, assemble, parse_numstat_z, parse_patch, parse_raw_z};
 use bytes::Bytes;
@@ -15,6 +15,7 @@ use ch_core::services::ArchiveFormat;
 use ch_core::{Error, RepoId, Result};
 use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -303,7 +304,21 @@ impl GitCore {
 
     /// The best common ancestor, or `None` for unrelated histories.
     pub(crate) async fn merge_base(&self, repo: RepoId, a: &str, b: &str) -> Result<Option<String>> {
-        let out = self.exec_any(self.git(repo).args(["merge-base", a, b])).await?;
+        self.merge_base_in(repo, None, a, b).await
+    }
+
+    /// A git command in `repo` that can also read the objects in `alt`, another repository's
+    /// objects directory. Nothing is written to either store.
+    fn git_reading(&self, repo: RepoId, alt: Option<&Path>) -> GitCommand {
+        let cmd = self.git(repo);
+        match alt {
+            Some(a) => cmd.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", a.to_string_lossy()),
+            None => cmd,
+        }
+    }
+
+    async fn merge_base_in(&self, repo: RepoId, alt: Option<&Path>, a: &str, b: &str) -> Result<Option<String>> {
+        let out = self.exec_any(self.git_reading(repo, alt).args(["merge-base", a, b])).await?;
         match out.code {
             0 => Ok(Some(out.stdout_str())),
             1 => Ok(None),
@@ -314,24 +329,71 @@ impl GitCore {
     pub(crate) async fn read_compare(&self, repo: RepoId, base: &str, head: &str) -> Result<Compare> {
         let base_sha = self.read_resolve(repo, base).await?;
         let head_sha = self.read_resolve(repo, head).await?;
+        self.compare_shas(repo, None, base_sha, head_sha).await
+    }
+
+    /// `base` in `repo` against `head` in `head_repo`, a repository of the same fork network.
+    /// Forks keep their own objects, so the commands run in `repo` and read the head
+    /// repository's objects as an alternate for that one process only (ch-8tj).
+    pub(crate) async fn read_compare_across(&self, repo: RepoId, base: &str, head_repo: RepoId, head: &str) -> Result<Compare> {
+        if repo == head_repo {
+            return self.read_compare(repo, base, head).await;
+        }
+        let roots: Vec<(i64, i64)> = sqlx::query_as("SELECT id, COALESCE(fork_root_id, id) FROM repositories WHERE id = ANY($1)")
+            .bind(vec![repo.0, head_repo.0])
+            .fetch_all(&self.db)
+            .await?;
+        let root = |id: RepoId| roots.iter().find(|r| r.0 == id.0).map(|r| r.1);
+        match (root(repo), root(head_repo)) {
+            (Some(a), Some(b)) if a == b => {}
+            (Some(_), Some(_)) => return Err(Error::invalid("Compare", "head", "these repositories are not in one fork network")),
+            _ => return Err(Error::NotFound),
+        }
+        if !self.store.exists(head_repo) {
+            return Err(Error::NotFound);
+        }
+        let base_sha = self.read_resolve(repo, base).await?;
+        let head_sha = self.read_resolve(head_repo, head).await?;
+        let alt = self.store.repo_path(head_repo).join("objects");
+        self.compare_shas(repo, Some(&alt), base_sha, head_sha).await
+    }
+
+    async fn compare_shas(&self, repo: RepoId, alt: Option<&Path>, base_sha: String, head_sha: String) -> Result<Compare> {
         let merge_base = self
-            .merge_base(repo, &base_sha, &head_sha)
+            .merge_base_in(repo, alt, &base_sha, &head_sha)
             .await?
             .ok_or_else(|| Error::invalid("Compare", "base", "these two refs share no history"))?;
-        let ahead = self.count_range(repo, &format!("{base_sha}..{head_sha}")).await?;
-        let behind = self.count_range(repo, &format!("{head_sha}..{base_sha}")).await?;
+        let ahead = self.count_range(repo, alt, &format!("{base_sha}..{head_sha}")).await?;
+        let behind = self.count_range(repo, alt, &format!("{head_sha}..{base_sha}")).await?;
         let range = format!("{base_sha}..{head_sha}");
         let out = self
-            .exec(self.git(repo).args(["log", "-z", "--reverse", LOG_FORMAT, "--max-count=250", "--end-of-options", &range, "--"]))
+            .exec(self.git_reading(repo, alt).args([
+                "log",
+                "-z",
+                "--reverse",
+                LOG_FORMAT,
+                "--max-count=250",
+                "--end-of-options",
+                &range,
+                "--",
+            ]))
             .await
             .map_err(map_missing)?;
         let commits = parse_log(&out.stdout);
-        let diff = self.diff_between(repo, &merge_base, &head_sha).await?;
-        Ok(Compare { base_sha, head_sha, merge_base, ahead_by: ahead as u32, behind_by: behind as u32, commits, diff: (*diff).clone() })
+        let diff = match alt {
+            None => (*self.diff_between(repo, &merge_base, &head_sha).await?).clone(),
+            // Not cached: the cache is keyed by repository, and this one read objects that
+            // repository does not hold.
+            Some(_) => self.diff_uncached(repo, alt, &merge_base, &head_sha).await?,
+        };
+        Ok(Compare { base_sha, head_sha, merge_base, ahead_by: ahead as u32, behind_by: behind as u32, commits, diff })
     }
 
-    async fn count_range(&self, repo: RepoId, range: &str) -> Result<u64> {
-        let out = self.exec(self.git(repo).args(["rev-list", "--count", "--end-of-options", range, "--"])).await.map_err(map_missing)?;
+    async fn count_range(&self, repo: RepoId, alt: Option<&Path>, range: &str) -> Result<u64> {
+        let out = self
+            .exec(self.git_reading(repo, alt).args(["rev-list", "--count", "--end-of-options", range, "--"]))
+            .await
+            .map_err(map_missing)?;
         Ok(out.stdout_str().parse().unwrap_or(0))
     }
 
@@ -341,8 +403,14 @@ impl GitCore {
         if let Some(hit) = self.diff_cache.get(&key).await {
             return Ok(hit);
         }
+        let diff = Arc::new(self.diff_uncached(repo, None, old, new).await?);
+        self.diff_cache.insert(key, diff.clone()).await;
+        Ok(diff)
+    }
+
+    async fn diff_uncached(&self, repo: RepoId, alt: Option<&Path>, old: &str, new: &str) -> Result<Diff> {
         let base = |extra: &[&str]| {
-            self.git(repo)
+            self.git_reading(repo, alt)
                 .args(["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames"])
                 .args(extra.iter().map(|s| s.to_string()))
                 .args([old, new, "--"])
@@ -353,16 +421,13 @@ impl GitCore {
             tokio::join!(self.exec(base(&["--raw", "-z"])), self.exec(base(&["--numstat", "-z"])), self.exec(base(&["--patch"])));
         let (raw, num, patch) = (raw?, num?, patch?);
         let to_err = |e: crate::diff::DiffParseError| Error::internal(anyhow::anyhow!(e));
-        let diff = assemble(
+        assemble(
             parse_raw_z(&raw.stdout).map_err(to_err)?,
             parse_numstat_z(&num.stdout).map_err(to_err)?,
             parse_patch(&patch.stdout),
             &DiffLimits::default(),
         )
-        .map_err(to_err)?;
-        let diff = Arc::new(diff);
-        self.diff_cache.insert(key, diff.clone()).await;
-        Ok(diff)
+        .map_err(to_err)
     }
 
     /// Three-dot diff: what `head` changed since it left `base`. For a commit and its parent

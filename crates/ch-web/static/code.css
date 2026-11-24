@@ -210,3 +210,7 @@ table.diff tr:hover .line-comment-btn, .line-comment-btn:focus-visible { opacity
 .markdown a.mention, .markdown a.issue-ref { font-weight: 550; }
 .markdown a.mention { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 .markdown.small { font-size: 0.9rem; }
+.suggestion { margin: var(--s2) 0; }
+.suggestion-label { margin: 0 0 var(--s1); font-size: 0.84rem; font-weight: 650; color: var(--muted); }
+.suggestion pre.hl-block { border-left: 3px solid var(--ok); }
+.apply-suggestion { margin-top: var(--s2); }

@@ -80,7 +80,10 @@ impl<'a> Render<'a> {
     }
 
     async fn pull(&mut self, ctx: &Ctx, v: &PullView) -> api::PullRequest {
-        let head = match v.head_repo.as_ref().map(|h| h.id).or(Some(v.base_repo.id)) {
+        // A branch of the same repository has no head repository of its own. A deleted fork
+        // has none either, and the base repository is not it.
+        let same_repo = (!v.pull.from_fork).then_some(v.base_repo.id);
+        let head = match v.head_repo.as_ref().map(|h| h.id).or(same_repo) {
             Some(id) => self.repo(id).await,
             None => None,
         };

@@ -39,6 +39,9 @@ pub fn link_path(token: &str) -> String {
     format!("/password/{token}")
 }
 
+/// How long an emailed reset link works.
+const RESET_LINK_MINUTES: i64 = 60;
+
 #[async_trait]
 impl Accounts for AccountsService {
     async fn get_user(&self, id: UserId) -> Result<User> {
@@ -94,6 +97,61 @@ impl Accounts for AccountsService {
         }
         tx.commit().await?;
         self.get_user(UserId(id)).await
+    }
+
+    async fn request_password_reset(&self, login: &str, client: &ClientInfo) -> Result<Option<(String, OneTimeLink)>> {
+        let login = login.trim();
+        if login.is_empty() || login.len() > 254 {
+            return Ok(None);
+        }
+        // A person, active, with a primary email: found by username or by that email.
+        let row: Option<(i64, String)> = sqlx::query_as(
+            "SELECT u.id, e.email::text FROM users u JOIN user_emails e ON e.user_id = u.id AND e.is_primary
+             WHERE u.kind = 'user' AND u.suspended_at IS NULL AND (u.username = $1::citext OR e.email = $1::citext)
+             LIMIT 1",
+        )
+        .bind(login)
+        .fetch_optional(&self.core.db)
+        .await?;
+        let Some((user, email)) = row else { return Ok(None) };
+        let token = tokens::new_token("cho_", 32);
+        let expires_at = Utc::now() + Duration::minutes(RESET_LINK_MINUTES);
+        let mut tx = self.core.db.begin().await?;
+        // Serialise requests for one account so two at once cannot both pass the limit.
+        sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE").bind(user).execute(&mut *tx).await?;
+        let recent: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM one_time_links WHERE user_id = $1 AND purpose = 'reset_password' AND created_at > now() - interval '10 minutes')",
+        )
+        .bind(user)
+        .fetch_one(&mut *tx)
+        .await?;
+        if recent {
+            return Ok(None);
+        }
+        // One live link per account and purpose. No session ends here: the request can come
+        // from anyone, and redeeming the link is what signs the account out everywhere.
+        sqlx::query("UPDATE one_time_links SET used_at = now() WHERE user_id = $1 AND purpose = 'reset_password' AND used_at IS NULL")
+            .bind(user)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO one_time_links (token_hash, user_id, purpose, expires_at) VALUES ($1, $2, 'reset_password', $3)")
+            .bind(tokens::hash_token(&token))
+            .bind(user)
+            .bind(expires_at)
+            .execute(&mut *tx)
+            .await?;
+        self.core
+            .audit_tx(
+                &mut tx,
+                &Actor::Anonymous,
+                client,
+                action::PASSWORD_RESET,
+                Some(("user", user)),
+                json!({"stage": "link_emailed", "expires_at": expires_at}),
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(Some((email, OneTimeLink { path: link_path(&token), token, expires_at })))
     }
 
     async fn issue_link(

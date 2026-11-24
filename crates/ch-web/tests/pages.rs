@@ -1045,3 +1045,240 @@ async fn chips_name_the_tier() {
     assert!(r.body.contains("title=\"Anyone signed in to this Codehaven can read it."));
     assert!(!r.body.contains("Every account on this server can read it. Nobody else can."));
 }
+
+#[tokio::test]
+async fn two_factor_setup_shows_a_qr_code() {
+    let r = post("/settings/security/2fa/start", &[]).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body.contains("<div class=\"qr\"><svg role=\"img\" aria-label=\"QR code for your authenticator app\""), "{}", r.body);
+    assert!(!r.body.contains("There is no QR code here"));
+}
+
+#[tokio::test]
+async fn required_checks_take_one_name_per_line_and_suggest_recent_names() {
+    let r = get("/ada/lighthouse/settings/branches").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body.contains("<textarea id=\"required_checks\" name=\"required_checks\""), "{}", r.body);
+    assert!(!r.body.contains("placeholder=\"build, test\""));
+    assert!(r.body.contains("One check name per line"));
+    assert!(r.body.contains("data-copy=\"test\">test</button>"), "recent check names are offered: {}", r.body);
+}
+
+#[tokio::test]
+async fn notifications_link_by_number_and_say_what_state_the_thread_is_in() {
+    let r = get("/notifications?all=1").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("href=\"/ada/lighthouse/pulls/14\""), "{}", r.body);
+    assert!(r.body.contains("<span class=\"state-word state-merged\">Merged</span>"), "{}", r.body);
+    assert!(r.body.contains("You were assigned"), "the fan-out's spelling reads as words: {}", r.body);
+}
+
+#[tokio::test]
+async fn the_merge_box_takes_a_title_and_message_and_names_the_head_it_saw() {
+    let r = get("/ada/lighthouse/pulls/14").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("wants to merge"));
+    assert!(r.body.contains("<input type=\"hidden\" name=\"head_sha\" value=\""), "{}", r.body);
+    assert!(r.body.contains("id=\"merge-title\" name=\"title\""));
+    assert!(r.body.contains("id=\"merge-body\" name=\"message\""));
+    assert!(r.body.contains("name=\"delete_branch\""), "a branch of this repository can go after the merge");
+    // A push after the page loaded stops the merge.
+    let r = post("/ada/lighthouse/pulls/14/merge", &[("method", "squash"), ("head_sha", "0000000"), ("title", "Colour it")]).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let page = follow(&r).await;
+    assert!(page.contains("The head branch was modified"), "{page}");
+}
+
+/// The page a redirect lands on, with the flash it set.
+async fn follow(r: &Resp) -> String {
+    let flash = r.set_cookies().into_iter().find(|c| c.starts_with("ch_flash=")).map(|c| c.split(';').next().unwrap().to_string());
+    let cookie = match flash {
+        Some(f) => format!("{}; {f}", ada()),
+        None => ada(),
+    };
+    get_as(&cookie, &r.location()).await.body
+}
+
+#[tokio::test]
+async fn a_merged_pull_request_says_merged_and_offers_to_delete_its_branch() {
+    let r = get("/ada/lighthouse/pulls/7").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(!r.body.contains("wants to merge"), "{}", r.body);
+    assert!(r.body.contains("</strong> merged "), "{}", r.body);
+    assert!(r.body.contains("action=\"/ada/lighthouse/pulls/7/delete-branch\""), "{}", r.body);
+    let r = post("/ada/lighthouse/pulls/7/delete-branch", &[]).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.location(), "/ada/lighthouse/pulls/7");
+    assert!(follow(&r).await.contains("Deleted the branch fix/long-messages."));
+    // An open pull request keeps its branch.
+    let r = post("/ada/lighthouse/pulls/14/delete-branch", &[]).await;
+    assert!(follow(&r).await.contains("Close or merge the pull request before deleting its branch."));
+}
+
+#[tokio::test]
+async fn a_pull_request_has_review_request_assignee_and_milestone_controls() {
+    let r = get("/ada/lighthouse/pulls/14").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("Bob <span class=\"chip\">Awaiting review</span>"), "{}", r.body);
+    assert!(r.body.contains("action=\"/ada/lighthouse/pulls/14/reviewers\""));
+    assert!(r.body.contains("action=\"/ada/lighthouse/pulls/14/assignees\""));
+    assert!(r.body.contains("action=\"/ada/lighthouse/pulls/14/milestone\""));
+    assert!(r.body.contains("<h2>Assignees</h2>") && r.body.contains("<h2>Milestone</h2>"));
+    let r = post("/ada/lighthouse/pulls/14/reviewers", &[("offered", "u:2"), ("username", "cleo")]).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert!(follow(&r).await.contains("Reviewers updated."));
+    let r = post("/ada/lighthouse/pulls/14/reviewers", &[("username", "nobody-here")]).await;
+    assert!(follow(&r).await.contains("There is no account named nobody-here."));
+    // A merged pull request takes no requests.
+    let r = get("/ada/lighthouse/pulls/7").await;
+    assert!(!r.body.contains("/pulls/7/reviewers"));
+}
+
+#[tokio::test]
+async fn a_review_suggestion_is_labelled_and_can_be_applied() {
+    let r = get("/ada/lighthouse/pulls/14/files").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("<p class=\"suggestion-label\">Suggested change</p>"), "{}", r.body);
+    assert!(r.body.contains(">Apply suggestion</button>"));
+    let r = post("/ada/lighthouse/pulls/14/suggestion", &[("comment", "33"), ("back", "files")]).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert!(follow(&r).await.contains("Applied the suggestion as commit"));
+    let r = post("/ada/lighthouse/pulls/14/suggestion", &[("comment", "31")]).await;
+    assert!(follow(&r).await.contains("This comment has no suggestion to apply"));
+}
+
+#[tokio::test]
+async fn a_repository_header_has_watch_star_and_fork_for_a_signed_in_reader() {
+    let r = get("/ada/lighthouse").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("action=\"/ada/lighthouse/watch\""), "{}", r.body);
+    assert!(r.body.contains("action=\"/ada/lighthouse/star\""));
+    assert!(r.body.contains("<span class=\"count\">12</span>"));
+    assert!(r.body.contains("href=\"/ada/lighthouse/fork\""));
+    let r = post("/ada/lighthouse/star", &[("star", "1")]).await;
+    assert!(follow(&r).await.contains("Starred."));
+    let r = post("/ada/lighthouse/watch", &[("level", "all")]).await;
+    assert!(follow(&r).await.contains("You will hear about all activity in this repository."));
+    let r = post("/ada/lighthouse/watch", &[("level", "loud")]).await;
+    assert!(follow(&r).await.contains("Choose how much you want to hear."));
+}
+
+#[tokio::test]
+async fn forking_offers_the_owner_accounts_and_caps_the_tier_at_the_parent() {
+    let r = get("/ada/lighthouse/fork").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body.contains("Fork ada/lighthouse"));
+    assert!(r.body.contains("name=\"owner_id\""));
+    // The demo lighthouse is internal: internal is allowed, public is not.
+    assert!(r.body.contains("value=\"internal\">"), "{}", r.body);
+    assert!(r.body.contains("value=\"public\" disabled>"), "{}", r.body);
+    assert!(r.body.contains("A fork cannot be more visible than the repository it came from."));
+    let r = post("/ada/lighthouse/fork", &[("owner_id", "999999"), ("visibility", "private")]).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let r = get("/ada/lighthouse/forks").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("bob/lighthouse"), "{}", r.body);
+    // Signed out, neither page exists.
+    let r = send(&app(), Method::GET, "/ada/lighthouse/fork", None, None, None).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let r = send(&app(), Method::GET, "/ada/lighthouse/forks", None, None, None).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn a_pull_request_can_come_from_your_own_fork() {
+    let bob = format!("ch_session={BOB_COOKIE}");
+    let r = get_as(&bob, "/ada/lighthouse/pulls/new").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body.contains("<select name=\"head_owner\">"), "{}", r.body);
+    assert!(r.body.contains("<option value=\"bob\">bob/lighthouse</option>"));
+    // Ada owns no fork, so she gets no repository choice.
+    let r = get("/ada/lighthouse/pulls/new").await;
+    assert!(!r.body.contains("name=\"head_owner\""));
+    // A fork that is not yours is refused before anything is created.
+    let r =
+        post("/ada/lighthouse/pulls/new", &[("base", "main"), ("head", "feature/signal-colours"), ("head_owner", "bob"), ("title", "T")])
+            .await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(r.body.contains("Pick one of your own forks of this repository."));
+}
+
+#[tokio::test]
+async fn code_search_has_a_tab_across_repositories_and_a_page_per_repository() {
+    let r = get("/search?q=Beam&type=code").await;
+    assert_eq!(r.status, StatusCode::OK);
+    let tab = between(&r.body, "class=\"tab current\"", "</a>");
+    assert!(tab.ends_with(">Code"), "{tab}");
+    assert!(r.body.contains("href=\"/ada/lighthouse/blob/main/src/beam.rs#LC4\""), "{}", r.body);
+    assert!(r.body.contains("<code>src/beam.rs:4</code>"));
+    let r = get("/ada/lighthouse/search?q=Beam").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("href=\"/ada/lighthouse/blob/main/src/beam.rs#LC4\""), "{}", r.body);
+    assert!(r.body.contains("1 matching line."));
+    let r = get("/ada/lighthouse/search?q=nothing-like-this").await;
+    assert!(r.body.contains("Nothing matches"));
+    // Code search needs an account.
+    let r = send(&app(), Method::GET, "/ada/lighthouse/search?q=Beam", None, None, None).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn the_issue_list_filters_by_milestone_and_people_and_heads_a_milestone_page() {
+    let r = get("/ada/lighthouse/issues").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("href=\"/ada/lighthouse/issues?milestone=1\""), "{}", r.body);
+    assert!(r.body.contains("id=\"issue-author\" name=\"author\""));
+    assert!(r.body.contains("id=\"issue-assignee\" name=\"assignee\""));
+    assert!(!r.body.contains("class=\"card pad milestone-head\""));
+    let r = get("/ada/lighthouse/issues?milestone=1").await;
+    assert!(r.body.contains("class=\"card pad milestone-head\""), "{}", r.body);
+    assert!(r.body.contains("3 open, 5 closed"));
+    assert!(r.body.contains("62% complete"));
+    assert!(r.body.contains("<input type=\"hidden\" name=\"milestone\" value=\"1\">"));
+    let r = get("/ada/lighthouse/issues?author=cleo").await;
+    assert!(r.body.contains("value=\"cleo\""));
+}
+
+#[tokio::test]
+async fn an_admin_invite_can_add_the_person_to_an_organization() {
+    let r = get("/admin/invites").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("id=\"invite-org\" name=\"org\""), "{}", r.body);
+    assert!(r.body.contains("id=\"invite-team\" name=\"team\""));
+    let r = post("/admin/invites", &[("org", "nobody-at-all"), ("expires_in_hours", "72")]).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(r.body.contains("There is no organization with that name."));
+    let r = post("/admin/invites", &[("team", "core"), ("expires_in_hours", "72")]).await;
+    assert!(r.body.contains("Name the organization the team is in."));
+    // The org page no longer says an org owner can invite.
+    let r = get("/orgs/harbor/people").await;
+    assert!(!r.body.contains("An owner can invite one from Site admin"));
+}
+
+#[tokio::test]
+async fn forgot_password_is_open_signed_out_and_says_so_when_mail_is_off() {
+    let app = app();
+    let r = send(&app, Method::GET, "/login", None, None, None).await;
+    assert!(r.body.contains("href=\"/password/forgot\""));
+    let r = send(&app, Method::GET, "/password/forgot", None, None, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("This server does not send email."), "{}", r.body);
+    assert!(!r.body.contains("name=\"login\""), "no form when nothing could be sent");
+    // Signed in, it goes to the password settings instead.
+    let r = get("/password/forgot").await;
+    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/settings/password".to_string()));
+}
+
+#[tokio::test]
+async fn small_page_defects_stay_fixed() {
+    // The page that confirms two-factor does not ask for it again.
+    let cookie = format!("ch_session={ADMIN_NO_2FA_COOKIE}");
+    let r = post_as(&cookie, "/settings/security/2fa/confirm", &[("secret", "JBSWY3DPEHPK3PXP"), ("code", "123456")]).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(!r.body.contains("Turn on two-factor sign-in"), "{}", r.body);
+    // Blame starts its path from the branch, like the file page.
+    let r = get("/ada/lighthouse/blame/main/src/main.rs").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains(">main</a><span class=\"sep\""), "{}", r.body);
+    assert!(!r.body.contains(">root</a>"));
+}

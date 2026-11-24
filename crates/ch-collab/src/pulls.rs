@@ -20,6 +20,9 @@ pub struct PullRow {
     pub issue_id: IssueId,
     pub repo_id: RepoId,
     pub head_repo_id: Option<RepoId>,
+    /// Set when the head came from another repository, and kept after that fork is deleted and
+    /// `head_repo_id` goes NULL (migration 0122).
+    pub from_fork: bool,
     pub head_ref: String,
     pub head_sha: String,
     pub base_ref: String,
@@ -40,9 +43,13 @@ pub struct PullRow {
     pub changed_files: i32,
 }
 
-pub const PULL_COLS: &str = "p.issue_id, p.repo_id, p.head_repo_id, p.head_ref, p.head_sha, p.base_ref, p.base_sha, p.merge_base, p.mergeable_state, \
+pub const PULL_COLS: &str = "p.issue_id, p.repo_id, p.head_repo_id, p.from_fork, p.head_ref, p.head_sha, p.base_ref, p.base_sha, p.merge_base, p.mergeable_state, \
      p.merge_commit_sha, p.merge_method, p.merged_at, p.merged_by, p.draft, p.auto_merge_method, p.auto_merge_by, p.maintainer_can_modify, \
      p.commits_count, p.additions, p.deletions, p.changed_files";
+
+/// The repository that holds a pull request's head branch, in SQL. NULL once the fork it came
+/// from is deleted, so it never matches the base repository's branch of the same name.
+pub const HEAD_REPO_SQL: &str = "COALESCE(p.head_repo_id, CASE WHEN p.from_fork THEN NULL ELSE p.repo_id END)";
 
 pub fn parse_mergeable(s: &str) -> MergeableState {
     match s {
@@ -95,19 +102,27 @@ impl PullRow {
         parse_mergeable(&self.mergeable_state)
     }
 
-    /// The repository to ask git about this pull request's commits and diff. A fork's head
-    /// objects live in the fork, and the fork borrows the base's objects, so asking the fork
-    /// sees both sides.
+    /// The repository that holds the head branch, for comparing two head commits. A base
+    /// commit is not always in a fork: compare against the base with `Core::compare_pull`.
     pub fn git_repo(&self) -> RepoId {
         self.head_repo_id.unwrap_or(self.repo_id)
     }
 
+    /// The head came from another repository, including one that has since been deleted.
     pub fn is_fork(&self) -> bool {
-        self.head_repo_id.is_some_and(|h| h != self.repo_id)
+        self.from_fork || self.head_repo_id.is_some_and(|h| h != self.repo_id)
     }
 
-    pub fn head_repo(&self) -> RepoId {
-        self.head_repo_id.unwrap_or(self.repo_id)
+    /// The fork this pull request came from was deleted. Its `head_ref` names a branch that no
+    /// longer exists anywhere, and the base repository's branch of the same name is not it.
+    pub fn head_gone(&self) -> bool {
+        self.from_fork && self.head_repo_id.is_none()
+    }
+
+    /// The repository that holds the head branch, or None once a fork it came from is deleted.
+    /// Never the base repository in that case: the base may have a branch with the same name.
+    pub fn head_repo(&self) -> Option<RepoId> {
+        if self.head_gone() { None } else { Some(self.head_repo_id.unwrap_or(self.repo_id)) }
     }
 }
 
@@ -167,21 +182,21 @@ impl Core {
         let repos = self.repo_refs(&repo_ids).await?;
         let pull_ids: Vec<i64> = pairs.iter().map(|(i, _)| i.id.0).collect();
 
-        let reqs: Vec<(IssueId, Option<UserId>, Option<ch_core::TeamId>)> =
-            sqlx::query_as("SELECT pull_id, user_id, team_id FROM review_requests WHERE pull_id = ANY($1) ORDER BY id")
-                .bind(&pull_ids)
-                .fetch_all(self.db())
-                .await?;
+        // A requested team carries its access to that pull request's repository (ch-4dv).
+        #[allow(clippy::type_complexity)]
+        let reqs: Vec<(IssueId, Option<UserId>, Option<ch_core::TeamId>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT rr.pull_id, rr.user_id, rr.team_id, o.username::text, t.name::text, tr.permission
+             FROM review_requests rr
+             JOIN issues i ON i.id = rr.pull_id
+             LEFT JOIN teams t ON t.id = rr.team_id
+             LEFT JOIN users o ON o.id = t.org_id
+             LEFT JOIN team_repos tr ON tr.team_id = rr.team_id AND tr.repo_id = i.repo_id
+             WHERE rr.pull_id = ANY($1) ORDER BY rr.id",
+        )
+        .bind(&pull_ids)
+        .fetch_all(self.db())
+        .await?;
         users.extend(reqs.iter().filter_map(|r| r.1));
-        let team_ids: Vec<i64> = reqs.iter().filter_map(|r| r.2).map(|t| t.0).collect();
-        let teams: Vec<(ch_core::TeamId, String, String)> = if team_ids.is_empty() {
-            Vec::new()
-        } else {
-            sqlx::query_as("SELECT t.id, o.username::text, t.name::text FROM teams t JOIN users o ON o.id = t.org_id WHERE t.id = ANY($1)")
-                .bind(&team_ids)
-                .fetch_all(self.db())
-                .await?
-        };
         let counts: Vec<(IssueId, i64)> = sqlx::query_as(
             "SELECT c.pull_id, count(*) FROM review_comments c LEFT JOIN reviews r ON r.id = c.review_id
              WHERE c.pull_id = ANY($1) AND (r.id IS NULL OR r.state <> 'pending') GROUP BY c.pull_id",
@@ -200,14 +215,21 @@ impl Core {
                 teams: reqs
                     .iter()
                     .filter(|r| r.0 == id)
-                    .filter_map(|r| r.2)
-                    .filter_map(|t| teams.iter().find(|x| x.0 == t))
-                    .map(|(id, org, name)| TeamRef { id: *id, org: org.clone(), name: name.clone() })
+                    .filter_map(|r| match (r.2, &r.3, &r.4) {
+                        (Some(t), Some(org), Some(name)) => Some(TeamRef {
+                            id: t,
+                            org: org.clone(),
+                            name: name.clone(),
+                            permission: r.5.as_deref().map(github_permission).map(str::to_string),
+                        }),
+                        _ => None,
+                    })
                     .collect(),
             };
             let pr = PullRequest {
                 issue: issue.issue.clone(),
                 head_repo_id: p.head_repo_id,
+                from_fork: p.is_fork(),
                 head_ref: p.head_ref.clone(),
                 head_sha: p.head_sha.clone(),
                 base_ref: p.base_ref.clone(),
@@ -295,7 +317,7 @@ impl Core {
         self.need_view(actor, repo).await?;
         let sql = format!(
             "SELECT {} FROM issues i JOIN pull_requests p ON p.issue_id = i.id
-             WHERE p.repo_id = $1 AND COALESCE(p.head_repo_id, p.repo_id) = $2 AND p.head_ref = $3 AND p.base_ref = $4 AND i.open ORDER BY i.number DESC LIMIT 1",
+             WHERE p.repo_id = $1 AND {HEAD_REPO_SQL} = $2 AND p.head_ref = $3 AND p.base_ref = $4 AND i.open ORDER BY i.number DESC LIMIT 1",
             crate::core::ISSUE_COLS
         );
         let Some(issue) = sqlx::query_as::<_, IssueRow>(&sql)
@@ -343,6 +365,9 @@ impl Core {
             )]));
         }
         let head_repo_id = new.head_repo_id;
+        // Without a grant on the base, a pull request comes from your own fork, or a fork owned
+        // by an organization you own: never from the base itself or someone else's fork (ch-8tj).
+        let granted = self.d.authz.has_grant(actor, base_repo.id).await?;
         if head_repo_id != base_repo.id {
             self.need_read(actor, head_repo_id).await?;
             if self.network_of(head_repo_id).await? != self.network_of(base_repo.id).await? {
@@ -352,6 +377,11 @@ impl Core {
                     "The head repository must be a fork of this repository or the repository itself",
                 ));
             }
+            if !granted && !self.owns_repo_account(actor, user, head_repo_id).await? {
+                return Err(Error::invalid("PullRequest", "head", OWN_FORK_ONLY));
+            }
+        } else if !granted {
+            return Err(Error::invalid("PullRequest", "head", OWN_FORK_ONLY));
         } else if head_ref == base_ref {
             return Err(Error::invalid("PullRequest", "head", "The head and base branches must be different"));
         }
@@ -363,10 +393,10 @@ impl Core {
             if matches!(e, Error::NotFound) { Error::Validation(vec![FieldError::new("PullRequest", "head", "invalid")]) } else { e }
         })?;
 
-        let existing: Option<i64> = sqlx::query_scalar(
+        let existing: Option<i64> = sqlx::query_scalar(&format!(
             "SELECT i.number FROM issues i JOIN pull_requests p ON p.issue_id = i.id
-             WHERE p.repo_id = $1 AND COALESCE(p.head_repo_id, p.repo_id) = $2 AND p.head_ref = $3 AND p.base_ref = $4 AND i.open LIMIT 1",
-        )
+             WHERE p.repo_id = $1 AND {HEAD_REPO_SQL} = $2 AND p.head_ref = $3 AND p.base_ref = $4 AND i.open LIMIT 1",
+        ))
         .bind(base_repo.id)
         .bind(head_repo_id)
         .bind(&head_ref)
@@ -381,8 +411,8 @@ impl Core {
             )]));
         }
 
-        let git_repo = if head_repo_id == base_repo.id { base_repo.id } else { head_repo_id };
-        let cmp = self.d.git.compare(git_repo, &base_sha, &head_sha).await?;
+        // A fork keeps its own objects, so the base commit may not be in it (ch-8tj).
+        let cmp = self.d.git.compare_across(base_repo.id, &base_sha, head_repo_id, &head_sha).await?;
         if cmp.ahead_by == 0 {
             return Err(Error::Validation(vec![FieldError::custom(
                 "PullRequest",
@@ -465,15 +495,23 @@ impl Core {
     }
 
     async fn refresh_pull_inner(&self, issue: &IssueRow, pull: &PullRow) -> Result<()> {
-        let head_sha = self.d.git.resolve(pull.head_repo(), &full_branch(&pull.head_ref)).await.unwrap_or_else(|_| pull.head_sha.clone());
         let base_sha = self.d.git.resolve(pull.repo_id, &full_branch(&pull.base_ref)).await.unwrap_or_else(|_| pull.base_sha.clone());
-        let state = self
-            .d
-            .git
-            .test_merge(pull.repo_id, &full_branch(&pull.base_ref), pull.head_repo(), &full_branch(&pull.head_ref))
-            .await
-            .unwrap_or(MergeableState::Unknown);
-        let cmp = self.d.git.compare(pull.git_repo(), &base_sha, &head_sha).await.ok();
+        let (head_sha, state) = match pull.head_repo() {
+            Some(head_repo) => {
+                let sha = self.d.git.resolve(head_repo, &full_branch(&pull.head_ref)).await.unwrap_or_else(|_| pull.head_sha.clone());
+                let state = self
+                    .d
+                    .git
+                    .test_merge(pull.repo_id, &full_branch(&pull.base_ref), head_repo, &full_branch(&pull.head_ref))
+                    .await
+                    .unwrap_or(MergeableState::Unknown);
+                (sha, state)
+            }
+            // The fork is gone, so its head cannot move. The base's branch of the same name is
+            // someone else's work and must not stand in for it.
+            None => (pull.head_sha.clone(), pull.mergeable()),
+        };
+        let cmp = self.compare_pull(pull, &base_sha, &head_sha).await.ok();
         let (merge_base, stats) = match &cmp {
             Some(c) => (Some(c.merge_base.clone()), stats_of(c)),
             None => (
@@ -530,7 +568,7 @@ impl Core {
                 if !issue.open || pull.merged_at.is_some() {
                     return Err(Error::invalid("PullRequest", "base", "The base of a closed pull request cannot change"));
                 }
-                if pull.head_repo() == repo && pull.head_ref == base {
+                if pull.head_repo() == Some(repo) && pull.head_ref == base {
                     return Err(Error::invalid("PullRequest", "base", "The head and base branches must be different"));
                 }
                 let sha = self.d.git.resolve(repo, &full_branch(&base)).await.map_err(|e| {
@@ -566,7 +604,11 @@ impl Core {
         if pull.merged_at.is_some() {
             return Err(Error::invalid("PullRequest", "state", "A merged pull request cannot be reopened"));
         }
-        if self.d.git.resolve(pull.head_repo(), &full_branch(&pull.head_ref)).await.is_err() {
+        let head_exists = match pull.head_repo() {
+            Some(head_repo) => self.d.git.resolve(head_repo, &full_branch(&pull.head_ref)).await.is_ok(),
+            None => false,
+        };
+        if !head_exists {
             return Err(Error::invalid(
                 "PullRequest",
                 "state",
@@ -628,7 +670,22 @@ impl Core {
         } else {
             pull.merge_base.clone().unwrap_or_else(|| pull.base_sha.clone())
         };
-        self.d.git.compare(pull.git_repo(), &base, &pull.head_sha).await
+        self.compare_pull(pull, &base, &pull.head_sha).await
+    }
+
+    /// A base commit against a head commit of this pull request. A fork keeps its own objects,
+    /// so neither store alone may hold both (ch-8tj): git reads the base repository with the
+    /// head repository's objects beside it. Once the head repository or its branch is gone, the
+    /// copy under `refs/pull/<n>/head` in the base still answers.
+    pub(crate) async fn compare_pull(&self, pull: &PullRow, base: &str, head: &str) -> Result<Compare> {
+        let Some(head_repo) = pull.head_repo() else {
+            return self.d.git.compare(pull.repo_id, base, head).await;
+        };
+        match self.d.git.compare_across(pull.repo_id, base, head_repo, head).await {
+            Ok(c) => Ok(c),
+            Err(e) if pull.is_fork() => self.d.git.compare(pull.repo_id, base, head).await.map_err(|_| e),
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn pull_files(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Diff> {
@@ -660,7 +717,7 @@ impl Core {
 
     /// Open pull requests whose head is `head_ref` in `head_repo`.
     pub async fn open_pulls_by_head(&self, head_repo: RepoId, head_ref: &str) -> Result<Vec<(IssueRow, PullRow)>> {
-        self.open_pulls_where("COALESCE(p.head_repo_id, p.repo_id) = $1 AND p.head_ref = $2", head_repo.0, short_branch(head_ref)).await
+        self.open_pulls_where(&format!("{HEAD_REPO_SQL} = $1 AND p.head_ref = $2"), head_repo.0, short_branch(head_ref)).await
     }
 
     /// Open pull requests whose base is `base_ref` in `repo`.
@@ -696,6 +753,36 @@ pub fn stats_of(c: &Compare) -> PullStats {
     }
 }
 
+/// Why someone without access to a repository cannot open a pull request from a branch there.
+pub const OWN_FORK_ONLY: &str = "Without access to this repository, send the pull request from a fork you own";
+
+impl Core {
+    /// The repository belongs to `user`, or to an organization `user` owns.
+    async fn owns_repo_account(&self, actor: &Actor, user: UserId, repo: RepoId) -> Result<bool> {
+        let row: Option<(i64, String)> =
+            sqlx::query_as("SELECT r.owner_id, u.kind FROM repositories r JOIN users u ON u.id = r.owner_id WHERE r.id = $1")
+                .bind(repo)
+                .fetch_optional(self.db())
+                .await?;
+        let Some((owner, kind)) = row else { return Ok(false) };
+        if owner == user.0 {
+            return Ok(true);
+        }
+        Ok(kind == "org" && self.d.authz.org_role(actor, ch_core::OrgId(owner)).await? == Some(ch_core::services::OrgRole::Owner))
+    }
+}
+
+/// A stored grant level in GitHub's words for a team's `permission`.
+pub fn github_permission(p: &str) -> &'static str {
+    match p {
+        "admin" => "admin",
+        "maintain" => "maintain",
+        "write" => "push",
+        "triage" => "triage",
+        _ => "pull",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,5 +810,48 @@ mod tests {
             assert_eq!(parse_method(method_str(m)), Some(m));
         }
         assert_eq!(parse_method("x"), None);
+    }
+
+    fn row(head: Option<i64>, from_fork: bool) -> PullRow {
+        PullRow {
+            issue_id: IssueId(1),
+            repo_id: RepoId(10),
+            head_repo_id: head.map(RepoId),
+            from_fork,
+            head_ref: "staging".into(),
+            head_sha: "a".into(),
+            base_ref: "main".into(),
+            base_sha: "b".into(),
+            merge_base: None,
+            mergeable_state: "clean".into(),
+            merge_commit_sha: None,
+            merge_method: None,
+            merged_at: None,
+            merged_by: None,
+            draft: false,
+            auto_merge_method: None,
+            auto_merge_by: None,
+            maintainer_can_modify: false,
+            commits_count: 0,
+            additions: 0,
+            deletions: 0,
+            changed_files: 0,
+        }
+    }
+
+    #[test]
+    fn a_deleted_fork_is_still_a_fork_and_has_no_head_repository() {
+        // A branch of the same repository.
+        let same = row(None, false);
+        assert!(!same.is_fork() && !same.head_gone());
+        assert_eq!(same.head_repo(), Some(RepoId(10)));
+        // A live fork.
+        let fork = row(Some(20), true);
+        assert!(fork.is_fork() && !fork.head_gone());
+        assert_eq!(fork.head_repo(), Some(RepoId(20)));
+        // The fork was deleted: never the base repository.
+        let gone = row(None, true);
+        assert!(gone.is_fork() && gone.head_gone());
+        assert_eq!(gone.head_repo(), None);
     }
 }

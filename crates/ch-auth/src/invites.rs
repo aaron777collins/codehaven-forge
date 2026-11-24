@@ -134,6 +134,18 @@ impl Invites for InvitesService {
         let email = match req.email.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
             Some(e) => {
                 validate_email(e)?;
+                // The invite could never be used: the account form refuses a taken email.
+                let taken: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM user_emails WHERE email = $1::citext)")
+                    .bind(e)
+                    .fetch_one(&self.core.db)
+                    .await?;
+                if taken {
+                    return Err(Error::Validation(vec![FieldError::custom(
+                        "Invite",
+                        "email",
+                        "An account already uses this email. Add that person to an organization or a repository instead.",
+                    )]));
+                }
                 Some(e.to_string())
             }
             None => None,

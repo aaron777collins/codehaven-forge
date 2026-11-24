@@ -34,6 +34,17 @@ default_expiry_hours = 168
 min_expiry_hours = 1
 max_expiry_hours = 720
 
+# Outgoing mail. Leave this out and nothing is ever mailed. With it, reset links and invites
+# made for an address are mailed. TLS is required: "starttls" (the default) or "tls" for
+# port 465. "none" is accepted only for a relay on localhost.
+# [mail.smtp]
+# host = "smtp.example.com"
+# port = 587
+# username = "codehaven"
+# password_file = "/run/secrets/smtp_password"
+# from = "Codehaven <code@example.com>"
+# tls = "starttls"
+
 [log]
 format = "json"
 level = "info"

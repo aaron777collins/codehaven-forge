@@ -4,9 +4,9 @@
 <main id="main" class="page">
   <h1>Notifications</h1>
   <div class="list-head">
-    <nav class="tabs" role="tablist">
-      <a class="tab{% if !all %} current{% endif %}" href="/notifications">Unread</a>
-      <a class="tab{% if all %} current{% endif %}" href="/notifications?all=1">All</a>
+    <nav class="tabs" aria-label="Which notifications">
+      <a class="tab{% if !all %} current{% endif %}"{% if !all %} aria-current="page"{% endif %} href="/notifications">Unread</a>
+      <a class="tab{% if all %} current{% endif %}"{% if all %} aria-current="page"{% endif %} href="/notifications?all=1">All</a>
     </nav>
     <div class="spacer"></div>
     {% if !rows.is_empty() %}
@@ -24,8 +24,8 @@
     <li class="notif-row">
       {% if n.unread %}<span class="unread-dot" title="Unread"><span class="sr-only">Unread</span></span>{% endif %}
       <div class="notif-main">
-        {% if let Some(u) = n.href %}<a href="{{ u }}">{{ n.title }}</a>{% else %}<span>{{ n.title }}</span>{% endif %}
-        <p class="muted small">{% if let Some(r) = n.repo %}{{ r }} <span class="dot" aria-hidden="true">&middot;</span> {% endif %}{{ n.reason }} <span class="dot" aria-hidden="true">&middot;</span> {% call ui::time(n.when) %}</p>
+        {% if let Some(u) = n.href %}<a href="{{ u }}">{{ n.title_html|safe }}</a>{% else %}<span>{{ n.title_html|safe }}</span>{% endif %}
+        <p class="muted small notif-meta">{% if let Some(st) = n.state %}<span class="state-word state-{{ st.0 }}">{{ st.1 }}</span> <span class="dot" aria-hidden="true">&middot;</span> {% endif %}{% if let Some(r) = n.repo %}<span class="meta-part">{{ r }}</span> <span class="dot" aria-hidden="true">&middot;</span> {% endif %}<span class="meta-part">{{ n.reason }}</span> <span class="dot" aria-hidden="true">&middot;</span> {% call ui::time(n.when) %}</p>
       </div>
       <form method="post" action="/notifications/{{ n.id }}/read" class="inline">
         {% call ui::csrf_field(c.csrf) %}

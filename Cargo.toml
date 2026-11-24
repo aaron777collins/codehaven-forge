@@ -122,8 +122,12 @@ regex = "1"
 # russh 0.65 is built on rand 0.10, so host key generation needs that generation of the crate.
 rand10 = { package = "rand", version = "0.10", features = ["thread_rng"] }
 
+# Outgoing mail (ch-bfa). Off unless [mail.smtp] is configured.
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "webpki-roots"] }
+
 # Web UI and rendering
 askama = "0.14"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 rust-embed = "8"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 ammonia = "4"

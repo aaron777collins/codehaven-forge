@@ -46,6 +46,18 @@ pub struct RepoNav {
     /// The workspace URL for the header's "Open workspace" button, or empty when the button
     /// must not show (signed out, a public read, or the editor off).
     pub workspace: String,
+    /// Watch, star and fork buttons, for a signed-in viewer only.
+    pub social: Option<SocialNav>,
+}
+
+/// The header's watch, star and fork buttons.
+#[derive(Debug, Clone, Default)]
+pub struct SocialNav {
+    /// `participating`, `all` or `ignore`.
+    pub watch: String,
+    pub stars: i64,
+    pub starred: bool,
+    pub forks: i64,
 }
 
 impl RepoNav {
@@ -67,6 +79,7 @@ impl RepoNav {
             can_maintain: perm.allows(Permission::Maintain),
             can_triage: perm.allows(Permission::Triage) && !repo.archived,
             workspace: String::new(),
+            social: None,
         }
     }
 }

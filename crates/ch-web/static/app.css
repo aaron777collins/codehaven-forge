@@ -22,6 +22,7 @@
   --closed: #b42318;
   --draft: #5b676b;
   --ok: #15803d;
+  --ok-text: #166534;
   --ok-soft: #e4f4ea;
   --warn: #a16207;
   --warn-soft: #fbf1d9;
@@ -66,6 +67,8 @@
     --closed: #ff8f80;
     --draft: #94a5aa;
     --ok: #4ade80;
+  --ok-text: #4ade80;
+    --ok-text: #4ade80;
     --ok-soft: #12301f;
     --warn: #facc15;
     --warn-soft: #33290c;
@@ -228,7 +231,10 @@ time { white-space: nowrap; }
 .sha-chip code { color: var(--link); background: var(--surface-2); border: 1px solid var(--border); }
 .sha-chip:hover { text-decoration: none; }
 .topics { display: flex; flex-wrap: wrap; gap: var(--s1); }
-.add { color: var(--ok); font-weight: 600; }
+.add { color: var(--ok-text); font-weight: 600; }
+/* A diff row marked .add keeps the code's own colours: the green is its background. */
+table.diff tr.add, table.diff td.add { color: inherit; font-weight: inherit; }
+p.muted a { text-decoration: underline; }
 .del { color: var(--danger); font-weight: 600; }
 .notice { background: var(--ok-soft); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); border-radius: var(--radius); padding: var(--s2) var(--s3); }
 .notice-warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
@@ -240,6 +246,8 @@ time { white-space: nowrap; }
 .field-inline { display: inline-flex; align-items: center; gap: var(--s2); }
 .field-inline > span { color: var(--muted); font-size: 0.86rem; }
 .hint { color: var(--muted); font-size: 0.84rem; margin: 0; }
+.qr { display: inline-block; width: 216px; height: 216px; padding: 8px; background: #fff; border-radius: 8px; border: 1px solid var(--border); }
+.qr svg { display: block; width: 200px; height: 200px; }
 .field-error, .form-error { color: var(--danger); font-size: 0.9rem; margin: 0; }
 .form-error { background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); border-radius: var(--radius); padding: var(--s2) var(--s3); }
 input[type="text"], input[type="email"], input[type="password"], input[type="search"], input[type="url"], input[type="number"], input[type="date"], select, textarea {
@@ -430,3 +438,9 @@ body.bare { align-items: center; justify-content: center; padding: var(--s5); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+.state-word { font-weight: 650; }
+.state-word.state-open { background: none; color: var(--open); }
+.state-word.state-merged { background: none; color: var(--merged); }
+.state-word.state-closed { background: none; color: var(--closed); }
+.code-hit { margin: var(--s1) 0 0; padding: var(--s2) var(--s3); background: var(--surface-2); border-radius: var(--radius); overflow-x: auto; font: 13px/1.5 var(--mono); }
+.notif-meta .meta-part, .notif-meta .state-word { white-space: nowrap; }

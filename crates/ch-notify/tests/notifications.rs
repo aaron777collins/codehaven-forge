@@ -477,3 +477,64 @@ async fn the_background_consumers_do_the_whole_job(pool: PgPool) {
 fn tokio_util_token() -> tokio_util::sync::CancellationToken {
     tokio_util::sync::CancellationToken::new()
 }
+
+/// ch-0l6: on an internal repository the author of a pull request from their own fork has no
+/// grant, only View. A review, an approval or an inline comment still reaches them.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_pull_request_author_without_a_grant_hears_about_reviews(pool: PgPool) {
+    let w = world(pool).await;
+    sqlx::query("UPDATE repositories SET access_tier = 'internal' WHERE id = $1").bind(w.repo.0).execute(&w.c.pool).await.unwrap();
+    let dave = w.c.env.user("dave").await;
+    let pull = issue(&w.c.pool, w.repo, 4, dave, "Fix typo", "small", true).await;
+    sqlx::query("INSERT INTO pull_requests (issue_id, repo_id, head_repo_id, head_ref, head_sha, base_ref, base_sha) VALUES ($1, $2, $2, 'f', 'a', 'main', 'b')").bind(pull).bind(w.repo.0).execute(&w.c.pool).await.unwrap();
+    let review: i64 = sqlx::query_scalar(
+        "INSERT INTO reviews (pull_id, author_id, state, commit_sha, submitted_at) VALUES ($1, $2, 'approved', 'a', now()) RETURNING id",
+    )
+    .bind(pull)
+    .bind(w.bob.0)
+    .fetch_one(&w.c.pool)
+    .await
+    .unwrap();
+    let ev = DomainEvent::ReviewSubmitted {
+        repo_id: w.repo,
+        pull_id: PullId(pull),
+        number: 4,
+        review_id: ch_core::ReviewId(review),
+        state: "approved".into(),
+        actor: w.bob,
+    };
+    assert_eq!(w.fan.process(&ev).await.unwrap(), 1);
+    let dave_inbox = w.inbox(dave).await;
+    assert_eq!(reasons(&dave_inbox), vec!["author"]);
+    assert_eq!((dave_inbox[0].number, dave_inbox[0].state.as_deref()), (Some(4), Some("open")), "the row carries the number to link to");
+
+    let cid: i64 = sqlx::query_scalar(
+        "INSERT INTO review_comments (pull_id, review_id, author_id, path, side, line, body, commit_sha, original_commit_sha) VALUES ($1, $2, $3, 'a.rs', 'right', 1, 'nit', 'a', 'a') RETURNING id",
+    )
+    .bind(pull)
+    .bind(review)
+    .bind(w.alice.0)
+    .fetch_one(&w.c.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE notifications SET unread = false WHERE user_id = $1").bind(dave.0).execute(&w.c.pool).await.unwrap();
+    let ev =
+        DomainEvent::ReviewCommentCreated { repo_id: w.repo, pull_id: PullId(pull), number: 4, comment_id: CommentId(cid), actor: w.alice };
+    w.fan.process(&ev).await.unwrap();
+    assert!(w.inbox(dave).await[0].unread, "an inline comment reaches the author too");
+}
+
+/// ch-0l6: being assigned right after a mention keeps the mention while the row is unread.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_weaker_reason_does_not_replace_a_stronger_unread_one(pool: PgPool) {
+    let w = world(pool).await;
+    let (id, ev) = w.opened(1, w.alice, "Bug", "cc @bob").await;
+    w.fan.process(&ev).await.unwrap();
+    let assigned = DomainEvent::IssueAssigned { repo_id: w.repo, issue_id: IssueId(id), number: 1, assignee: w.bob, actor: w.alice };
+    w.fan.process(&assigned).await.unwrap();
+    assert_eq!(reasons(&w.inbox(w.bob).await), vec!["mention"]);
+    // Once read, new activity says why it came back.
+    sqlx::query("UPDATE notifications SET unread = false WHERE user_id = $1").bind(w.bob.0).execute(&w.c.pool).await.unwrap();
+    w.fan.process(&assigned).await.unwrap();
+    assert_eq!(reasons(&w.inbox(w.bob).await), vec!["assigned"]);
+}

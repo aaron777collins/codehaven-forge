@@ -421,7 +421,9 @@ pub fn pull(n: i64, title: &str, body: &str, state: &str, author: UserId, head: 
     i.closed_at = if open { None } else { Some(ago(days.saturating_sub(1), 0)) };
     PullRequest {
         issue: i,
-        head_repo_id: Some(LIGHTHOUSE),
+        // The service stores no head repository for a branch of the same repository.
+        head_repo_id: None,
+        from_fork: false,
         head_ref: head.into(),
         head_sha: sha(21),
         base_ref: base.into(),
@@ -515,7 +517,8 @@ pub fn threads() -> Vec<ch_core::collab::ThreadView> {
         };
     let view = |c: ch_core::collab::ReviewComment| {
         let author = who(c.author_id);
-        ch_core::collab::ReviewCommentView { comment: c, author, reactions: Default::default(), has_suggestion: false }
+        let has_suggestion = c.body.contains("```suggestion") && c.side == "right";
+        ch_core::collab::ReviewCommentView { comment: c, author, reactions: Default::default(), has_suggestion }
     };
     vec![ch_core::collab::ThreadView {
         id: 41,
@@ -533,6 +536,14 @@ pub fn threads() -> Vec<ch_core::collab::ThreadView> {
                 "Should `colour` default to `White`? `new` sets it, so this is fine, just checking.",
             )),
             view(comment(32, None, CLEO, Some(CommentId(31)), ago(0, 6), "Yes, `new` sets it to white.")),
+            view(comment(
+                33,
+                None,
+                BOB,
+                Some(CommentId(31)),
+                ago(0, 4),
+                "Or say it where the field is:\n\n```suggestion\n    colour: Colour::White,\n```",
+            )),
         ],
     }]
 }
@@ -746,11 +757,13 @@ pub fn notifications() -> Vec<Notification> {
         title: title.into(),
         unread,
         updated_at: ago(0, h),
+        number: Some(subject),
+        state: Some(if subject == 14 { "merged".into() } else { "open".into() }),
     };
     vec![
         n(1, "review_requested", "pull", 14, "Colour the signal on the wire", true, 2),
         n(2, "mention", "issue", 10, "Guide is missing a section on fog", true, 20),
-        n(3, "assign", "issue", 12, "Support colour channels", false, 60),
+        n(3, "assigned", "issue", 12, "Support colour channels", false, 60),
     ]
 }
 

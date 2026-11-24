@@ -2,10 +2,18 @@
 {% import "issues/macros.html" as m %}
 {% import "components.html" as ui %}
 {% block repo_body %}
+{% if let Some(ms) = milestone %}
+<section class="card pad milestone-head" aria-label="Milestone">
+  <h2 class="page-h"><svg class="icon" aria-hidden="true"><use href="#i-milestone"/></svg>{{ ms.title }}{% if !ms.open %} <span class="chip">Closed</span>{% endif %}</h2>
+  {% if !ms.description.is_empty() %}<p>{{ ms.description }}</p>{% endif %}
+  <p class="muted small">{% if let Some(d) = ms.due %}Due {{ d }} <span class="dot" aria-hidden="true">&middot;</span> {% endif %}{{ ms.open_issues }} open, {{ ms.closed_issues }} closed <span class="dot" aria-hidden="true">&middot;</span> {{ ms.percent }}% complete</p>
+  <progress max="100" value="{{ ms.percent }}" aria-label="{{ ms.percent }}% complete">{{ ms.percent }}%</progress>
+</section>
+{% endif %}
 <div class="list-head">
-  <div class="tabs" role="tablist">
-    <a class="tab{% if open %} current{% endif %}" href="{{ open_href }}"><svg class="icon" aria-hidden="true"><use href="#i-circle-dot"/></svg>Open <span class="count">{{ open_count }}</span></a>
-    <a class="tab{% if !open %} current{% endif %}" href="{{ closed_href }}"><svg class="icon" aria-hidden="true"><use href="#i-circle-check"/></svg>Closed <span class="count">{{ closed_count }}</span></a>
+  <div class="tabs" role="navigation" aria-label="Open or closed">
+    <a class="tab{% if open %} current{% endif %}"{% if open %} aria-current="page"{% endif %} href="{{ open_href }}"><svg class="icon" aria-hidden="true"><use href="#i-circle-dot"/></svg>Open <span class="count">{{ open_count }}</span></a>
+    <a class="tab{% if !open %} current{% endif %}"{% if !open %} aria-current="page"{% endif %} href="{{ closed_href }}"><svg class="icon" aria-hidden="true"><use href="#i-circle-check"/></svg>Closed <span class="count">{{ closed_count }}</span></a>
   </div>
   <div class="spacer"></div>
   <a class="btn" href="{{ labels_href }}"><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg>Labels</a>
@@ -15,6 +23,7 @@
 <form class="filter-bar" method="get" action="{{ base }}/issues">
   <input type="hidden" name="state" value="{% if open %}open{% else %}closed{% endif %}">
   {% if !active_labels.is_empty() %}<input type="hidden" name="labels" value="{{ active_labels.join(",") }}">{% endif %}
+  {% if !milestone_id.is_empty() %}<input type="hidden" name="milestone" value="{{ milestone_id }}">{% endif %}
   <label class="sr-only" for="issue-q">Search issues</label>
   <input id="issue-q" class="filter-search" type="search" name="q" value="{{ query }}" placeholder="Search issues">
   <details class="menu" data-menu>
@@ -22,6 +31,21 @@
     <div class="menu-panel">
       {% for l in label_items %}<a class="pick{% if l.on %} current{% endif %}" href="{{ l.href }}"><span class="label {{ l.class }}">{{ l.name }}</span>{% if l.on %}<svg class="icon check" aria-hidden="true"><use href="#i-check"/></svg>{% endif %}</a>{% endfor %}
       {% if label_items.is_empty() %}<p class="muted pad">No labels yet.</p>{% endif %}
+    </div>
+  </details>
+  <details class="menu" data-menu>
+    <summary class="btn">Milestone<svg class="icon icon-xs" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+    <div class="menu-panel">
+      {% for m in milestone_items %}<a class="pick{% if m.on %} current{% endif %}" href="{{ m.href }}">{{ m.name }}{% if m.on %}<svg class="icon check" aria-hidden="true"><use href="#i-check"/></svg>{% endif %}</a>{% endfor %}
+      {% if milestone_items.is_empty() %}<p class="muted pad">No open milestones.</p>{% endif %}
+    </div>
+  </details>
+  <details class="menu" data-menu{% if !author.is_empty() || !assignee.is_empty() %} open{% endif %}>
+    <summary class="btn">People{% if !author.is_empty() || !assignee.is_empty() %} (on){% endif %}<svg class="icon icon-xs" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+    <div class="menu-panel pad stack">
+      <label for="issue-author" class="small">Opened by</label><input id="issue-author" name="author" type="text" value="{{ author }}" placeholder="username" autocapitalize="none" spellcheck="false" maxlength="40">
+      <label for="issue-assignee" class="small">Assigned to</label><input id="issue-assignee" name="assignee" type="text" value="{{ assignee }}" placeholder="username" autocapitalize="none" spellcheck="false" maxlength="40">
+      <button class="btn btn-primary small" type="submit">Apply</button>
     </div>
   </details>
   <label class="sr-only" for="issue-sort">Sort</label>

@@ -45,16 +45,21 @@ impl Notifications for NotificationsService {
         let per_page = if per_page == 0 { 30 } else { per_page.min(100) } as i64;
         let offset = (page.max(1) as i64 - 1) * per_page;
         #[allow(clippy::type_complexity)]
-        let rows: Vec<(i64, i64, Option<i64>, String, String, i64, String, bool, DateTime<Utc>)> = sqlx::query_as(
-            "SELECT id, user_id, repo_id, reason, subject_type, subject_id, title, unread, updated_at FROM notifications
-             WHERE user_id = $1 AND NOT done AND ($2 = false OR unread) ORDER BY updated_at DESC, id DESC LIMIT $3 OFFSET $4",
-        )
-        .bind(user.0)
-        .bind(unread_only)
-        .bind(per_page)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows: Vec<(i64, i64, Option<i64>, String, String, i64, String, bool, DateTime<Utc>, Option<i64>, Option<String>)> =
+            sqlx::query_as(
+                "SELECT n.id, n.user_id, n.repo_id, n.reason, n.subject_type, n.subject_id, n.title, n.unread, n.updated_at, i.number,
+                    CASE WHEN i.id IS NULL THEN NULL WHEN p.merged_at IS NOT NULL THEN 'merged' WHEN i.open THEN 'open' ELSE 'closed' END
+             FROM notifications n
+             LEFT JOIN issues i ON i.id = n.subject_id AND n.subject_type IN ('issue', 'pull')
+             LEFT JOIN pull_requests p ON p.issue_id = i.id
+             WHERE n.user_id = $1 AND NOT n.done AND ($2 = false OR n.unread) ORDER BY n.updated_at DESC, n.id DESC LIMIT $3 OFFSET $4",
+            )
+            .bind(user.0)
+            .bind(unread_only)
+            .bind(per_page)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
         // Access can be taken away after a notification was written, and the title of a thread
         // someone can no longer open must not stay visible in their inbox.
         // Judged as the person themselves, not by a token's scopes: the inbox is theirs.
@@ -66,7 +71,7 @@ impl Notifications for NotificationsService {
         };
         let mut readable: HashMap<i64, bool> = HashMap::new();
         let mut out = Vec::new();
-        for (id, user_id, repo_id, reason, subject_type, subject_id, title, unread, updated_at) in rows {
+        for (id, user_id, repo_id, reason, subject_type, subject_id, title, unread, updated_at, number, state) in rows {
             // A notification that belongs to no repository cannot be checked against a grant.
             if repo_id.is_none() && actor.is_app() {
                 continue;
@@ -75,7 +80,7 @@ impl Notifications for NotificationsService {
                 let ok = match readable.get(&r) {
                     Some(v) => *v,
                     None => {
-                        let v = self.authz.repo_permission(&as_user, RepoId(r)).await? >= Permission::Read;
+                        let v = self.authz.repo_permission(&as_user, RepoId(r)).await? >= Permission::View;
                         readable.insert(r, v);
                         v
                     }
@@ -94,6 +99,8 @@ impl Notifications for NotificationsService {
                 title,
                 unread,
                 updated_at,
+                number,
+                state,
             });
         }
         Ok(out)
@@ -109,7 +116,7 @@ impl Notifications for NotificationsService {
                 .await?;
             let mut total = 0;
             for (repo, n) in rows {
-                if self.authz.repo_permission(actor, RepoId(repo)).await? >= Permission::Read {
+                if self.authz.repo_permission(actor, RepoId(repo)).await? >= Permission::View {
                     total += n;
                 }
             }
@@ -164,14 +171,14 @@ impl Notifications for NotificationsService {
             return Err(Error::invalid("Subscription", "level", "Use all, participating or ignore."));
         }
         // You can only watch what you can read.
-        self.authz.require(actor, repo, Permission::Read).await?;
+        self.authz.require(actor, repo, Permission::View).await?;
         sqlx::query("INSERT INTO watches (user_id, repo_id, level) VALUES ($1, $2, $3) ON CONFLICT (user_id, repo_id) DO UPDATE SET level = EXCLUDED.level").bind(user.0).bind(repo.0).bind(level).execute(&self.pool).await?;
         Ok(())
     }
 
     async fn watch_level(&self, actor: &Actor, repo: RepoId) -> Result<String> {
         let user = Self::owner(actor)?;
-        self.authz.require(actor, repo, Permission::Read).await?;
+        self.authz.require(actor, repo, Permission::View).await?;
         let level: Option<String> = sqlx::query_scalar("SELECT level FROM watches WHERE user_id = $1 AND repo_id = $2")
             .bind(user.0)
             .bind(repo.0)
@@ -197,7 +204,7 @@ impl Notifications for NotificationsService {
         let repo: Option<i64> =
             sqlx::query_scalar("SELECT repo_id FROM issues WHERE id = $1").bind(subject_id).fetch_optional(&self.pool).await?;
         let Some(repo) = repo else { return Err(Error::NotFound) };
-        self.authz.require(actor, RepoId(repo), Permission::Read).await?;
+        self.authz.require(actor, RepoId(repo), Permission::View).await?;
         sqlx::query(
             "INSERT INTO issue_subscriptions (issue_id, user_id, subscribed, reason) VALUES ($1, $2, $3, 'manual') ON CONFLICT (issue_id, user_id) DO UPDATE SET subscribed = EXCLUDED.subscribed, reason = 'manual'",
         )

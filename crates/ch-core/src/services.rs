@@ -122,6 +122,15 @@ pub trait Accounts: Send + Sync {
         ttl_minutes: u32,
         client: &ClientInfo,
     ) -> Result<OneTimeLink>;
+    /// "Forgot your password": the account a username or email names, when one should get a
+    /// reset link by email now, and that link. `None` for no such account, a suspended one, no
+    /// email, or a link already sent in the last ten minutes. The caller answers the same in
+    /// every case. Unlike an admin's reset link, this one ends no session until it is used,
+    /// since anyone can ask for it.
+    async fn request_password_reset(&self, login: &str, client: &ClientInfo) -> Result<Option<(String, OneTimeLink)>> {
+        let _ = (login, client);
+        Err(Error::unavailable("password reset by email is not built yet"))
+    }
     /// Sets a password directly. Only `Actor::System` with `--password-stdin`, for the e2e harness.
     async fn set_password(&self, actor: &Actor, user: UserId, password: &str, client: &ClientInfo) -> Result<()>;
     /// Ends every session of the account. Lockout state is separate: see `unlock`.
@@ -187,6 +196,22 @@ pub trait Repos: Send + Sync {
         let _ = (actor, id, to, client);
         Err(Error::unavailable("set_tier is not built yet"))
     }
+    /// Star counts and fork counts for the header, and whether this person starred it.
+    async fn social(&self, actor: &Actor, id: RepoId) -> Result<RepoSocial> {
+        let _ = (actor, id);
+        Err(Error::unavailable("social is not built yet"))
+    }
+    /// Stars or unstars a repository for the signed-in person. Needs an account that can see it.
+    async fn set_star(&self, actor: &Actor, id: RepoId, starred: bool) -> Result<()> {
+        let _ = (actor, id, starred);
+        Err(Error::unavailable("set_star is not built yet"))
+    }
+    /// The direct forks of a repository that the actor can read, newest first. A fork the
+    /// actor cannot read is left out and not counted.
+    async fn forks(&self, actor: &Actor, id: RepoId) -> Result<Vec<Repo>> {
+        let _ = (actor, id);
+        Err(Error::unavailable("forks is not built yet"))
+    }
     /// A fork at a chosen tier: private by default, never above the source, never public.
     async fn fork_as(&self, actor: &Actor, id: RepoId, into: UserId, visibility: Visibility, client: &ClientInfo) -> Result<Repo> {
         let _ = visibility;
@@ -242,6 +267,17 @@ pub trait GitService: Send + Sync {
     async fn log(&self, repo: RepoId, rev: &str, path: Option<&str>, skip: u32, limit: u32) -> Result<Vec<CommitInfo>>;
     async fn commit(&self, repo: RepoId, rev: &str) -> Result<CommitInfo>;
     async fn compare(&self, repo: RepoId, base: &str, head: &str) -> Result<Compare>;
+    /// Compares `base` in `repo` with `head` in `head_repo`, a repository of the same fork
+    /// network. A fork keeps its own objects, so once either side has commits the other lacks,
+    /// neither store alone holds both. This reads both without copying anything into either
+    /// (ch-8tj). The caller checked that the viewer can read both repositories.
+    async fn compare_across(&self, repo: RepoId, base: &str, head_repo: RepoId, head: &str) -> Result<Compare> {
+        if repo == head_repo {
+            return self.compare(repo, base, head).await;
+        }
+        let _ = (base, head);
+        Err(Error::unavailable("compare_across is not built yet"))
+    }
     async fn diff(&self, repo: RepoId, base: &str, head: &str) -> Result<Diff>;
     async fn grep(&self, repo: RepoId, rev: &str, pattern: &str, limit: u32) -> Result<Vec<SearchHit>>;
     async fn archive(&self, repo: RepoId, rev: &str, format: ArchiveFormat) -> Result<BoxStream<'static, std::io::Result<Bytes>>>;
@@ -905,6 +941,23 @@ pub trait Search: Send + Sync {
     async fn issues(&self, actor: &Actor, query: &str, limit: u32) -> Result<Vec<SearchHit>>;
     async fn users(&self, actor: &Actor, query: &str, limit: u32) -> Result<Vec<SearchHit>>;
     async fn code(&self, actor: &Actor, repo: RepoId, query: &str, limit: u32) -> Result<Vec<SearchHit>>;
+    /// Code on the default branch of the repositories the actor can read with an account, most
+    /// recently pushed first, up to `limit` lines. Never anything signed out (ch-4pn D13).
+    async fn code_all(&self, actor: &Actor, query: &str, limit: u32) -> Result<Vec<CodeHit>> {
+        let _ = (actor, query, limit);
+        Err(Error::unavailable("code search across repositories is not built yet"))
+    }
+}
+
+// ---------------------------------------------------------------- mail (ch-notify)
+
+/// Outgoing email. Off unless `[mail.smtp]` is configured: then `enabled` is false and nothing
+/// is ever sent.
+#[async_trait]
+pub trait Mail: Send + Sync {
+    fn enabled(&self) -> bool;
+    /// Sends one plain-text message. The caller has already decided the recipient may get it.
+    async fn send(&self, to: &str, subject: &str, body: &str) -> Result<()>;
 }
 
 // ---------------------------------------------------------------- delivery (ch-notify)

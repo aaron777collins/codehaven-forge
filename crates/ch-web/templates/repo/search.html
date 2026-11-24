@@ -1,0 +1,23 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<h2 class="page-h">Search code</h2>
+<form class="filter-bar" method="get" action="{{ base }}/search" role="search">
+  <label class="sr-only" for="code-q">Search the code on {{ branch }}</label>
+  <input id="code-q" class="filter-search" type="search" name="q" value="{{ q }}" placeholder="Search the code on {{ branch }}" maxlength="200">
+  <button class="btn" type="submit">Search</button>
+</form>
+{% if q.is_empty() %}
+{% call ui::empty("Search this repository", "Type a word or a piece of code. It searches every file on the default branch.") %}
+{% else if rows.is_empty() %}
+{% call ui::empty("Nothing matches", "Try a shorter piece of the text.") %}
+{% else %}
+<p class="muted small">{{ rows.len() }} matching line{% if rows.len() != 1 %}s{% endif %}{% if rows.len() >= 100 %}, the first 100 shown{% endif %}.</p>
+<ul class="card code-hits">
+  {% for h in rows %}
+  <li class="hit-item"><a class="hit-title" href="{{ h.href }}"><code>{{ h.location }}</code></a>
+    <pre class="code-hit"><code>{{ h.text }}</code></pre></li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="list-head">
+  <h2 class="page-h">Forks</h2>
+  <span class="spacer"></span>
+  {% if can_fork %}<a class="btn" href="{{ base }}/fork"><svg class="icon" aria-hidden="true"><use href="#i-git-fork"/></svg>Fork</a>{% endif %}
+</div>
+{% if rows.is_empty() %}
+{% call ui::empty("No forks you can see", "A fork is someone's own copy of this repository. Forks you cannot read are not listed.") %}
+{% else %}
+<ul class="card fork-list">
+  {% for f in rows %}
+  <li class="fork-row">
+    <img class="avatar av-20" src="/avatar/{{ f.owner.username }}.svg" alt="" width="20" height="20" loading="lazy">
+    <div class="fork-main">
+      <a href="{{ f.href }}"><strong>{{ f.full_name }}</strong></a>
+      <span class="chip" title="{{ f.tier_title }}">{{ f.tier }}<span class="sr-only">: {{ f.tier_title }}</span></span>
+      {% if !f.description.is_empty() %}<p class="muted small">{{ f.description }}</p>{% endif %}
+    </div>
+    <span class="muted small">forked {% call ui::time(f.created) %}</span>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

@@ -330,6 +330,7 @@ struct TwoFactorSetupPage {
     section: String,
     secret: String,
     otpauth_url: String,
+    qr_svg: String,
     error: String,
 }
 
@@ -339,7 +340,8 @@ struct TwoFactorSetupPage {
 async fn setup_page(ctx: &Ctx, secret: String, otpauth_url: String, error: &str, status: StatusCode) -> WebResult<Response> {
     ctx.user_id()?;
     let c = ctx.chrome("Set up two-factor").await.nav("settings");
-    ctx.page_status(status, &TwoFactorSetupPage { c, section: "security".into(), secret, otpauth_url, error: error.into() })
+    let qr_svg = crate::qr::svg(&otpauth_url);
+    ctx.page_status(status, &TwoFactorSetupPage { c, section: "security".into(), secret, otpauth_url, qr_svg, error: error.into() })
 }
 
 pub async fn two_factor_start(ctx: Ctx, _form: FormData) -> WebResult<Response> {
@@ -370,7 +372,13 @@ pub async fn two_factor_confirm(ctx: Ctx, form: FormData) -> WebResult<Response>
         Ok(on) => {
             let codes = on.recovery_codes;
             let codes_text = codes.join("\n");
-            let c = ctx.chrome("Two-factor is on").await.nav("settings");
+            let mut c = ctx.chrome("Two-factor is on").await.nav("settings");
+            // This request still carries the session from before two-factor, so the chrome
+            // would ask for what was just done (ch-9vo). The new session has it on.
+            c.banner = None;
+            if let Some(u) = c.user.as_mut() {
+                u.admin_needs_2fa = false;
+            }
             let mut r = ctx.page(&TwoFactorDonePage { c, section: "security".into(), codes, codes_text })?;
             // Turning two-factor on ended every session. This is the new one.
             add_cookie(&mut r, &session_cookie(&ctx, &on.session));

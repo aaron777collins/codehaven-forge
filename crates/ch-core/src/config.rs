@@ -95,6 +95,10 @@ pub struct SmtpConfig {
     pub username: Option<String>,
     pub password_file: Option<PathBuf>,
     pub from: String,
+    /// `starttls` (the default: required, never falls back to plain text), `tls` (implicit TLS,
+    /// as on port 465) or `none` (plain text, accepted only for a relay on localhost).
+    #[serde(default)]
+    pub tls: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

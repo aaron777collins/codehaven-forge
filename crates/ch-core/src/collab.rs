@@ -26,6 +26,10 @@ pub struct TeamRef {
     pub id: TeamId,
     pub org: String,
     pub name: String,
+    /// The team's access to the repository in question, in GitHub's words (`pull`, `triage`,
+    /// `push`, `maintain`, `admin`). `None` when it has no access there.
+    #[serde(default)]
+    pub permission: Option<String>,
 }
 
 /// A repository as shown in a pull request's head and base.

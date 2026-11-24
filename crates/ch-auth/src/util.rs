@@ -50,6 +50,9 @@ const RESERVED: &[&str] = &[
     "oauth",
     "none",
     "null",
+    // The package pages live at /packages and /nuget (ch-2fc).
+    "packages",
+    "nuget",
     "undefined",
 ];
 

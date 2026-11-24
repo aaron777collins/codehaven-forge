@@ -154,3 +154,30 @@ async fn the_trait_objects_agree_with_the_engine(pool: PgPool) {
     assert!(s.issues(&w.carol_a(), "nothing", 5).await.unwrap().is_empty());
     assert!(s.code(&w.carol_a(), w.repo, "x", 5).await.unwrap().is_empty());
 }
+
+/// ch-tnt: code search across repositories only looks in repositories the person can read with
+/// an account, never signed out, and `repo:owner/name` narrows it.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn code_search_across_repositories_only_reads_what_each_person_can(pool: PgPool) {
+    let w = world(pool).await;
+    sqlx::query("UPDATE repositories SET is_empty = false").execute(&w.pool).await.unwrap();
+    let other = w.env.repo(w.eve, "eves").await;
+    sqlx::query("UPDATE repositories SET is_empty = false, pushed_at = now() WHERE id = $1").bind(other).execute(&w.pool).await.unwrap();
+    w.git.st.lock().unwrap().grep_hits =
+        vec![SearchHit { kind: "code".into(), id: 7, title: "src/lib.rs".into(), snippet: "fn needle() {}".into() }];
+    let repos_of = |hits: &[CodeHit]| {
+        let mut v: Vec<String> = hits.iter().map(|h| h.repo.clone()).collect();
+        v.sort();
+        v
+    };
+    let carol = w.core.search_code_all(&w.carol_a(), "needle", 50).await.unwrap();
+    assert_eq!(repos_of(&carol), vec!["alice/demo", "alice/public-lib"], "eve's private repositories are not searched");
+    assert_eq!((carol[0].path.as_str(), carol[0].line), ("src/lib.rs", 7));
+    let eve = w.core.search_code_all(&w.eve_a(), "needle", 50).await.unwrap();
+    assert_eq!(repos_of(&eve), vec!["alice/public-lib", "eve/eves", "eve/secret"]);
+    assert!(w.core.search_code_all(&Actor::Anonymous, "needle", 50).await.unwrap().is_empty());
+    let only = w.core.search_code_all(&w.carol_a(), "repo:alice/demo needle", 50).await.unwrap();
+    assert_eq!(only.len(), 1);
+    assert!(w.core.search_code_all(&w.carol_a(), "repo:eve/eves needle", 50).await.unwrap().is_empty());
+    assert!(w.core.search_code_all(&w.carol_a(), "repo:alice/demo", 50).await.unwrap().is_empty(), "a repo term alone is no query");
+}

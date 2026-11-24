@@ -58,6 +58,21 @@ impl Authz for TestAuthz {
     async fn org_role(&self, _actor: &Actor, _org: ch_core::OrgId) -> Result<Option<ch_core::services::OrgRole>> {
         Ok(None)
     }
+    /// Ownership or a collaborator row. A public repository's tier alone is not a grant.
+    async fn has_grant(&self, actor: &Actor, repo: RepoId) -> Result<bool> {
+        if actor.is_system() || actor.is_site_admin() {
+            return Ok(true);
+        }
+        let Some(user) = actor.user_id() else { return Ok(false) };
+        let row: Option<(bool,)> = sqlx::query_as(
+            "SELECT r.owner_id = $2 OR EXISTS (SELECT 1 FROM repo_collaborators c WHERE c.repo_id = r.id AND c.user_id = $2) FROM repositories r WHERE r.id = $1",
+        )
+        .bind(repo)
+        .bind(user)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some_and(|r| r.0))
+    }
     async fn require(&self, actor: &Actor, repo: RepoId, needed: Permission) -> Result<()> {
         let p = self.repo_permission(actor, repo).await?;
         if p < Permission::Read {
@@ -501,6 +516,10 @@ impl GitService for FakeGit {
             return Err(Error::NotFound);
         }
         Ok(c)
+    }
+    /// The fakes key a fork's compares by the head repository.
+    async fn compare_across(&self, _repo: RepoId, base: &str, head_repo: RepoId, head: &str) -> Result<Compare> {
+        self.compare(head_repo, base, head).await
     }
     async fn compare(&self, repo: RepoId, base: &str, head: &str) -> Result<Compare> {
         let st = self.st.lock().unwrap();

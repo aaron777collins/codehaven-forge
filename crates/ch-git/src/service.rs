@@ -32,6 +32,15 @@ impl Repos for GitCore {
     async fn fork(&self, actor: &Actor, id: RepoId, into: UserId, client: &ClientInfo) -> Result<Repo> {
         self.do_fork(actor, id, into, None, client).await
     }
+    async fn forks(&self, actor: &Actor, id: RepoId) -> Result<Vec<Repo>> {
+        self.do_forks(actor, id).await
+    }
+    async fn social(&self, actor: &Actor, id: RepoId) -> Result<RepoSocial> {
+        self.do_social(actor, id).await
+    }
+    async fn set_star(&self, actor: &Actor, id: RepoId, starred: bool) -> Result<()> {
+        self.do_set_star(actor, id, starred).await
+    }
     async fn delete(&self, actor: &Actor, id: RepoId, client: &ClientInfo) -> Result<()> {
         self.do_delete(actor, id, client).await
     }
@@ -122,6 +131,9 @@ impl GitService for GitCore {
     }
     async fn compare(&self, repo: RepoId, base: &str, head: &str) -> Result<Compare> {
         self.read_compare(repo, base, head).await
+    }
+    async fn compare_across(&self, repo: RepoId, base: &str, head_repo: RepoId, head: &str) -> Result<Compare> {
+        self.read_compare_across(repo, base, head_repo, head).await
     }
     async fn diff(&self, repo: RepoId, base: &str, head: &str) -> Result<Diff> {
         self.read_diff(repo, base, head).await

@@ -3,13 +3,13 @@
   <h2 class="issue-h1">{{ h.title }} <span class="muted">#{{ h.number }}</span></h2>
   <p class="issue-sub">
     <span class="state state-{{ h.state }}"><svg class="icon" aria-hidden="true"><use href="#i-{{ h.icon }}"/></svg>{{ h.state_label }}</span>
-    <strong>{{ h.author.display }}</strong> wants to merge {{ h.commits }} commit{% if h.commits != 1 %}s{% endif %} into <code class="branch-chip">{{ h.base_ref }}</code> from <code class="branch-chip">{{ h.head_ref }}</code>
+    {% if h.state == "merged" %}<strong>{% if let Some(u) = h.merged_by %}{{ u.display }}{% else %}{{ h.author.display }}{% endif %}</strong> merged {{ h.commits }} commit{% if h.commits != 1 %}s{% endif %} into{% else if h.state == "closed" %}<strong>{{ h.author.display }}</strong> wanted to merge {{ h.commits }} commit{% if h.commits != 1 %}s{% endif %} into{% else %}<strong>{{ h.author.display }}</strong> wants to merge {{ h.commits }} commit{% if h.commits != 1 %}s{% endif %} into{% endif %} <code class="branch-chip">{{ h.base_ref }}</code> from <code class="branch-chip">{{ h.head_ref }}</code>
   </p>
 </header>
-<div class="tabs pr-tabs" role="tablist">
-  <a class="tab{% if h.tab == "conversation" %} current{% endif %}" href="{{ h.href }}"><svg class="icon" aria-hidden="true"><use href="#i-message-square"/></svg>Conversation</a>
-  <a class="tab{% if h.tab == "commits" %} current{% endif %}" href="{{ h.href }}/commits"><svg class="icon" aria-hidden="true"><use href="#i-git-commit-horizontal"/></svg>Commits <span class="count">{{ h.commits }}</span></a>
-  <a class="tab{% if h.tab == "checks" %} current{% endif %}" href="{{ h.href }}/checks"><svg class="icon" aria-hidden="true"><use href="#i-circle-check"/></svg>Checks <span class="count">{{ h.checks }}</span></a>
-  <a class="tab{% if h.tab == "files" %} current{% endif %}" href="{{ h.href }}/files"><svg class="icon" aria-hidden="true"><use href="#i-file-code"/></svg>Files changed <span class="count">{{ h.files }}</span></a>
+<div class="tabs pr-tabs" role="navigation" aria-label="Pull request">
+  <a class="tab{% if h.tab == "conversation" %} current{% endif %}"{% if h.tab == "conversation" %} aria-current="page"{% endif %} href="{{ h.href }}"><svg class="icon" aria-hidden="true"><use href="#i-message-square"/></svg>Conversation</a>
+  <a class="tab{% if h.tab == "commits" %} current{% endif %}"{% if h.tab == "commits" %} aria-current="page"{% endif %} href="{{ h.href }}/commits"><svg class="icon" aria-hidden="true"><use href="#i-git-commit-horizontal"/></svg>Commits <span class="count">{{ h.commits }}</span></a>
+  <a class="tab{% if h.tab == "checks" %} current{% endif %}"{% if h.tab == "checks" %} aria-current="page"{% endif %} href="{{ h.href }}/checks"><svg class="icon" aria-hidden="true"><use href="#i-circle-check"/></svg>Checks <span class="count">{{ h.checks }}</span></a>
+  <a class="tab{% if h.tab == "files" %} current{% endif %}"{% if h.tab == "files" %} aria-current="page"{% endif %} href="{{ h.href }}/files"><svg class="icon" aria-hidden="true"><use href="#i-file-code"/></svg>Files changed <span class="count">{{ h.files }}</span></a>
 </div>
 {% endmacro %}

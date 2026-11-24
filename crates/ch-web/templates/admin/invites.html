@@ -44,6 +44,17 @@
       <input id="invite-note" name="note" type="text" value="{{ form.note }}">
       {% call ui::field_error(errors.get("note")) %}
     </div>
+    <div class="field">
+      <label for="invite-org">Organization (optional)</label>
+      <input id="invite-org" name="org" type="text" value="{{ form.org }}" autocapitalize="none" spellcheck="false" maxlength="39" aria-describedby="invite-org-hint">
+      <p class="hint" id="invite-org-hint">They join this organization as a member when they accept.</p>
+      {% call ui::field_error(errors.get("org")) %}
+    </div>
+    <div class="field">
+      <label for="invite-team">Team (optional)</label>
+      <input id="invite-team" name="team" type="text" value="{{ form.team }}" autocapitalize="none" spellcheck="false" maxlength="100">
+      {% call ui::field_error(errors.get("team")) %}
+    </div>
     <label class="choice"><input type="checkbox" name="grants_admin" value="1"{% if form.grants_admin %} checked{% endif %}> They can manage the whole server</label>
     <label class="choice"><input type="checkbox" name="grants_ci" value="1"{% if form.grants_ci %} checked{% endif %}> Their pushes may run workflows on this server's runners</label>
     <div class="field">

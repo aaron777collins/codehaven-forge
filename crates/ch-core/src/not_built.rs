@@ -409,6 +409,17 @@ impl Releases for NotBuilt {
     }
 }
 
+/// Mail is off: nothing to send with.
+#[async_trait]
+impl Mail for NotBuilt {
+    fn enabled(&self) -> bool {
+        false
+    }
+    async fn send(&self, to: &str, subject: &str, body: &str) -> Result<()> {
+        Err(nb("mail"))
+    }
+}
+
 #[async_trait]
 impl Search for NotBuilt {
     async fn repos(&self, actor: &Actor, query: &str, limit: u32) -> Result<Vec<SearchHit>> {

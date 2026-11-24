@@ -32,7 +32,7 @@ pub fn hide_unavailable<T>(r: ch_core::Result<T>) -> ch_core::Result<Option<T>> 
 /// Why a notification exists, in plain words.
 pub fn reason_text(reason: &str) -> &'static str {
     match reason {
-        "assign" => "You were assigned",
+        "assign" | "assigned" => "You were assigned",
         "mention" => "You were mentioned",
         "team_mention" => "Your team was mentioned",
         "review_requested" => "Review requested",
@@ -43,7 +43,7 @@ pub fn reason_text(reason: &str) -> &'static str {
         "security_alert" => "Security alert",
         "invitation" => "You were invited",
         "manual" => "You subscribed",
-        "state_change" => "It was closed or reopened",
+        "state_change" => "Its state changed",
         _ => "Activity",
     }
 }
@@ -66,6 +66,10 @@ pub struct NotificationRow {
     pub id: i64,
     pub unread: bool,
     pub title: String,
+    /// The title with `code` spans drawn, escaped.
+    pub title_html: String,
+    /// `open`, `closed` or `merged` for an issue or pull request, as a chip.
+    pub state: Option<(&'static str, &'static str)>,
     /// The page the subject lives on, when the repository can be resolved.
     pub href: Option<String>,
     /// `owner/name`, when the repository can be resolved.
@@ -89,13 +93,25 @@ pub async fn notification_rows(ctx: &Ctx, notes: &[Notification]) -> Vec<Notific
             None => None,
         };
         let (href, repo_name) = match &repo {
-            Some(r) => (subject_href(&n.subject_type, n.subject_id, &r.owner_name, &r.name), Some(r.full_name())),
+            // An issue or pull request links by its number. Without one (an old row whose
+            // subject is gone) there is no page to link to.
+            Some(r) => match (n.subject_type.as_str(), n.number) {
+                ("issue" | "pull" | "pull_request", None) => (None, Some(r.full_name())),
+                (_, number) => (subject_href(&n.subject_type, number.unwrap_or(n.subject_id), &r.owner_name, &r.name), Some(r.full_name())),
+            },
             None => (None, None),
         };
         out.push(NotificationRow {
             id: n.id.0,
             unread: n.unread,
             title: n.title.clone(),
+            title_html: fmt::title_html(&n.title),
+            state: match n.state.as_deref() {
+                Some("open") => Some(("open", "Open")),
+                Some("closed") => Some(("closed", "Closed")),
+                Some("merged") => Some(("merged", "Merged")),
+                _ => None,
+            },
             href,
             repo: repo_name,
             reason: reason_text(&n.reason),
@@ -199,6 +215,7 @@ fn search_type(t: Option<&str>) -> &'static str {
     match t {
         Some("issues") => "issues",
         Some("users") => "users",
+        Some("code") => "code",
         _ => "repos",
     }
 }
@@ -207,7 +224,7 @@ fn search_tabs(q: &str, current: &str) -> Vec<TabItem> {
     let href = |t: &str| {
         if q.is_empty() { format!("/search?type={t}") } else { format!("/search?q={}&type={t}", fmt::enc(q)) }
     };
-    [("repos", "Repositories"), ("issues", "Issues"), ("users", "People")]
+    [("repos", "Repositories"), ("issues", "Issues"), ("code", "Code"), ("users", "People")]
         .into_iter()
         .map(|(t, label)| TabItem { label, href: href(t), current: t == current })
         .collect()
@@ -235,7 +252,7 @@ pub fn repo_name_error(name: &str) -> Option<&'static str> {
 }
 
 /// The choice on the new repository form. Anything unknown is private.
-fn visibility_of(s: &str) -> Visibility {
+pub(crate) fn visibility_of(s: &str) -> Visibility {
     Visibility::parse(s).unwrap_or(Visibility::Private)
 }
 
@@ -360,23 +377,53 @@ struct SearchPage {
     tabs: Vec<TabItem>,
     hits: Vec<HitRow>,
     show_kind: bool,
+    code: Vec<CodeRow>,
+}
+
+/// One matching line of code, linked to its line on the default branch.
+pub struct CodeRow {
+    pub repo: String,
+    pub repo_href: String,
+    pub location: String,
+    pub href: String,
+    pub text: String,
+}
+
+pub fn code_rows(hits: &[ch_core::model::CodeHit]) -> Vec<CodeRow> {
+    hits.iter()
+        .map(|h| {
+            let base = format!("/{}", fmt::enc_path(&h.repo));
+            CodeRow {
+                repo: h.repo.clone(),
+                href: format!("{base}/blob/{}/{}#LC{}", fmt::enc_path(&h.branch), fmt::enc_path(&h.path), h.line),
+                repo_href: base,
+                location: format!("{}:{}", h.path, h.line),
+                text: h.text.clone(),
+            }
+        })
+        .collect()
 }
 
 pub async fn search(ctx: Ctx, Query(q): Query<Params>) -> WebResult<Response> {
     let qs = query_of(&q);
     let kind = search_type(q.get("type").map(String::as_str));
+    let mut code = Vec::new();
     let hits = if qs.is_empty() {
         Vec::new()
     } else {
         let found = match kind {
             "issues" => ctx.state.search.issues(&ctx.actor, &qs, 30).await?,
             "users" => ctx.state.search.users(&ctx.actor, &qs, 30).await?,
+            "code" => {
+                code = code_rows(&ctx.state.search.code_all(&ctx.actor, &qs, 50).await?);
+                Vec::new()
+            }
             _ => ctx.state.search.repos(&ctx.actor, &qs, 30).await?,
         };
         hit_rows(&found, kind != "issues")
     };
     let c = ctx.chrome("Search").await;
-    ctx.page(&SearchPage { c, tabs: search_tabs(&qs, kind), q: qs, kind, hits, show_kind: kind == "issues" })
+    ctx.page(&SearchPage { c, tabs: search_tabs(&qs, kind), q: qs, kind, hits, show_kind: kind == "issues", code })
 }
 
 // ------------------------------------------------------------------ notifications
@@ -925,15 +972,15 @@ pub async fn org_settings_delete(ctx: Ctx, Path(org): Path<String>, form: FormDa
 
 // ------------------------------------------------------------------ new repository
 
-struct OwnerChoice {
-    id: i64,
-    login: String,
-    selected: bool,
+pub(crate) struct OwnerChoice {
+    pub id: i64,
+    pub login: String,
+    pub selected: bool,
 }
 
 /// Yourself, plus every organization you own: the owners a new repository can belong to.
 /// An organization whose role cannot be checked is simply left out.
-async fn owner_choices(ctx: &Ctx, uid: UserId, picked: Option<i64>) -> Vec<OwnerChoice> {
+pub(crate) async fn owner_choices(ctx: &Ctx, uid: UserId, picked: Option<i64>) -> Vec<OwnerChoice> {
     let mut out = Vec::new();
     if let Ok(me) = ctx.state.accounts.get_user(uid).await {
         out.push(OwnerChoice { id: uid.0, login: me.username, selected: Some(uid.0) == picked });
@@ -1165,7 +1212,8 @@ mod tests {
         assert_eq!(reason_text("author"), "You opened this");
         assert_eq!(reason_text("subscribed"), "You watch this repository");
         assert_eq!(reason_text("team_mention"), "Your team was mentioned");
-        assert_eq!(reason_text("state_change"), "It was closed or reopened");
+        assert_eq!(reason_text("state_change"), "Its state changed");
+        assert_eq!(reason_text("assigned"), "You were assigned", "the fan-out writes this spelling");
         assert_eq!(reason_text("something_new"), "Activity");
         assert_eq!(reason_text(""), "Activity");
     }
@@ -1199,6 +1247,7 @@ mod tests {
         assert_eq!(search_type(Some("repos")), "repos");
         assert_eq!(search_type(Some("issues")), "issues");
         assert_eq!(search_type(Some("users")), "users");
+        assert_eq!(search_type(Some("code")), "code");
         assert_eq!(search_type(Some("nonsense")), "repos");
         assert_eq!(page_of(&params(&[])), 1);
         assert_eq!(page_of(&params(&[("page", "3")])), 3);

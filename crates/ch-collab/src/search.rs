@@ -140,6 +140,88 @@ impl Core {
         let r = self.repo(repo).await?;
         self.d.git.grep(repo, &r.default_branch, &q, limit.clamp(1, 1000)).await
     }
+
+    /// Code search across repositories, without an index: the most recently pushed repositories
+    /// the person can read with an account, searched one by one until `limit` lines are found.
+    /// A `repo:owner/name` term narrows it to that one repository. Readability is decided for
+    /// every repository before it is searched, so a private name never reaches a result.
+    pub async fn search_code_all(&self, actor: &Actor, query: &str, limit: u32) -> Result<Vec<CodeHit>> {
+        if actor.is_anonymous() {
+            return Ok(Vec::new());
+        }
+        let (only, rest) = split_repo_term(query);
+        let q = clean(&rest);
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        let want = limit.clamp(1, 200) as usize;
+        let candidates: Vec<(RepoId, String, String)> = match &only {
+            Some((owner, name)) => {
+                sqlx::query_as(
+                    "SELECT r.id, u.username::text || '/' || r.name::text, r.default_branch FROM repositories r JOIN users u ON u.id = r.owner_id
+                     WHERE u.username = $1::citext AND r.name = $2::citext AND NOT r.is_empty",
+                )
+                .bind(owner)
+                .bind(name)
+                .fetch_all(self.db())
+                .await?
+            }
+            None => {
+                sqlx::query_as(
+                    "SELECT r.id, u.username::text || '/' || r.name::text, r.default_branch FROM repositories r JOIN users u ON u.id = r.owner_id
+                     WHERE NOT r.is_empty ORDER BY r.pushed_at DESC NULLS LAST, r.id DESC LIMIT 200",
+                )
+                .fetch_all(self.db())
+                .await?
+            }
+        };
+        let ok = self.readable_at(actor, candidates.iter().map(|c| c.0).collect(), Permission::Read).await?;
+        let mut out: Vec<CodeHit> = Vec::new();
+        let mut searched = 0;
+        for (id, full, branch) in candidates {
+            if !ok.contains(&id) {
+                continue;
+            }
+            // A bounded walk: without an index this is the cost limit.
+            searched += 1;
+            if searched > MAX_REPOS_SEARCHED {
+                break;
+            }
+            let left = (want - out.len()) as u32;
+            let Ok(hits) = self.d.git.grep(id, &branch, &q, left).await else { continue };
+            out.extend(hits.into_iter().map(|h| CodeHit {
+                repo_id: id,
+                repo: full.clone(),
+                branch: branch.clone(),
+                path: h.title,
+                line: h.id,
+                text: h.snippet,
+            }));
+            if out.len() >= want {
+                break;
+            }
+        }
+        out.truncate(want);
+        Ok(out)
+    }
+}
+
+/// How many repositories one search across repositories looks in, newest push first.
+pub const MAX_REPOS_SEARCHED: usize = 30;
+
+/// Takes a `repo:owner/name` term out of a query.
+pub fn split_repo_term(query: &str) -> (Option<(String, String)>, String) {
+    let mut only = None;
+    let mut rest: Vec<&str> = Vec::new();
+    for w in query.split_whitespace() {
+        match w.strip_prefix("repo:").and_then(|r| r.split_once('/')) {
+            Some((o, n)) if only.is_none() && !o.is_empty() && !n.is_empty() && !n.contains('/') => {
+                only = Some((o.to_string(), n.to_string()))
+            }
+            _ => rest.push(w),
+        }
+    }
+    (only, rest.join(" "))
 }
 
 #[cfg(test)]
@@ -153,6 +235,14 @@ mod tests {
         let e = excerpt(&long);
         assert!(e.ends_with("..."));
         assert!(e.chars().count() <= 164);
+    }
+
+    #[test]
+    fn a_repo_term_narrows_the_search() {
+        assert_eq!(split_repo_term("repo:ada/lighthouse fn main"), (Some(("ada".into(), "lighthouse".into())), "fn main".into()));
+        assert_eq!(split_repo_term("fn main"), (None, "fn main".into()));
+        assert_eq!(split_repo_term("repo:bad x"), (None, "repo:bad x".into()));
+        assert_eq!(split_repo_term("repo:a/b/c x"), (None, "repo:a/b/c x".into()));
     }
 
     #[test]

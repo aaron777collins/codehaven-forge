@@ -7,7 +7,8 @@
 <form class="compare-form" method="get" action="{{ compare_href }}">
   <label class="field-inline"><span>Into</span><select name="base">{% for b in branches %}<option value="{{ b }}"{% if *b == base_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</select></label>
   <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"/></svg>
-  <label class="field-inline"><span>From</span><select name="head"><option value="">Choose a branch</option>{% for b in branches %}<option value="{{ b }}"{% if *b == head_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</select></label>
+  {% if !forks.is_empty() %}<label class="field-inline"><span>Repository</span><select name="head_owner"><option value="">{{ owner }}/{{ repo }}</option>{% for f in forks %}<option value="{{ f.0 }}"{% if f.0 == head_owner %} selected{% endif %}>{{ f.1 }}</option>{% endfor %}</select></label>{% endif %}
+  <label class="field-inline"><span>From</span><select name="head"><option value="">Choose a branch</option>{% for b in head_branches %}<option value="{{ b }}"{% if *b == head_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</select></label>
   <button class="btn" type="submit">Compare</button>
 </form>
 {% if has_result %}
@@ -16,7 +17,7 @@
   {% else %}
   <form method="post" action="{{ compare_href }}" class="card pad stack issue-form">
     {% call ui::csrf_field(c.csrf) %}
-    <input type="hidden" name="base" value="{{ base_ref }}"><input type="hidden" name="head" value="{{ head_ref }}">
+    <input type="hidden" name="base" value="{{ base_ref }}"><input type="hidden" name="head" value="{{ head_ref }}"><input type="hidden" name="head_owner" value="{{ head_owner }}">
     <div class="field"><label for="title">Title</label><input id="title" name="title" type="text" value="{{ title }}" maxlength="256" required>{% call ui::field_error(errors.get("title")) %}</div>
     {% call m::editor("body", "body", body, 8, owner, repo) %}
     {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
@@ -27,6 +28,6 @@
   <div class="diffs">{{ diff_html|safe }}</div>
   {% endif %}
 {% else %}
-  <p class="muted">Pick the branch with your changes to compare it with the base.</p>
+  <p class="muted">Pick the branch with your changes to compare it with the base.{% if !forks.is_empty() %} To use a branch of your fork, choose the fork, then Compare to see its branches.{% endif %}</p>
 {% endif %}
 {% endblock %}

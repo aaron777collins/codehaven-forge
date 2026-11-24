@@ -36,11 +36,14 @@
     {% endfor %}
 
     {% if is_merged %}
-    <div class="merge-box merged"><svg class="icon" aria-hidden="true"><use href="#i-git-merge"/></svg><div><strong>Merged</strong>{% if let Some(u) = h.merged_by %} by {{ u.display }}{% endif %}{% if let Some(w) = h.merged_when %} {% call ui::time(w) %}{% endif %}{% if let Some(s) = h.merge_sha %} as <code>{{ s }}</code>{% endif %}. <span class="muted">The branch changes are now in <code class="branch-chip">{{ h.base_ref }}</code>.</span></div></div>
+    <div class="merge-box merged"><svg class="icon" aria-hidden="true"><use href="#i-git-merge"/></svg><div><strong>Merged</strong>{% if let Some(u) = h.merged_by %} by {{ u.display }}{% endif %}{% if let Some(w) = h.merged_when %} {% call ui::time(w) %}{% endif %}{% if let Some(s) = h.merge_sha %} as <code>{{ s }}</code>{% endif %}. <span class="muted">The branch changes are now in <code class="branch-chip">{{ h.base_ref }}</code>.</span></div>
+      {% if can_delete_branch %}<form method="post" action="{{ base }}/pulls/{{ h.number }}/delete-branch" class="merge-delete" data-confirm="Delete the branch {{ h.head_ref }}?">{% call ui::csrf_field(c.csrf) %}<button class="btn small" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"/></svg>Delete branch</button></form>{% endif %}</div>
     {% else if is_open %}
     <section class="merge-box {% if gate.mergeable %}ready{% else %}blocked{% endif %}" aria-label="Merge status">
       {% if is_draft %}
         <div class="merge-line"><svg class="icon" aria-hidden="true"><use href="#i-git-pull-request-draft"/></svg><strong>This pull request is a draft.</strong> <span class="muted">It cannot be merged until it is ready.</span></div>
+      {% else if gate.mergeable && checks_running %}
+        <div class="merge-line ok"><svg class="icon" aria-hidden="true"><use href="#i-circle-check"/></svg><strong>No rule blocks this merge.</strong> <span class="muted">Checks are still running on the latest commit.</span></div>
       {% else if gate.mergeable %}
         <div class="merge-line ok"><svg class="icon" aria-hidden="true"><use href="#i-circle-check"/></svg><strong>This branch can be merged.</strong> <span class="muted">There are no conflicts and every rule is met.</span></div>
       {% else %}
@@ -50,16 +53,33 @@
       {% if let Some(s) = checks_summary %}<div class="merge-line">{% call ui::status(s) %} <span>Checks: {{ s.label }}</span> <a href="{{ h.href }}/checks">Details</a></div>{% endif %}
       {% include "pulls/fork_approval.html" %}
       {% if can_merge %}
-      <form method="post" action="{{ base }}/pulls/{{ h.number }}/merge" class="merge-form row">
+      <form method="post" action="{{ base }}/pulls/{{ h.number }}/merge" class="merge-form stack">
         {% call ui::csrf_field(c.csrf) %}
-        <label class="sr-only" for="merge-method">Merge method</label>
-        <select id="merge-method" name="method"><option value="merge">Create a merge commit</option><option value="squash">Squash and merge</option><option value="rebase">Rebase and merge</option></select>
-        <button class="btn btn-primary" type="submit"{% if !gate.mergeable %} disabled{% endif %}><svg class="icon" aria-hidden="true"><use href="#i-git-merge"/></svg>Merge pull request</button>
+        <input type="hidden" name="head_sha" value="{{ head_sha }}">
+        <details class="merge-message">
+          <summary>Edit the commit title and message</summary>
+          <div class="field">
+            <label for="merge-title">Commit title</label>
+            <input id="merge-title" name="title" type="text" maxlength="256" placeholder="{{ squash_title }}">
+          </div>
+          <div class="field">
+            <label for="merge-body">Commit message</label>
+            <textarea id="merge-body" name="message" rows="4"></textarea>
+            <p class="hint">Left empty, a squash commit is titled as shown above and lists the commits, and a merge commit is titled Merge pull request #{{ h.number }} with this pull request's title as its message.</p>
+          </div>
+        </details>
+        <div class="row">
+          <label class="sr-only" for="merge-method">Merge method</label>
+          <select id="merge-method" name="method"><option value="merge">Create a merge commit</option><option value="squash">Squash and merge</option><option value="rebase">Rebase and merge</option></select>
+          <button class="btn btn-primary" type="submit"{% if !gate.mergeable %} disabled{% endif %}><svg class="icon" aria-hidden="true"><use href="#i-git-merge"/></svg>Merge pull request</button>
+        </div>
+        {% if own_branch %}<label class="check"><input type="checkbox" name="delete_branch" value="1"> Delete <code class="branch-chip">{{ h.head_ref }}</code> after merging</label>{% endif %}
       </form>
       {% else if !is_draft %}<p class="muted small">Someone with write access merges this.</p>{% endif %}
     </section>
     {% else %}
-    <div class="merge-box closed"><svg class="icon" aria-hidden="true"><use href="#i-git-pull-request-closed"/></svg><div><strong>This pull request is closed.</strong> <span class="muted">Nothing was merged.</span></div></div>
+    <div class="merge-box closed"><svg class="icon" aria-hidden="true"><use href="#i-git-pull-request-closed"/></svg><div><strong>This pull request is closed.</strong> <span class="muted">Nothing was merged.</span></div>
+      {% if can_delete_branch %}<form method="post" action="{{ base }}/pulls/{{ h.number }}/delete-branch" class="merge-delete" data-confirm="Delete the branch {{ h.head_ref }}?">{% call ui::csrf_field(c.csrf) %}<button class="btn small" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"/></svg>Delete branch</button></form>{% endif %}</div>
     {% endif %}
 
     {% if can_review %}
@@ -90,13 +110,24 @@
   </div>
   <aside class="issue-side-col" aria-label="Details">
     <section class="side-block"><h2>Reviewers</h2>
-      {% if reviewers.is_empty() %}<p class="muted">No reviews yet</p>{% endif %}
+      {% if reviewers.is_empty() && requested.is_empty() %}<p class="muted">No reviews yet</p>{% endif %}
       {% for r in reviewers %}<p class="person"><img class="avatar av-20" src="/avatar/{{ r.0.username }}.svg" alt="" width="20" height="20"> {{ r.0.display }} <span class="chip chip-{{ r.2 }}">{{ r.1 }}</span></p>{% endfor %}
+      {% for n in requested %}<p class="person">{{ n }} <span class="chip">Awaiting review</span></p>{% endfor %}
+      {% if can_request %}<details class="menu" data-menu><summary class="btn small">Request</summary><form class="menu-panel pad stack" method="post" action="{{ base }}/pulls/{{ h.number }}/reviewers">{% call ui::csrf_field(c.csrf) %}{% for r in reviewer_choices %}<input type="hidden" name="offered" value="{{ r.value }}"><label class="choice"><input type="checkbox" name="reviewers" value="{{ r.value }}"{% if r.on %} checked{% endif %}>{{ r.text }}</label>{% endfor %}<label for="reviewer-name" class="small">Or by username</label><input id="reviewer-name" name="username" type="text" maxlength="40" autocapitalize="none" spellcheck="false"><button class="btn btn-primary small" type="submit">Save</button></form></details>{% endif %}
+    </section>
+    <section class="side-block"><h2>Assignees</h2>
+      {% if assignees.is_empty() %}<p class="muted">Nobody yet</p>{% endif %}
+      {% for a in assignees %}<p class="person"><img class="avatar av-20" src="/avatar/{{ a.username }}.svg" alt="" width="20" height="20"> <a href="/{{ a.username }}">{{ a.display }}</a></p>{% endfor %}
+      {% if can_triage %}{% if !assignee_choices.is_empty() %}<details class="menu" data-menu><summary class="btn small">Change</summary><form class="menu-panel pad" method="post" action="{{ base }}/pulls/{{ h.number }}/assignees">{% call ui::csrf_field(c.csrf) %}{% for a in assignee_choices %}<label class="choice"><input type="checkbox" name="assignees" value="{{ a.value }}"{% if a.on %} checked{% endif %}>{{ a.text }}</label>{% endfor %}<button class="btn btn-primary small" type="submit">Save</button></form></details>{% endif %}{% endif %}
     </section>
     <section class="side-block"><h2>Labels</h2>
       {% if labels.is_empty() %}<p class="muted">None yet</p>{% endif %}
       <p>{% for l in labels %}{% call ui::label(l) %} {% endfor %}</p>
       {% if can_triage %}{% if !label_choices.is_empty() %}<details class="menu" data-menu><summary class="btn small">Change</summary><form class="menu-panel pad" method="post" action="{{ base }}/pulls/{{ h.number }}/labels">{% call ui::csrf_field(c.csrf) %}{% for l in label_choices %}<label class="choice"><input type="checkbox" name="labels" value="{{ l.value }}"{% if l.on %} checked{% endif %}><span class="label {{ l.class }}">{{ l.text }}</span></label>{% endfor %}<button class="btn btn-primary small" type="submit">Save</button></form></details>{% endif %}{% endif %}
+    </section>
+    <section class="side-block"><h2>Milestone</h2>
+      {% if let Some(ms) = milestone %}<p><a href="{{ ms.1 }}">{{ ms.0 }}</a></p>{% else %}<p class="muted">No milestone</p>{% endif %}
+      {% if can_triage %}{% if !milestone_choices.is_empty() %}<details class="menu" data-menu><summary class="btn small">Change</summary><form class="menu-panel pad" method="post" action="{{ base }}/pulls/{{ h.number }}/milestone">{% call ui::csrf_field(c.csrf) %}<label class="sr-only" for="pr-milestone">Milestone</label><select id="pr-milestone" name="milestone"><option value="">None</option>{% for ms in milestone_choices %}<option value="{{ ms.value }}"{% if ms.on %} selected{% endif %}>{{ ms.text }}</option>{% endfor %}</select><button class="btn btn-primary small" type="submit">Save</button></form></details>{% endif %}{% endif %}
     </section>
     <section class="side-block"><h2>Branches</h2><p><code class="branch-chip">{{ h.head_ref }}</code><br>into<br><code class="branch-chip">{{ h.base_ref }}</code></p></section>
   </aside>

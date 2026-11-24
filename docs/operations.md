@@ -39,6 +39,23 @@ Before any widening the server rebuilds the repository's git store from its refs
 history can no longer be fetched. The old store is kept unreachable for 7 days under
 `data/git/_prepublish` and then removed.
 
+## Email
+
+Codehaven sends no mail until `[mail.smtp]` is set in `codehaven.toml` (see
+`deploy/codehaven.example.toml`), or the same keys as `CODEHAVEN__MAIL__SMTP__HOST` and so on.
+With it set, two things are mailed: a reset link when someone uses "Forgot your password", and an
+invite a site admin makes for an email address. Notifications are not mailed.
+
+- TLS is required. `tls = "starttls"` is the default, `tls = "tls"` is for port 465, and
+  `tls = "none"` is accepted only when `host` is `localhost`, `127.0.0.1` or `::1`.
+- The password lives in the file `password_file` names, read once at start. A username without a
+  password file stops the server at start with a message.
+- A reset link goes only to the account's primary email, works for an hour and once, and at most
+  one is sent per account every ten minutes. Asking for one signs nobody out. Using it signs the
+  account out everywhere.
+- The answer on the page is the same whether or not an account matched, and it is given before
+  the mail goes out.
+
 ## The proxy
 
 | `CODEHAVEN_PROXY` | What you get |

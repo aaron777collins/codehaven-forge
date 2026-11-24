@@ -35,7 +35,7 @@
         <ul>
           {% for n in notifications %}
           <li class="notif-item">
-            {% if let Some(h) = n.href %}<a href="{{ h }}">{{ n.title }}</a>{% else %}<span>{{ n.title }}</span>{% endif %}
+            {% if let Some(h) = n.href %}<a href="{{ h }}">{{ n.title_html|safe }}</a>{% else %}<span>{{ n.title_html|safe }}</span>{% endif %}
             <p class="muted small">{{ n.reason }} <span class="dot" aria-hidden="true">&middot;</span> {% call ui::time(n.when) %}</p>
           </li>
           {% endfor %}

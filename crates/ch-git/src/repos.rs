@@ -407,6 +407,65 @@ impl GitCore {
     /// A fork copies the branches and tags of its source and every object they need. It borrows
     /// nothing, so it holds exactly what its own readers may see. It starts private unless
     /// `visibility` asks for more, never above the source and never public.
+    /// Stars, forks this person could see, and their own star. Forks are counted like the REST
+    /// repository: public ones, and internal or their own when signed in. A private fork shared
+    /// with them is left out rather than risk counting one they cannot read.
+    pub(crate) async fn do_social(&self, actor: &Actor, id: RepoId) -> Result<RepoSocial> {
+        self.do_get(actor, id).await?;
+        let me = actor.user_id().map(|u| u.0).unwrap_or(0);
+        let (stars, forks, starred): (i64, i64, bool) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM stars s WHERE s.repo_id = $1),
+                    (SELECT count(*) FROM repositories f WHERE f.fork_parent_id = $1
+                       AND (f.access_tier = 'public' OR ($2 > 0 AND (f.access_tier = 'internal' OR f.owner_id = $2)))),
+                    EXISTS (SELECT 1 FROM stars s WHERE s.repo_id = $1 AND s.user_id = $2)",
+        )
+        .bind(id.0)
+        .bind(me)
+        .fetch_one(&self.db)
+        .await?;
+        Ok(RepoSocial { stars, forks, starred })
+    }
+
+    /// A star belongs to the person, so it needs an account that can see the repository and
+    /// nothing more (ch-4pn section 3). A token needs the `repo` scope.
+    pub(crate) async fn do_set_star(&self, actor: &Actor, id: RepoId, starred: bool) -> Result<()> {
+        let user = match actor {
+            Actor::User { id, .. } => *id,
+            Actor::Token { user_id, scopes, .. } if Scopes::has(scopes, "repo") => *user_id,
+            Actor::Token { .. } => return Err(Error::forbidden("This token needs the repo scope to star repositories.")),
+            Actor::Anonymous => return Err(Error::unauthorized()),
+            _ => return Err(Error::forbidden("Only a person can star a repository.")),
+        };
+        self.authz.require(actor, id, Permission::View).await?;
+        if starred {
+            sqlx::query("INSERT INTO stars (user_id, repo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+                .bind(user.0)
+                .bind(id.0)
+                .execute(&self.db)
+                .await?;
+        } else {
+            sqlx::query("DELETE FROM stars WHERE user_id = $1 AND repo_id = $2").bind(user.0).bind(id.0).execute(&self.db).await?;
+        }
+        Ok(())
+    }
+
+    /// Direct forks the actor can read, newest first. The parent must be readable too.
+    pub(crate) async fn do_forks(&self, actor: &Actor, id: RepoId) -> Result<Vec<Repo>> {
+        self.do_get(actor, id).await?;
+        let ids: Vec<(i64,)> =
+            sqlx::query_as("SELECT id FROM repositories WHERE fork_parent_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1000")
+                .bind(id.0)
+                .fetch_all(&self.db)
+                .await?;
+        let mut visible = Vec::new();
+        for (fid,) in ids {
+            if let Ok(r) = self.do_get(actor, RepoId(fid)).await {
+                visible.push(r);
+            }
+        }
+        Ok(visible)
+    }
+
     pub(crate) async fn do_fork(
         &self,
         actor: &Actor,

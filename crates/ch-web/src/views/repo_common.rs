@@ -60,7 +60,19 @@ impl RepoCtx {
         let t = if title.is_empty() { full } else { format!("{title} - {full}") };
         let mut nav = self.nav(section);
         nav.workspace = self.workspace_link(ctx).await;
+        nav.social = self.social(ctx).await;
         ctx.chrome(&t).await.repo(nav)
+    }
+
+    /// Watch, star and fork for a signed-in viewer. Anything that cannot be read leaves the
+    /// buttons out rather than show a wrong number.
+    pub async fn social(&self, ctx: &Ctx) -> Option<crate::chrome::SocialNav> {
+        if !ctx.signed_in() || ctx.public_read {
+            return None;
+        }
+        let s = ctx.state.repos.social(&ctx.actor, self.id()).await.ok()?;
+        let watch = ctx.state.notifications.watch_level(&ctx.actor, self.id()).await.unwrap_or_else(|_| "participating".into());
+        Some(crate::chrome::SocialNav { watch, stars: s.stars, starred: s.starred, forks: s.forks })
     }
 
     /// The workspace URL for the header button, or empty when the button must not show: only a

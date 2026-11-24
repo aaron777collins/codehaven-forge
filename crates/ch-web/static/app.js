@@ -77,10 +77,33 @@
     if (d.matches && d.matches('details[data-menu]') && d.open) {
       qsa('details[data-menu][open]').forEach(function (o) { if (o !== d) o.removeAttribute('open'); });
     }
+    if (d.matches && d.matches('details.menu')) placeMenu(d);
   }, true);
   doc.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') qsa('details[data-menu][open]').forEach(function (d) { d.removeAttribute('open'); });
   });
+
+  // On a phone a menu spans the screen and is fixed, so a bar that scrolls sideways cannot clip
+  // it. Fixed alone would pin it under the top bar, far from a button lower down the page, so
+  // it is placed right under its button (or above, when there is no room below) and follows the
+  // button as the page scrolls. Wider screens keep the plain CSS dropdown.
+  var phone = window.matchMedia ? window.matchMedia('(max-width: 639px)') : null;
+  function placeMenu(d) {
+    var panel = d.querySelector(':scope > .menu-panel');
+    var summary = d.querySelector(':scope > summary');
+    if (!panel || !summary) return;
+    if (!d.open || !phone || !phone.matches) { panel.style.top = ''; return; }
+    var gap = 6;
+    var bar = parseFloat(getComputedStyle(doc.documentElement).getPropertyValue('--topbar-h')) || 0;
+    var r = summary.getBoundingClientRect();
+    var h = panel.offsetHeight;
+    var top = r.bottom + gap;
+    if (top + h > window.innerHeight && r.top - gap - h >= bar) top = r.top - gap - h;
+    panel.style.top = Math.round(top) + 'px';
+  }
+  function placeOpenMenus() { qsa('details.menu[open]').forEach(placeMenu); }
+  window.addEventListener('scroll', placeOpenMenus, { passive: true });
+  window.addEventListener('resize', placeOpenMenus);
 
   // ---- tabs: Write / Preview for markdown boxes
   function previewFor(tabs, button) {

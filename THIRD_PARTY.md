@@ -16,6 +16,8 @@ Almost all crates are `MIT`, `Apache-2.0`, or `MIT OR Apache-2.0`. The rest are 
 - MPL-2.0: cssparser and dtoa-short. MPL-2.0 is a file-level license. Codehaven does not modify
   these crates. If you redistribute a build, the source of those two crates stays available from
   crates.io under MPL-2.0.
+- 0BSD: quoted_printable, used by lettre for outgoing mail (ch-bfa). Permission to use, copy,
+  modify and distribute with or without fee, with no conditions.
 - r-efi offers `MIT OR Apache-2.0 OR LGPL-2.1-or-later`. Codehaven uses it under MIT or Apache-2.0.
 
 To list every license yourself: `cargo metadata --format-version 1 --locked`, then read the

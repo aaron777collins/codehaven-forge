@@ -863,7 +863,9 @@ impl Core {
         if !issue.open || pull.merged_at.is_some() {
             return Err(Error::invalid("PullRequestReviewComment", "state", "Suggestions can only be applied to an open pull request"));
         }
-        let head_repo = pull.head_repo();
+        let Some(head_repo) = pull.head_repo() else {
+            return Err(Error::invalid("PullRequestReviewComment", "state", "The repository this pull request came from was deleted"));
+        };
         let may = self.permission(actor, head_repo).await? >= Permission::Write
             || (pull.is_fork() && pull.maintainer_can_modify && self.permission(actor, repo).await? >= Permission::Write);
         if !may {
@@ -966,7 +968,7 @@ impl Core {
         let perm = self.need_read(actor, repo).await?;
         Self::ensure_writable(&self.repo(repo).await?)?;
         let (issue, pull) = self.pull_pair(repo, number).await?;
-        if issue.author_id != user && perm < Permission::Triage {
+        if perm < Permission::Triage && !self.author_with_grant(actor, repo, &issue, user).await? {
             return Err(Error::forbidden("Only the author or someone with triage access can request reviews"));
         }
         if !issue.open || pull.merged_at.is_some() {
@@ -983,17 +985,27 @@ impl Core {
             self.request_user_in_tx(&mut tx, &issue, Some(user), u).await?;
         }
         for t in teams {
-            let name: Option<(String, String)> =
-                sqlx::query_as("SELECT o.username::text, t.name::text FROM teams t JOIN users o ON o.id = t.org_id WHERE t.id = $1")
-                    .bind(t)
-                    .fetch_optional(&mut *tx)
-                    .await?;
+            // Only a team of the organization that owns this repository.
+            let name: Option<(String, String)> = sqlx::query_as(
+                "SELECT o.username::text, t.name::text FROM teams t JOIN users o ON o.id = t.org_id
+                 WHERE t.id = $1 AND t.org_id = (SELECT owner_id FROM repositories WHERE id = $2)",
+            )
+            .bind(t)
+            .bind(repo)
+            .fetch_optional(&mut *tx)
+            .await?;
             let (org, team) = name.ok_or_else(|| Error::Validation(vec![FieldError::new("PullRequest", "team_reviewers", "invalid")]))?;
             self.request_team_in_tx(&mut tx, &issue, Some(user), t, &org, &team).await?;
         }
         Self::touch(&mut tx, issue.id).await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    /// The author of the pull request, with a grant on the repository. Read that comes only
+    /// from the repository's tier is not enough to ask people for reviews (ch-4dv).
+    async fn author_with_grant(&self, actor: &Actor, repo: RepoId, issue: &IssueRow, user: UserId) -> Result<bool> {
+        Ok(issue.author_id == user && self.d.authz.has_grant(actor, repo).await?)
     }
 
     async fn request_user_in_tx(&self, tx: &mut DbTx<'_>, issue: &IssueRow, by: Option<UserId>, who: UserId) -> Result<bool> {
@@ -1075,7 +1087,7 @@ impl Core {
         let perm = self.need_read(actor, repo).await?;
         Self::ensure_writable(&self.repo(repo).await?)?;
         let (issue, _) = self.pull_pair(repo, number).await?;
-        if issue.author_id != user && perm < Permission::Triage {
+        if perm < Permission::Triage && !self.author_with_grant(actor, repo, &issue, user).await? {
             return Err(Error::forbidden("Only the author or someone with triage access can remove review requests"));
         }
         let mut tx = self.db().begin().await?;

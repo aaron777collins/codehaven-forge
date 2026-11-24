@@ -14,6 +14,7 @@ use askama::Template;
 use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::response::Response;
+use ch_core::collab::MergeOptions;
 use ch_core::collab::ThreadView;
 use ch_core::model::{Compare, MergeMethod, NewPull, NewReviewComment, PullRequest, Review, ReviewState};
 use ch_core::{CommentId, Error, Permission, UserId};
@@ -216,6 +217,8 @@ struct NewPage {
     owner: String,
     repo: String,
     branches: Vec<String>,
+    /// Branches of the head repository: this one, or the chosen fork.
+    head_branches: Vec<String>,
     base_ref: String,
     head_ref: String,
     has_result: bool,
@@ -229,6 +232,18 @@ struct NewPage {
     diff_html: String,
     errors: FieldErrors,
     compare_href: String,
+    /// Forks of this repository the viewer owns: `(owner, owner/name)`. A pull request can come
+    /// from one of them (ch-8tj).
+    forks: Vec<(String, String)>,
+    /// The fork the head branch is in, by owner. Empty for this repository.
+    head_owner: String,
+}
+
+/// The viewer's own forks of this repository: theirs, or an organization's they own.
+async fn own_forks(ctx: &Ctx, rc: &RepoCtx) -> Vec<ch_core::model::Repo> {
+    let Ok(uid) = ctx.user_id() else { return Vec::new() };
+    let mine: Vec<i64> = super::people::owner_choices(ctx, uid, None).await.into_iter().map(|o| o.id).collect();
+    ctx.state.repos.forks(&ctx.actor, rc.id()).await.unwrap_or_default().into_iter().filter(|f| mine.contains(&f.owner_id.0)).collect()
 }
 
 fn humanize_branch(b: &str) -> String {
@@ -246,6 +261,7 @@ async fn new_page(
     rc: &RepoCtx,
     base_ref: &str,
     head_ref: &str,
+    head_owner: &str,
     title: Option<String>,
     body: Option<String>,
     errors: FieldErrors,
@@ -253,11 +269,24 @@ async fn new_page(
 ) -> WebResult<Response> {
     let base = rc.base();
     let branches = branch_names(ctx, rc.id()).await?;
-    let has_result = !head_ref.is_empty() && head_ref != base_ref;
+    let forks = own_forks(ctx, rc).await;
+    let head_repo = forks.iter().find(|f| !head_owner.is_empty() && f.owner_name.eq_ignore_ascii_case(head_owner));
+    let head_branches = match head_repo {
+        Some(f) => branch_names(ctx, f.id).await.unwrap_or_default(),
+        None => branches.clone(),
+    };
+    let has_result = !head_ref.is_empty() && (head_repo.is_some() || head_ref != base_ref);
     let (mut rows, mut files, mut additions, mut deletions, mut diff_html, mut nothing) = (Vec::new(), 0, 0, 0, String::new(), false);
     let (mut dt, mut db) = (String::new(), String::new());
     if has_result {
-        let cmp = ctx.state.git.compare(rc.id(), base_ref, head_ref).await?;
+        // A fork keeps its own objects, so git reads both repositories (ch-8tj).
+        let cmp = match head_repo {
+            Some(f) => {
+                let base_sha = ctx.state.git.resolve(rc.id(), &format!("refs/heads/{base_ref}")).await?;
+                ctx.state.git.compare_across(rc.id(), &base_sha, f.id, head_ref).await?
+            }
+            None => ctx.state.git.compare(rc.id(), base_ref, head_ref).await?,
+        };
         nothing = cmp.commits.is_empty() && cmp.diff.files.is_empty();
         let sum = code::summarize(&cmp.diff);
         (files, additions, deletions) = (sum.files, sum.additions, sum.deletions);
@@ -279,8 +308,11 @@ async fn new_page(
             repo: rc.repo.name.clone(),
             compare_href: format!("{base}/pulls/new"),
             branches,
+            head_branches,
             base_ref: base_ref.into(),
             head_ref: head_ref.into(),
+            head_owner: head_repo.map(|f| f.owner_name.clone()).unwrap_or_default(),
+            forks: forks.iter().map(|f| (f.owner_name.clone(), f.full_name())).collect(),
             has_result,
             nothing,
             title: title.unwrap_or(dt),
@@ -300,32 +332,40 @@ pub async fn new_get(ctx: Ctx, Path((owner, name)): Path<(String, String)>, Quer
     rc.require_writable(Permission::Read)?;
     let base_ref = q.get("base").cloned().unwrap_or_else(|| rc.repo.default_branch.clone());
     let head_ref = q.get("head").cloned().unwrap_or_default();
-    new_page(&ctx, &rc, &base_ref, &head_ref, None, None, FieldErrors::default(), StatusCode::OK).await
+    let head_owner = q.get("head_owner").cloned().unwrap_or_default();
+    new_page(&ctx, &rc, &base_ref, &head_ref, &head_owner, None, None, FieldErrors::default(), StatusCode::OK).await
 }
 
 pub async fn new_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, form: FormData) -> WebResult<Response> {
     let rc = RepoCtx::load(&ctx, &owner, &name).await?;
     rc.require_writable(Permission::Read)?;
     let (base_ref, head_ref) = (form.get("base").to_string(), form.get("head").to_string());
+    let head_owner = form.get("head_owner").trim().to_string();
     let title = form.get("title").trim().to_string();
+    let again = |errors: FieldErrors| {
+        let (ctx, rc, base_ref, head_ref, head_owner, title) = (&ctx, &rc, &base_ref, &head_ref, &head_owner, &title);
+        let body = form.get("body").to_string();
+        async move {
+            new_page(ctx, rc, base_ref, head_ref, head_owner, Some(title.clone()), Some(body), errors, StatusCode::UNPROCESSABLE_ENTITY)
+                .await
+        }
+    };
     if title.is_empty() {
-        return new_page(
-            &ctx,
-            &rc,
-            &base_ref,
-            &head_ref,
-            Some(title),
-            Some(form.get("body").to_string()),
-            FieldErrors::default().with("title", "Give the pull request a title."),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        )
-        .await;
+        return again(FieldErrors::default().with("title", "Give the pull request a title.")).await;
     }
+    let head_repo_id = if head_owner.is_empty() {
+        rc.id()
+    } else {
+        match own_forks(&ctx, &rc).await.into_iter().find(|f| f.owner_name.eq_ignore_ascii_case(&head_owner)) {
+            Some(f) => f.id,
+            None => return again(FieldErrors::general("Pick one of your own forks of this repository.")).await,
+        }
+    };
     let new = NewPull {
         repo_id: rc.id(),
         title: title.clone(),
         body: form.get("body").to_string(),
-        head_repo_id: rc.id(),
+        head_repo_id,
         head_ref: head_ref.clone(),
         base_ref: base_ref.clone(),
         draft: form.flag("draft"),
@@ -333,19 +373,7 @@ pub async fn new_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, for
     match ctx.state.pulls.create(&ctx.actor, new, &ctx.client).await {
         Ok(pr) => Ok(ctx.redirect(&format!("{}/pulls/{}", rc.base(), pr.issue.number))),
         Err(e) => match FieldErrors::from_error(&e) {
-            Some(errors) => {
-                new_page(
-                    &ctx,
-                    &rc,
-                    &base_ref,
-                    &head_ref,
-                    Some(title),
-                    Some(form.get("body").to_string()),
-                    errors,
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                )
-                .await
-            }
+            Some(errors) => again(errors).await,
             None => Err(e.into()),
         },
     }
@@ -423,6 +451,13 @@ async fn load(ctx: &Ctx, owner: &str, name: &str, number: i64) -> WebResult<Load
     Ok(Loaded { rc, pr, cmp, people: People::new(&ctx.state) })
 }
 
+/// The head branch is in this repository. The service stores no head repository for a branch
+/// of the same repository, and a fork's id for a fork. Deleting a fork clears its id too, so
+/// `from_fork` decides: a deleted fork's branch is never the branch of that name here.
+fn head_is_here(pr: &PullRequest, rc: &RepoCtx) -> bool {
+    !pr.from_fork && pr.head_repo_id.is_none_or(|h| h == rc.id())
+}
+
 /// The chrome of a pull request's pages. An open pull request from a branch of this same
 /// repository opens the workspace on that branch. A fork's branch is not in this repository,
 /// and a closed one's branch may be gone, so those keep the plain button.
@@ -431,7 +466,7 @@ async fn pr_chrome(ctx: &Ctx, l: &Loaded, title: &str) -> Chrome {
     let st = PrState::of(&l.pr);
     if let Some(nav) = c.repo.as_mut()
         && !nav.workspace.is_empty()
-        && l.pr.head_repo_id == Some(l.rc.id())
+        && head_is_here(&l.pr, &l.rc)
         && !l.pr.head_ref.is_empty()
         && (st == PrState::Open || st == PrState::Draft)
     {
@@ -519,6 +554,7 @@ fn inline_thread(rc: &RepoCtx, t: &ThreadView) -> InlineThread {
                 ago: fmt::time(cv.comment.created_at).ago,
                 body_html: md_for(rc, &cv.comment.body),
                 is_reply: cv.comment.in_reply_to.is_some(),
+                suggestion: cv.has_suggestion,
             })
             .collect(),
     }
@@ -535,6 +571,18 @@ fn thread_forms(ctx: &Ctx, rc: &RepoCtx, pr: &PullRequest, me: Option<UserId>, n
         back: back.into(),
         can_reply,
         can_resolve: me.is_some() && !rc.repo.archived && (Some(pr.issue.author_id) == me || rc.perm.allows(Permission::Write)),
+        // Write here, on an open pull request. A fork's branch also needs maintainer edits,
+        // which the service checks.
+        apply_action: if ctx.signed_in()
+            && !rc.repo.archived
+            && rc.perm.allows(Permission::Write)
+            && pr.issue.open
+            && pr.merged_at.is_none()
+        {
+            format!("{base}/pulls/{number}/suggestion")
+        } else {
+            String::new()
+        },
     }
 }
 
@@ -561,6 +609,127 @@ struct ShowPage {
     label_choices: Vec<Choice>,
     can_triage: bool,
     fork_approval: Option<ForkApproval>,
+    /// The head commit the merger saw. The merge refuses if the branch moved since (D20).
+    head_sha: String,
+    /// The default squash title, shown as the title field's placeholder.
+    squash_title: String,
+    /// The head branch lives in this repository and is not its default branch.
+    own_branch: bool,
+    /// Merged or closed, and the head branch is still here for someone with write access.
+    can_delete_branch: bool,
+    /// No rule blocks the merge, but checks on the head commit are still queued or running.
+    checks_running: bool,
+    /// People and teams asked to review and not answered yet.
+    requested: Vec<String>,
+    /// Triage, or the author with a grant, on an open pull request (ch-4dv).
+    can_request: bool,
+    reviewer_choices: Vec<Choice>,
+    assignees: Vec<UserRef>,
+    assignee_choices: Vec<Choice>,
+    milestone: Option<(String, String)>,
+    milestone_choices: Vec<Choice>,
+}
+
+/// The side panel's pickers: who can be asked to review, assigned, and which milestone.
+struct SideChoices {
+    requested: Vec<String>,
+    can_request: bool,
+    reviewers: Vec<Choice>,
+    assignees: Vec<UserRef>,
+    assignee_choices: Vec<Choice>,
+    milestone: Option<(String, String)>,
+    milestone_choices: Vec<Choice>,
+}
+
+async fn side_choices(ctx: &Ctx, l: &mut Loaded, can_triage: bool, open: bool) -> SideChoices {
+    let rc = &l.rc;
+    let number = l.pr.issue.number;
+    let me = ctx.user_id().ok();
+    let requested = ctx.state.reviews.requested(&ctx.actor, rc.id(), number).await.unwrap_or_default();
+    let mut names: Vec<String> = Vec::new();
+    for u in &requested.users {
+        names.push(if u.display_name.is_empty() { u.username.clone() } else { u.display_name.clone() });
+    }
+    names.extend(requested.teams.iter().map(|t| format!("@{}/{}", t.org, t.name)));
+    let is_author = me.is_some() && me == Some(l.pr.issue.author_id);
+    // The author needs a grant: Read from the repository's tier alone is not one, the same rule
+    // the service keeps (ch-4dv).
+    let author_granted = is_author && ctx.state.authz.has_grant(&ctx.actor, rc.id()).await.unwrap_or(false);
+    let can_request = open && ctx.signed_in() && !rc.repo.archived && (can_triage || author_granted);
+    let mut reviewers: Vec<Choice> = Vec::new();
+    if can_request {
+        // People with access, when this viewer may list them. The author cannot review.
+        if let Ok(collabs) = ctx.state.repos.collaborators(&ctx.actor, rc.id()).await {
+            for cb in collabs.into_iter().filter(|c| c.user_id != l.pr.issue.author_id && c.permission >= Permission::Read) {
+                reviewers.push(Choice {
+                    value: format!("u:{}", cb.user_id.0),
+                    on: requested.users.iter().any(|u| u.id == cb.user_id),
+                    text: cb.username,
+                    class: String::new(),
+                });
+            }
+        }
+        for u in &requested.users {
+            if !reviewers.iter().any(|c| c.value == format!("u:{}", u.id.0)) {
+                reviewers.push(Choice { value: format!("u:{}", u.id.0), text: u.username.clone(), on: true, class: String::new() });
+            }
+        }
+        if let Ok(teams) = ctx.state.orgs.teams(&ctx.actor, ch_core::OrgId(rc.repo.owner_id.0)).await {
+            for t in teams {
+                reviewers.push(Choice {
+                    value: format!("t:{}", t.id.0),
+                    on: requested.teams.iter().any(|r| r.id == t.id),
+                    text: format!("@{}/{}", rc.repo.owner_name, t.name),
+                    class: String::new(),
+                });
+            }
+        }
+        for t in &requested.teams {
+            if !reviewers.iter().any(|c| c.value == format!("t:{}", t.id.0)) {
+                reviewers.push(Choice {
+                    value: format!("t:{}", t.id.0),
+                    text: format!("@{}/{}", t.org, t.name),
+                    on: true,
+                    class: String::new(),
+                });
+            }
+        }
+    }
+    let mut assignees = Vec::new();
+    for a in &l.pr.issue.assignees {
+        assignees.push(l.people.get(*a).await);
+    }
+    let milestones = ctx.state.tracker.milestones(&ctx.actor, rc.id(), None).await.unwrap_or_default();
+    let base = rc.base();
+    let milestone =
+        l.pr.issue
+            .milestone_id
+            .and_then(|id| milestones.iter().find(|m| m.id == id))
+            .map(|m| (m.title.clone(), format!("{base}/pulls?milestone={}", m.id.0)));
+    let (mut assignee_choices, mut milestone_choices) = (Vec::new(), Vec::new());
+    if can_triage {
+        if let Ok(collabs) = ctx.state.repos.collaborators(&ctx.actor, rc.id()).await {
+            for cb in collabs {
+                assignee_choices.push(Choice {
+                    value: cb.user_id.0.to_string(),
+                    on: l.pr.issue.assignees.contains(&cb.user_id),
+                    text: cb.username,
+                    class: String::new(),
+                });
+            }
+        }
+        milestone_choices = milestones
+            .iter()
+            .filter(|m| m.open || Some(m.id) == l.pr.issue.milestone_id)
+            .map(|m| Choice {
+                value: m.id.0.to_string(),
+                text: m.title.clone(),
+                on: Some(m.id) == l.pr.issue.milestone_id,
+                class: String::new(),
+            })
+            .collect();
+    }
+    SideChoices { requested: names, can_request, reviewers, assignees, assignee_choices, milestone, milestone_choices }
 }
 
 /// A fork's commit that waits for approval before any workflow runs (ch-x12).
@@ -595,6 +764,14 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
     let can_comment = me.is_some() && !l.rc.repo.archived && !l.pr.issue.locked;
     let comments = ctx.state.issues.comments(&ctx.actor, l.rc.id(), number).await?;
     let reviews = ctx.state.reviews.list(&ctx.actor, l.rc.id(), number).await.unwrap_or_default();
+    // Which reviewers count toward required approvals (write access). Unknown counts.
+    let not_counted: Vec<i64> = ctx
+        .state
+        .reviews
+        .views(&ctx.actor, l.rc.id(), number)
+        .await
+        .map(|v| v.into_iter().filter(|r| !r.counts).map(|r| r.review.id.0).collect())
+        .unwrap_or_default();
     let threads = ctx.state.reviews.threads(&ctx.actor, l.rc.id(), number).await.unwrap_or_default();
     let forms = thread_forms(&ctx, &l.rc, &l.pr, me, number, "", can_comment && ctx.signed_in());
 
@@ -640,7 +817,13 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
         let lines = by_review.remove(&r.id.0).unwrap_or_default();
         reviewer_state.retain(|(u, _, _)| u.username != author.username);
         if r.state != ReviewState::Commented {
-            reviewer_state.push((author.clone(), review_short(r.state), class));
+            let short = match r.state {
+                ReviewState::Approved | ReviewState::ChangesRequested if not_counted.contains(&r.id.0) => {
+                    if r.state == ReviewState::Approved { "Approved, does not count" } else { "Changes requested, does not count" }
+                }
+                _ => review_short(r.state),
+            };
+            reviewer_state.push((author.clone(), short, class));
         }
         // A reply posts a review of its own with no text, and its thread is shown under the
         // review that started it. An empty entry that says only "reviewed" adds nothing.
@@ -717,10 +900,43 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
         let runs = ctx.state.checks.check_runs_for_sha(l.rc.id(), &l.pr.head_sha).await.unwrap_or_default();
         status_from_runs(&runs)
     };
+    // A run that has not created its checks yet still counts as running.
+    let checks_running = gate.mergeable
+        && !ctx.actor.is_anonymous()
+        && match &checks_summary {
+            Some(s) => matches!(s.class.as_str(), "run" | "queued"),
+            None => ctx
+                .state
+                .ci
+                .runs(&ctx.actor, l.rc.id(), 1, 20)
+                .await
+                .map(|runs| runs.iter().any(|r| r.head_sha == l.pr.head_sha && r.status != "completed"))
+                .unwrap_or(false),
+        };
+    let own_branch = head_is_here(&l.pr, &l.rc) && !l.pr.head_ref.is_empty() && l.pr.head_ref != l.rc.repo.default_branch;
+    let can_delete_branch = own_branch
+        && (st == PrState::Merged || st == PrState::Closed)
+        && l.rc.perm.allows(Permission::Write)
+        && !l.rc.repo.archived
+        && ctx.signed_in()
+        && ctx.state.git.resolve(l.rc.id(), &format!("refs/heads/{}", l.pr.head_ref)).await.is_ok();
     let fork_approval = fork_approval(&ctx, &l).await;
+    let side = side_choices(&ctx, &mut l, can_triage, st == PrState::Open || st == PrState::Draft).await;
     let c = pr_chrome(&ctx, &l, &format!("{} (#{number})", l.pr.issue.title)).await;
     ctx.page(&ShowPage {
         fork_approval,
+        head_sha: l.pr.head_sha.clone(),
+        squash_title: format!("{} (#{number})", l.pr.issue.title),
+        own_branch,
+        can_delete_branch,
+        checks_running,
+        requested: side.requested,
+        can_request: side.can_request,
+        reviewer_choices: side.reviewers,
+        assignees: side.assignees,
+        assignee_choices: side.assignee_choices,
+        milestone: side.milestone,
+        milestone_choices: side.milestone_choices,
         c,
         owner: l.rc.repo.owner_name.clone(),
         repo: l.rc.repo.name.clone(),
@@ -915,14 +1131,142 @@ pub async fn labels_post(ctx: Ctx, Path((owner, name, number)): Path<(String, St
 pub async fn merge_post(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {
     let rc = RepoCtx::load(&ctx, &owner, &name).await?;
     rc.require_writable(Permission::Write)?;
-    let method = parse_method(form.get("method"));
     let url = pr_url(&rc, number, "");
-    match ctx.state.pulls.merge(&ctx.actor, rc.id(), number, method, &ctx.client).await {
+    let options = merge_options(&form);
+    match ctx.state.pulls.merge_with(&ctx.actor, rc.id(), number, options, &ctx.client).await {
         Ok(_) => Ok(ctx.redirect_flash(&url, "ok", "Merged.")),
         Err(Error::MergeBlocked(reasons)) => {
             Ok(ctx.redirect_flash(&url, "error", &format!("This cannot be merged yet: {}", reasons.join(" "))))
         }
         Err(Error::Conflict(m)) => Ok(ctx.redirect_flash(&url, "error", &m)),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// The merge form as service options. An empty title or message keeps the default text. The
+/// head sha is the one the page showed, so a push after the page loaded stops the merge. An
+/// unticked delete box leaves the repository's own setting in charge.
+fn merge_options(form: &FormData) -> MergeOptions {
+    let title = form.get("title").trim();
+    let message = form.get("message").replace("\r\n", "\n");
+    let head = form.get("head_sha").trim();
+    MergeOptions {
+        method: Some(parse_method(form.get("method"))),
+        title: (!title.is_empty()).then(|| title.to_string()),
+        message: (!message.trim().is_empty()).then(|| message.trim_end().to_string()),
+        expected_head_sha: (!head.is_empty()).then(|| head.to_string()),
+        delete_branch: form.flag("delete_branch").then_some(true),
+    }
+}
+
+pub async fn assignees_post(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    issues::do_assignees(&ctx, &rc, number, &form, "pulls").await
+}
+
+pub async fn milestone_post(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    issues::do_milestone(&ctx, &rc, number, &form, "pulls").await
+}
+
+/// Which reviewers a form asks for: `u:<id>` and `t:<id>` values, ignoring anything else.
+fn reviewer_ids(values: &[&str]) -> (Vec<UserId>, Vec<ch_core::TeamId>) {
+    let (mut users, mut teams) = (Vec::new(), Vec::new());
+    for v in values {
+        if let Some(id) = v.strip_prefix("u:").and_then(|n| n.parse::<i64>().ok()) {
+            if !users.contains(&UserId(id)) {
+                users.push(UserId(id));
+            }
+        } else if let Some(id) = v.strip_prefix("t:").and_then(|n| n.parse::<i64>().ok())
+            && !teams.contains(&ch_core::TeamId(id))
+        {
+            teams.push(ch_core::TeamId(id));
+        }
+    }
+    (users, teams)
+}
+
+/// Asks for reviews and withdraws requests in one form. Boxes the form offered and left
+/// unticked are withdrawn; a username typed in is asked as well. The service checks who may
+/// do this: triage, or the author with a grant.
+pub async fn reviewers_post(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Read)?;
+    let url = pr_url(&rc, number, "");
+    let (mut want_users, want_teams) = reviewer_ids(&form.all("reviewers"));
+    let (offered_users, offered_teams) = reviewer_ids(&form.all("offered"));
+    let typed = form.get("username").trim().trim_start_matches('@');
+    if !typed.is_empty() {
+        match ctx.state.accounts.get_by_username(&ctx.actor, typed).await {
+            Ok(u) => {
+                if !want_users.contains(&u.id) {
+                    want_users.push(u.id);
+                }
+            }
+            Err(_) => return Ok(ctx.redirect_flash(&url, "error", &format!("There is no account named {typed}."))),
+        }
+    }
+    let current = ctx.state.reviews.requested(&ctx.actor, rc.id(), number).await?;
+    let add_users: Vec<UserId> = want_users.iter().copied().filter(|u| !current.users.iter().any(|c| c.id == *u)).collect();
+    let add_teams: Vec<ch_core::TeamId> = want_teams.iter().copied().filter(|t| !current.teams.iter().any(|c| c.id == *t)).collect();
+    let drop_users: Vec<UserId> =
+        offered_users.into_iter().filter(|u| !want_users.contains(u) && current.users.iter().any(|c| c.id == *u)).collect();
+    let drop_teams: Vec<ch_core::TeamId> =
+        offered_teams.into_iter().filter(|t| !want_teams.contains(t) && current.teams.iter().any(|c| c.id == *t)).collect();
+    let mut result = Ok(());
+    if !add_users.is_empty() || !add_teams.is_empty() {
+        result = ctx.state.reviews.request_review(&ctx.actor, rc.id(), number, add_users, add_teams, &ctx.client).await;
+    }
+    if result.is_ok() && (!drop_users.is_empty() || !drop_teams.is_empty()) {
+        result = ctx.state.reviews.remove_request(&ctx.actor, rc.id(), number, drop_users, drop_teams, &ctx.client).await;
+    }
+    match result {
+        Ok(()) => Ok(ctx.redirect_flash(&url, "ok", "Reviewers updated.")),
+        Err(e) => match refused_message(&e) {
+            Some(m) => Ok(ctx.redirect_flash(&url, "error", &m)),
+            None => Err(e.into()),
+        },
+    }
+}
+
+/// "Apply suggestion": commits a review comment's suggestion to the head branch.
+pub async fn suggestion_post(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Read)?;
+    let back = form.opt("back").filter(|b| *b == "files").unwrap_or("");
+    let url = pr_url(&rc, number, back);
+    let Some(id) = form.int("comment") else {
+        return Ok(ctx.redirect_flash(&url, "error", "Which suggestion?"));
+    };
+    match ctx.state.reviews.apply_suggestion(&ctx.actor, rc.id(), CommentId(id), &ctx.client).await {
+        Ok(sha) => Ok(ctx.redirect_flash(&url, "ok", &format!("Applied the suggestion as commit {}.", fmt::short_sha(&sha)))),
+        Err(e) => match refused_message(&e) {
+            Some(m) => Ok(ctx.redirect_flash(&url, "error", &m)),
+            None => Err(e.into()),
+        },
+    }
+}
+
+/// "Delete branch" after a merge or close: the head branch of this same repository only.
+pub async fn delete_branch_post(
+    ctx: Ctx,
+    Path((owner, name, number)): Path<(String, String, i64)>,
+    _form: FormData,
+) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Write)?;
+    let pr = ctx.state.pulls.get(&ctx.actor, rc.id(), number).await?;
+    let url = pr_url(&rc, number, "");
+    let st = PrState::of(&pr);
+    if !(st == PrState::Merged || st == PrState::Closed) {
+        return Ok(ctx.redirect_flash(&url, "error", "Close or merge the pull request before deleting its branch."));
+    }
+    if !head_is_here(&pr, &rc) || pr.head_ref.is_empty() || pr.head_ref == rc.repo.default_branch {
+        return Ok(ctx.redirect_flash(&url, "error", "That branch cannot be deleted from here."));
+    }
+    match ctx.state.git.delete_ref(&ctx.actor, rc.id(), &format!("refs/heads/{}", pr.head_ref), &ctx.client).await {
+        Ok(()) => Ok(ctx.redirect_flash(&url, "ok", &format!("Deleted the branch {}.", pr.head_ref))),
+        Err(Error::Forbidden(m)) | Err(Error::Conflict(m)) => Ok(ctx.redirect_flash(&url, "error", &m)),
         Err(e) => Err(e.into()),
     }
 }
@@ -1028,6 +1372,31 @@ mod tests {
         assert_eq!(parse_review_state("changes"), Some(ReviewState::ChangesRequested));
         assert_eq!(parse_review_state("pending"), None);
         assert_eq!(review_words(ReviewState::Approved).0, "approved these changes");
+    }
+
+    #[test]
+    fn the_merge_form_becomes_options() {
+        let o = merge_options(&FormData::parse(
+            b"method=squash&title=+Tidy+up+&message=Line+one%0D%0ALine+two%0D%0A&head_sha=abc123&delete_branch=1",
+        ));
+        assert_eq!(o.method, Some(MergeMethod::Squash));
+        assert_eq!(o.title.as_deref(), Some("Tidy up"));
+        assert_eq!(o.message.as_deref(), Some("Line one\nLine two"));
+        assert_eq!(o.expected_head_sha.as_deref(), Some("abc123"));
+        assert_eq!(o.delete_branch, Some(true));
+        let o = merge_options(&FormData::parse(b"method=merge&title=&message=+&head_sha="));
+        assert_eq!(
+            (o.title, o.message, o.expected_head_sha, o.delete_branch),
+            (None, None, None, None),
+            "unticked follows the repository setting"
+        );
+    }
+
+    #[test]
+    fn reviewer_values_split_into_people_and_teams() {
+        let (u, t) = reviewer_ids(&["u:3", "t:9", "u:3", "x:1", "u:abc", "t:", "u:4"]);
+        assert_eq!(u, vec![UserId(3), UserId(4)]);
+        assert_eq!(t, vec![ch_core::TeamId(9)]);
     }
 
     #[test]

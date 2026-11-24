@@ -499,4 +499,7 @@ impl Search for SearchSvc {
     async fn code(&self, actor: &Actor, repo: RepoId, query: &str, limit: u32) -> Result<Vec<SearchHit>> {
         self.0.search_code(actor, repo, query, limit).await
     }
+    async fn code_all(&self, actor: &Actor, query: &str, limit: u32) -> Result<Vec<CodeHit>> {
+        self.0.search_code_all(actor, query, limit).await
+    }
 }

@@ -301,6 +301,15 @@ impl Repo {
     }
 }
 
+/// Stars and forks as one person sees them on a repository's header (ch-ugt, ch-8tj).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoSocial {
+    pub stars: i64,
+    /// Forks this person can see: never a count that includes a private one they cannot read.
+    pub forks: i64,
+    pub starred: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewRepo {
     pub owner_id: UserId,
@@ -622,7 +631,13 @@ pub enum MergeableState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PullRequest {
     pub issue: Issue,
+    /// None for a branch of the same repository, and also once a fork it came from is deleted.
+    /// `from_fork` tells the two apart.
     pub head_repo_id: Option<RepoId>,
+    /// The head came from another repository. It stays true after that fork is deleted, so a
+    /// deleted fork's branch is never taken for the base repository's branch of the same name.
+    #[serde(default)]
+    pub from_fork: bool,
     pub head_ref: String,
     pub head_sha: String,
     pub base_ref: String,
@@ -706,6 +721,19 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
+/// One matching line of code in a search across repositories.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeHit {
+    pub repo_id: RepoId,
+    /// `owner/name`.
+    pub repo: String,
+    /// The branch searched: the repository's default branch.
+    pub branch: String,
+    pub path: String,
+    pub line: i64,
+    pub text: String,
+}
+
 // ---------------------------------------------------------------- notifications and webhooks
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -719,6 +747,13 @@ pub struct Notification {
     pub title: String,
     pub unread: bool,
     pub updated_at: DateTime<Utc>,
+    /// For an issue or pull request: its number in the repository, since `subject_id` is the
+    /// row id and a link needs the number.
+    #[serde(default)]
+    pub number: Option<i64>,
+    /// For an issue or pull request: `open`, `closed` or `merged` now.
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

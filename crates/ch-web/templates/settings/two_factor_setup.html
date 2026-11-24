@@ -2,7 +2,12 @@
 {% import "components.html" as ui %}
 {% block settings_body %}
 <h1>Set up two-factor</h1>
-<p>Type this key into your authenticator app. There is no QR code here, so the key is all you need.</p>
+{% if !qr_svg.is_empty() %}
+<p>Scan this code with your authenticator app, or type the key below into it.</p>
+<div class="qr">{{ qr_svg|safe }}</div>
+{% else %}
+<p>Type this key into your authenticator app.</p>
+{% endif %}
 <div class="token-box"><code>{{ secret }}</code><button type="button" class="btn small" data-copy="{{ secret }}">Copy</button></div>
 <p class="hint">Or, if your app opens links, use this address on this device:</p>
 <div class="token-box"><code>{{ otpauth_url }}</code></div>
@@ -14,7 +19,7 @@
   {% if !error.is_empty() %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <ol>
     <li>Install an authenticator app, such as Google Authenticator, 2FAS or Aegis.</li>
-    <li>Add an account by key, and type or paste the key above into it.</li>
+    <li>Scan the code above, or add an account by key and type or paste the key into it.</li>
     <li>Enter the six digit code the app shows below.</li>
   </ol>
   <div class="field">

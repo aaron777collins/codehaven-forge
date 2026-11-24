@@ -150,9 +150,25 @@ answers 404.
 
 ## Not built
 
-- Packages pages and "import a repository" (no service to call yet).
-- A QR code for two-factor setup (no QR library; the key and the otpauth link are shown).
-- Requesting a review from a person or team in the PR UI.
+- Packages pages. They wait for the registry permission fix (ch-ctk.12), so no page lists an image that a deleted repository used to protect.
+- "Import a repository".
+- Moving or deleting an issue, reordering pinned issues, issue forms written in YAML, and a merge queue.
+- Notification emails. Mail sends reset links and invites only.
+
+## Pull requests, forks, search and mail
+
+- **Required checks.** Branch protection takes one check name per line, so a name with a comma, such as `test (ubuntu, 1.22)`, works. The form lists the names of checks that ran on recent commits, to copy. When a required name never ran on the head commit, the merge gate names the nearest one that did.
+- **Merge box.** "Edit the commit title and message" sets the merge or squash commit text. The form carries the head commit the page showed, so a push after the page loaded stops the merge. A branch of the same repository can be deleted with the merge, or afterwards with "Delete branch". The header says "merged" or "wanted to merge" once a pull request is merged or closed. An approval from someone without write access shows "does not count".
+- **Side panel.** Reviewers can be requested and withdrawn by people with triage access, or by the author when they have access. Teams of the owning organization can be requested. Assignees and the milestone work as on issues.
+- **Suggestions.** A ```suggestion block in a review comment is labelled "Suggested change". Someone with write access sees "Apply suggestion", which commits it to the head branch.
+- **Forks.** "Fork" on the repository header opens `/{owner}/{repo}/fork`: pick your account or an organization you own, and a visibility no wider than the parent. A public fork is made private first and confirmed on the visibility page. `/{owner}/{repo}/forks` lists the forks you can read. On "Open a pull request", your own forks appear as a Repository choice. Without access to a repository, a pull request comes from a fork you own.
+- **Watch and star.** The header has Watch (participating, all activity or ignore), Star with its count, and Fork with the number of forks you can see. Signed out, none of them show.
+- **Code search.** The search page has a Code tab. It looks at the default branch of the 30 most recently pushed repositories you can read, and `repo:owner/name` narrows it to one. Each repository has a "Search code" page. Code search needs an account.
+- **Issue filters.** The issue list filters by milestone and by who opened or is assigned an issue. A list narrowed to a milestone shows the milestone at the top, with its progress.
+- **Notifications.** Each row links to the issue or pull request by its number and says whether it is open, closed or merged. A mention stays the reason while the row is unread.
+- **Invites.** A site admin's invite can name an organization and a team. An invite for an email that already belongs to an account is refused.
+- **Two-factor setup** shows a QR code as well as the key.
+- **Forgot password.** `/password/forgot` asks for a username or email and always gives the same answer. With mail on, the account's primary email gets a link that works for an hour, at most one every ten minutes. Asking signs nobody out: choosing the new password does. With mail off the page says to ask a site admin. After choosing a password from any one-time link you are signed in, through two-factor when it is on.
 
 ## Review threads, organizations and the live job log
 
@@ -171,3 +187,20 @@ answers 404.
   elapsed time of every step) and `done`. The page applies each `log` event to the panel of its step,
   ticks the elapsed times every second, and reloads once when the job is done. `tests/e2e/livelog.mjs`
   checks it in a real browser.
+
+## Accessibility and page times
+
+Recorded 2026-11-23 on a throwaway stack seeded by the end-to-end run (ch-cks), with axe-core 4.14.1
+in Chrome over the build host's internal network, so the times leave out the internet. 50 pages,
+each at 390 and 1440 wide, 100 loads in all.
+
+- **Before this pass**, 28 loads had serious or critical findings: link tab bars marked as ARIA tab
+  lists without tabs, green text on green in diffs and on approved reviews, a scrollable diff that
+  a keyboard could not reach, and a link in grey text told apart only by colour.
+- **After it**, none. What is left is moderate or minor: pages with more than one banner or no
+  single `main` landmark, content outside a landmark, some skipped heading levels and empty table
+  headers on action columns.
+- **Page times**: load event at 41 ms for half the pages, 76 ms for 95 of 100, 107 ms at most.
+
+To run it again: `deploy/dev/shots.sh` with `SHOTS_KEEP=1`, then axe-core in each page of
+`tests/e2e/shoot.mjs`, keeping findings marked serious or critical.

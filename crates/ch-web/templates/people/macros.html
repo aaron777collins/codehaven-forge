@@ -10,10 +10,10 @@
 {% endmacro %}
 
 {% macro org_tabs(login, base, current, is_owner) %}
-<nav class="tabs" role="tablist">
-  <a class="tab{% if current == "repos" %} current{% endif %}" href="{{ base }}">Repositories</a>
-  <a class="tab{% if current == "people" %} current{% endif %}" href="/orgs/{{ login }}/people">People</a>
-  <a class="tab{% if current == "teams" %} current{% endif %}" href="/orgs/{{ login }}/teams">Teams</a>
-  {% if is_owner %}<a class="tab{% if current == "settings" %} current{% endif %}" href="/orgs/{{ login }}/settings">Settings</a>{% endif %}
+<nav class="tabs" aria-label="Sections">
+  <a class="tab{% if current == "repos" %} current{% endif %}"{% if current == "repos" %} aria-current="page"{% endif %} href="{{ base }}">Repositories</a>
+  <a class="tab{% if current == "people" %} current{% endif %}"{% if current == "people" %} aria-current="page"{% endif %} href="/orgs/{{ login }}/people">People</a>
+  <a class="tab{% if current == "teams" %} current{% endif %}"{% if current == "teams" %} aria-current="page"{% endif %} href="/orgs/{{ login }}/teams">Teams</a>
+  {% if is_owner %}<a class="tab{% if current == "settings" %} current{% endif %}"{% if current == "settings" %} aria-current="page"{% endif %} href="/orgs/{{ login }}/settings">Settings</a>{% endif %}
 </nav>
 {% endmacro %}

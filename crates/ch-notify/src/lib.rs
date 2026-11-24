@@ -7,6 +7,7 @@
 
 pub mod deliver;
 pub mod fanout;
+pub mod mail;
 pub mod notifications;
 pub mod payload;
 pub mod rest;
@@ -117,12 +118,17 @@ where
 pub struct NotifyServices {
     pub notifications: Arc<dyn Notifications>,
     pub webhooks: Arc<dyn Webhooks>,
+    /// `None` keeps mail off: nothing is configured to send with.
+    pub mail: Option<Arc<dyn ch_core::services::Mail>>,
 }
 
 impl Install for NotifyServices {
     fn install(self, b: &mut AppStateBuilder) {
         b.notifications = self.notifications;
         b.webhooks = self.webhooks;
+        if let Some(m) = self.mail {
+            b.mail = m;
+        }
     }
 }
 
@@ -144,8 +150,10 @@ pub fn build_with(b: &AppStateBuilder, opts: NotifyOptions) -> Result<NotifyServ
     };
     // Saving a hook and delivering to it both judge addresses with this list.
     ssrf::set_blocked_ips(&b.config.webhooks.blocked_ips);
+    let mail = mail::SmtpMail::build(b.config.mail.smtp.as_ref())?.map(|m| Arc::new(m) as Arc<dyn ch_core::services::Mail>);
     Ok(NotifyServices {
         notifications: Arc::new(notifications::NotificationsService::new(b.db.clone(), b.authz.clone())),
         webhooks: Arc::new(webhooks::WebhooksService::new(b.db.clone(), key, b.authz.clone(), b.audit.clone(), b.config.clone())),
+        mail,
     })
 }

@@ -41,6 +41,7 @@ hex.workspace = true
 rand.workspace = true
 mime_guess.workspace = true
 form_urlencoded.workspace = true
+qrcode.workspace = true
 sqlx.workspace = true
 
 [dev-dependencies]

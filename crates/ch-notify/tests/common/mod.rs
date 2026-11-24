@@ -20,7 +20,7 @@ use sqlx::PgPool;
 use std::sync::{Arc, Mutex};
 
 /// A small stand-in for the identity crate's `Authz`, reading the same tables: owner, org
-/// owner, collaborator, team, org base permission and public repositories.
+/// owner, collaborator, team, org base permission, and Read from an internal or public tier.
 pub struct DbAuthz(pub PgPool);
 
 #[async_trait]
@@ -38,7 +38,7 @@ impl Authz for DbAuthz {
             _ => return Ok(Permission::None),
         };
         let row: Option<(i64, String, String, String, Option<String>, Option<String>, Option<Vec<String>>)> = sqlx::query_as(
-            "SELECT r.owner_id, o.kind, r.visibility, o.org_base_permission,
+            "SELECT r.owner_id, o.kind, r.access_tier, o.org_base_permission,
                     (SELECT m.role FROM org_members m WHERE m.org_id = r.owner_id AND m.user_id = $2),
                     (SELECT c.permission FROM repo_collaborators c WHERE c.repo_id = r.id AND c.user_id = $2),
                     (SELECT array_agg(tr.permission) FROM team_repos tr JOIN team_members tm ON tm.team_id = tr.team_id WHERE tr.repo_id = r.id AND tm.user_id = $2)
@@ -62,7 +62,9 @@ impl Authz for DbAuthz {
         if kind == "org" && role.is_some() {
             p = p.max(Permission::parse(&base).unwrap_or(Permission::None));
         }
-        if vis == "public" {
+        // As in ch-auth's `compute`: a signed-in account reads an internal or public
+        // repository at Read, with no grant behind it.
+        if vis == "internal" || vis == "public" {
             p = p.max(Permission::Read);
         }
         Ok(p)
@@ -83,7 +85,7 @@ impl Authz for DbAuthz {
 
     async fn require(&self, actor: &Actor, repo: RepoId, needed: Permission) -> Result<()> {
         let have = self.repo_permission(actor, repo).await?;
-        if have < Permission::Read {
+        if have < Permission::View {
             return Err(Error::NotFound);
         }
         if have < needed {

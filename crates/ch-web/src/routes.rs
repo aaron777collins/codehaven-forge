@@ -2,7 +2,8 @@
 
 use crate::assets;
 use crate::views::{
-    self, actions, admin, apps, auth, issues, people, pulls, releases, repo, repo_settings as rs, settings, visibility, workspace as ws,
+    self, actions, admin, apps, auth, forks, issues, people, pulls, releases, repo, repo_settings as rs, settings, visibility,
+    workspace as ws,
 };
 use axum::Router;
 use axum::handler::Handler;
@@ -69,6 +70,7 @@ pub fn build_for(mcp: bool) -> Registry {
         .form("/login/two-factor", auth::two_factor_get, auth::two_factor_post)
         .post("/logout", auth::logout_post)
         .form("/invite/{token}", auth::invite_get, auth::invite_post)
+        .form("/password/forgot", auth::forgot_get, auth::forgot_post)
         .form("/password/{token}", auth::password_get, auth::password_post)
         .get("/", views::home::home)
         .get("/admin", admin::overview)
@@ -160,6 +162,11 @@ pub fn build_for(mcp: bool) -> Registry {
         .get("/{owner}/{repo}/commit/{sha}", repo::commit)
         .get("/{owner}/{repo}/branches", repo::branches)
         .post("/{owner}/{repo}/branches/delete", repo::branch_delete)
+        .form("/{owner}/{repo}/fork", forks::fork_get, forks::fork_post)
+        .get("/{owner}/{repo}/forks", forks::forks_get)
+        .get("/{owner}/{repo}/search", views::repo_search::search_get)
+        .post("/{owner}/{repo}/star", forks::star_post)
+        .post("/{owner}/{repo}/watch", forks::watch_post)
         .get("/{owner}/{repo}/tags", repo::tags)
         .post("/{owner}/{repo}/tags/delete", repo::tag_delete)
         .get("/{owner}/{repo}/compare", repo::compare_form)
@@ -228,6 +235,11 @@ pub fn build_for(mcp: bool) -> Registry {
         .post("/{owner}/{repo}/pulls/{number}/edit", pulls::edit_post)
         .post("/{owner}/{repo}/pulls/{number}/labels", pulls::labels_post)
         .post("/{owner}/{repo}/pulls/{number}/merge", pulls::merge_post)
+        .post("/{owner}/{repo}/pulls/{number}/delete-branch", pulls::delete_branch_post)
+        .post("/{owner}/{repo}/pulls/{number}/reviewers", pulls::reviewers_post)
+        .post("/{owner}/{repo}/pulls/{number}/suggestion", pulls::suggestion_post)
+        .post("/{owner}/{repo}/pulls/{number}/assignees", pulls::assignees_post)
+        .post("/{owner}/{repo}/pulls/{number}/milestone", pulls::milestone_post)
         .post("/{owner}/{repo}/pulls/{number}/approve-runs", pulls::approve_runs_post)
         .post("/{owner}/{repo}/pulls/{number}/review", pulls::review_post)
         .post("/{owner}/{repo}/pulls/{number}/inline", pulls::inline_post)

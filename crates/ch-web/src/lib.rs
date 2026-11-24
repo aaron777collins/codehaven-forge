@@ -17,6 +17,7 @@ pub mod ctx;
 pub mod error;
 pub mod fmt;
 pub mod forms;
+pub mod qr;
 pub mod routes;
 pub mod views;
 

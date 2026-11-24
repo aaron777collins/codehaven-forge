@@ -1,7 +1,7 @@
 {% extends "repo/layout.html" %}
 {% import "components.html" as ui %}
 {% block repo_body %}
-<div class="tabs" role="tablist"><a class="tab{% if kind == "branches" %} current{% endif %}" href="{{ branches_href }}">Branches</a><a class="tab{% if kind == "tags" %} current{% endif %}" href="{{ tags_href }}">Tags</a></div>
+<div class="tabs" role="navigation" aria-label="Branches and tags"><a class="tab{% if kind == "branches" %} current{% endif %}"{% if kind == "branches" %} aria-current="page"{% endif %} href="{{ branches_href }}">Branches</a><a class="tab{% if kind == "tags" %} current{% endif %}"{% if kind == "tags" %} aria-current="page"{% endif %} href="{{ tags_href }}">Tags</a></div>
 {% if rows.is_empty() %}
 {% call ui::empty("Nothing here yet", "Branches and tags show up after the first push.") %}
 {% else %}

@@ -5,6 +5,7 @@ GET /favicon.svg
 GET /healthz
 GET /invite/{token}
 GET /login
+GET /password/forgot
 GET /password/{token}
 GET /robots.txt
 GET /static/{*path}
@@ -15,6 +16,7 @@ HEAD /favicon.svg
 HEAD /healthz
 HEAD /invite/{token}
 HEAD /login
+HEAD /password/forgot
 HEAD /password/{token}
 HEAD /robots.txt
 HEAD /static/{*path}
@@ -24,4 +26,5 @@ POST /login
 POST /login/two-factor
 POST /oauth/revoke
 POST /oauth/token
+POST /password/forgot
 POST /password/{token}

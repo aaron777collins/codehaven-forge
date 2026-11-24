@@ -88,6 +88,8 @@ pub struct InlineComment {
     pub ago: String,
     pub body_html: String,
     pub is_reply: bool,
+    /// The comment holds a `suggestion` block on the new side of the diff.
+    pub suggestion: bool,
 }
 
 /// One thread of inline comments. It sits under the line of its first comment, and a reply
@@ -115,6 +117,8 @@ pub struct ThreadForms {
     pub back: String,
     pub can_reply: bool,
     pub can_resolve: bool,
+    /// Where "Apply suggestion" posts. Empty when this viewer cannot apply one.
+    pub apply_action: String,
 }
 
 /// Where a diff is shown: decides whether lines get a "comment" button and where threads sit.
@@ -282,13 +286,23 @@ pub fn thread_html(t: &InlineThread, f: &ThreadForms) -> String {
     for c in &t.comments {
         let _ = write!(
             out,
-            "<article class=\"inline-comment{}\" id=\"rc{}\"><header><strong>{}</strong> <span class=\"muted\">{}</span></header><div class=\"markdown\">{}</div></article>",
+            "<article class=\"inline-comment{}\" id=\"rc{}\"><header><strong>{}</strong> <span class=\"muted\">{}</span></header><div class=\"markdown\">{}</div>",
             if c.is_reply { " reply" } else { "" },
             c.id,
             escape_html(&c.author),
             escape_html(&c.ago),
             c.body_html
         );
+        // The service checks write access on the head branch and that the code has not moved.
+        if c.suggestion && !t.resolved && !f.apply_action.is_empty() {
+            let id = c.id.to_string();
+            let _ = write!(out, "<form method=\"post\" action=\"{}\" class=\"apply-suggestion\">", escape_html(&f.apply_action));
+            for (name, value) in [("_csrf", f.csrf.as_str()), ("comment", id.as_str()), ("back", f.back.as_str())] {
+                let _ = write!(out, "<input type=\"hidden\" name=\"{name}\" value=\"{}\">", escape_html(value));
+            }
+            out.push_str("<button class=\"btn small\" type=\"submit\">Apply suggestion</button></form>");
+        }
+        out.push_str("</article>");
     }
     out.push_str("</details><div class=\"thread-actions\">");
     // A reply keeps the thread: it posts to the first comment, at its own anchor.
@@ -327,7 +341,7 @@ pub fn thread_html(t: &InlineThread, f: &ThreadForms) -> String {
 }
 
 fn unified(out: &mut String, path: &str, hunks: &[Hunk], hl: &[Vec<String>], opts: &DiffOptions) {
-    out.push_str("<table class=\"diff diff-unified\"><tbody>");
+    out.push_str("<table class=\"diff diff-unified\" tabindex=\"0\"><tbody>");
     for (h, lines) in hunks.iter().zip(hl) {
         let _ = write!(
             out,
@@ -365,7 +379,7 @@ fn unified(out: &mut String, path: &str, hunks: &[Hunk], hl: &[Vec<String>], opt
 }
 
 fn split(out: &mut String, path: &str, hunks: &[Hunk], hl: &[Vec<String>], opts: &DiffOptions) {
-    out.push_str("<table class=\"diff diff-split\"><tbody>");
+    out.push_str("<table class=\"diff diff-split\" tabindex=\"0\"><tbody>");
     for (h, lines) in hunks.iter().zip(hl) {
         let _ = write!(out, "<tr class=\"hunk\"><td colspan=\"4\" class=\"lc hunk-head\">{}</td></tr>", escape_html(&h.header));
         let mut i = 0;
@@ -508,8 +522,16 @@ mod tests {
                     ago: "now".into(),
                     body_html: "<p>first</p>".into(),
                     is_reply: false,
+                    suggestion: true,
                 },
-                InlineComment { id: 32, author: "cleo".into(), ago: "now".into(), body_html: "<p>second</p>".into(), is_reply: true },
+                InlineComment {
+                    id: 32,
+                    author: "cleo".into(),
+                    ago: "now".into(),
+                    body_html: "<p>second</p>".into(),
+                    is_reply: true,
+                    suggestion: false,
+                },
             ],
         }
     }
@@ -522,6 +544,7 @@ mod tests {
             back: "files".into(),
             can_reply: true,
             can_resolve: true,
+            apply_action: "/o/r/pulls/14/suggestion".into(),
         }
     }
 
@@ -565,6 +588,17 @@ mod tests {
         assert!(html.contains("name=\"resolved\" value=\"1\""));
         assert!(html.contains(">Resolve</button>"));
         assert!(!html.contains("chip\">Resolved"));
+    }
+
+    #[test]
+    fn a_suggestion_can_be_applied_from_an_open_thread_only() {
+        let html = thread_html(&thread(42, false), &forms());
+        assert_eq!(html.matches(">Apply suggestion</button>").count(), 1, "only the comment that holds one");
+        assert!(html.contains("<form method=\"post\" action=\"/o/r/pulls/14/suggestion\" class=\"apply-suggestion\">"));
+        assert!(html.contains("name=\"comment\" value=\"31\""));
+        assert!(!thread_html(&thread(41, true), &forms()).contains("Apply suggestion"), "not once resolved");
+        let f = ThreadForms { apply_action: String::new(), ..forms() };
+        assert!(!thread_html(&thread(42, false), &f).contains("Apply suggestion"), "not without write access");
     }
 
     #[test]

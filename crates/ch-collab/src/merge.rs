@@ -149,6 +149,7 @@ impl Core {
 
         let mut failing = Vec::new();
         let mut unavailable = false;
+        let mut check_names = Vec::new();
         if let Some(r) = &rules {
             let checks = self.d.checks();
             for c in &r.required_checks {
@@ -159,6 +160,15 @@ impl Core {
                         tracing::warn!(error = %e, "could not read required checks");
                         unavailable = true;
                     }
+                }
+            }
+            if !failing.is_empty() {
+                // Only for the wording: a failure here leaves the plain message.
+                if let Ok(runs) = checks.check_runs_for_sha(pull.repo_id, &pull.head_sha).await {
+                    check_names.extend(runs.into_iter().map(|c| c.name));
+                }
+                if let Ok(sts) = checks.statuses_for_sha(pull.repo_id, &pull.head_sha).await {
+                    check_names.extend(sts.into_iter().map(|s| s.context));
                 }
             }
         }
@@ -193,8 +203,10 @@ impl Core {
             effective: eff,
             failing_checks: failing,
             checks_unavailable: unavailable,
+            check_names,
             unowned_reviews: unowned,
             unresolved_threads: threads as u32,
+            head_gone: pull.head_gone(),
         }))
     }
 
@@ -296,7 +308,9 @@ impl Core {
         let req = MergeRequest {
             repo_id: pull.repo_id,
             base_ref: full_branch(&pull.base_ref),
-            head_repo_id: pull.head_repo(),
+            // The gate refuses a pull request whose fork is gone. This is the backstop, so the
+            // base's branch of the same name is never merged in its place.
+            head_repo_id: pull.head_repo().ok_or_else(|| Error::MergeBlocked(vec![gate::HEAD_GONE.into()]))?,
             head_ref: full_branch(&pull.head_ref),
             method,
             title: title.clone(),
@@ -410,7 +424,7 @@ impl Core {
     }
 
     async fn pull_compare_commits(&self, _issue: &IssueRow, pull: &PullRow) -> Result<Vec<CommitInfo>> {
-        Ok(self.d.git.compare(pull.git_repo(), &pull.base_sha, &pull.head_sha).await?.commits)
+        Ok(self.compare_pull(pull, &pull.base_sha, &pull.head_sha).await?.commits)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -425,7 +439,9 @@ impl Core {
         title: &str,
         app: bool,
     ) {
-        // Delete the head branch when asked, or when the repository always does.
+        // Delete the head branch when asked, or when the repository always does. Only a branch
+        // of this same repository: a fork's branch is not here, and once a fork is deleted the
+        // branch of the same name here is someone else's (`is_fork` stays true for it).
         let delete = options.delete_branch.unwrap_or(repo.delete_branch_on_merge) && !app;
         if delete && !pull.is_fork() && pull.head_ref != repo.default_branch {
             let protected = self
@@ -524,7 +540,9 @@ impl Core {
             return Err(Error::invalid("PullRequest", "state", "Only an open pull request can be updated"));
         }
         // Writing to the head branch needs write access there.
-        let head_repo = pull.head_repo();
+        let Some(head_repo) = pull.head_repo() else {
+            return Err(Error::invalid("PullRequest", "head", "The repository this pull request came from was deleted"));
+        };
         let allowed = self.permission(actor, head_repo).await? >= Permission::Write
             || (pull.is_fork()
                 && pull.maintainer_can_modify

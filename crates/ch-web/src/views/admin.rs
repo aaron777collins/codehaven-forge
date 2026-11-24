@@ -241,6 +241,8 @@ pub async fn overview(ctx: Ctx) -> WebResult<Response> {
 struct InviteForm {
     email: String,
     note: String,
+    org: String,
+    team: String,
     grants_admin: bool,
     grants_ci: bool,
     hours: Option<u32>,
@@ -251,6 +253,8 @@ impl InviteForm {
         InviteForm {
             email: form.get("email").trim().to_string(),
             note: form.get("note").trim().to_string(),
+            org: form.get("org").trim().trim_start_matches('@').to_string(),
+            team: form.get("team").trim().to_string(),
             grants_admin: form.flag("grants_admin"),
             grants_ci: form.flag("grants_ci"),
             hours: form.int("expires_in_hours").map(|h| h as u32),
@@ -323,19 +327,59 @@ pub async fn invites_get(ctx: Ctx) -> WebResult<Response> {
 pub async fn invites_create(ctx: Ctx, form: FormData) -> WebResult<Response> {
     site_admin(&ctx)?;
     let held = InviteForm::from_form(&form);
+    // An organization and a team by name, as `codehaven admin invite create --org --team` takes them.
+    let (mut org_id, mut team_id) = (None, None);
+    if !held.org.is_empty() {
+        match ctx.state.accounts.get_by_username(&ctx.actor, &held.org).await {
+            Ok(u) if u.kind == ch_core::model::UserKind::Org => org_id = Some(ch_core::OrgId(u.id.0)),
+            _ => {
+                let errors = FieldErrors::default().with("org", "There is no organization with that name.");
+                return invites_page(&ctx, held, errors, StatusCode::UNPROCESSABLE_ENTITY).await;
+            }
+        }
+    }
+    if !held.team.is_empty() {
+        let Some(org) = org_id else {
+            let errors = FieldErrors::default().with("team", "Name the organization the team is in.");
+            return invites_page(&ctx, held, errors, StatusCode::UNPROCESSABLE_ENTITY).await;
+        };
+        match ctx.state.orgs.get_team(&ctx.actor, org, &held.team).await {
+            Ok(t) => team_id = Some(t.id),
+            Err(_) => {
+                let errors = FieldErrors::default().with("team", "That organization has no team with that name.");
+                return invites_page(&ctx, held, errors, StatusCode::UNPROCESSABLE_ENTITY).await;
+            }
+        }
+    }
     let new = NewInvite {
         email: form.opt("email").map(str::to_string),
         grants_admin: held.grants_admin,
         grants_ci: held.grants_ci,
-        org_id: None,
-        team_id: None,
+        org_id,
+        team_id,
         note: form.opt("note").map(str::to_string),
         expires_in_hours: held.hours,
     };
     match ctx.state.invites.create(&ctx.actor, new, &ctx.client).await {
         Ok(created) => {
             let c = ctx.chrome("Invite created").await.nav("admin");
-            let page = InviteCreatedPage { c, section: "invites", url: created.url, expires: fmt::time(created.invite.expires_at) };
+            // An invite made for an address is also mailed to it, when mail is on (ch-bfa).
+            let emailed = match created.invite.email.clone() {
+                Some(to) if ctx.state.mail.enabled() => {
+                    let body = invite_mail(&c.instance, &created.url, created.invite.expires_at);
+                    let subject = format!("You are invited to {}", c.instance);
+                    match ctx.state.mail.send(&to, &subject, &body).await {
+                        Ok(()) => Some(to),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "an invite mail was not sent");
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
+            let page =
+                InviteCreatedPage { c, section: "invites", url: created.url, expires: fmt::time(created.invite.expires_at), emailed };
             ctx.page(&page)
         }
         Err(e) => match FieldErrors::from_error(&e) {
@@ -353,6 +397,16 @@ struct InviteCreatedPage {
     section: &'static str,
     url: String,
     expires: TimeView,
+    /// The address the link was mailed to, when it was.
+    emailed: Option<String>,
+}
+
+/// The invite mail. Plain text, the link on a line of its own.
+pub fn invite_mail(instance: &str, url: &str, expires: chrono::DateTime<chrono::Utc>) -> String {
+    format!(
+        "You are invited to make an account on {instance}, a private Git server.\n\nOpen this link to choose a username and password:\n\n{url}\n\nThe link works once, until {}. If you were not expecting this, ignore this mail.\n",
+        expires.format("%-d %B %Y %H:%M UTC")
+    )
 }
 
 pub async fn invite_revoke(ctx: Ctx, Path(id): Path<i64>, _form: FormData) -> WebResult<Response> {

@@ -214,16 +214,7 @@ async fn put_topics(api: Api, Path((owner, name)): Path<(String, String)>, ApiJs
 
 async fn list_forks(api: Api, Path((owner, name)): Path<(String, String)>, Query(q): Query<PageQuery>) -> Result<Response> {
     let repo = api.repo(&owner, &name).await?;
-    let ids: Vec<(i64,)> = sqlx::query_as("SELECT id FROM repositories WHERE fork_parent_id = $1 ORDER BY created_at DESC, id DESC")
-        .bind(repo.id.0)
-        .fetch_all(&api.state.db)
-        .await?;
-    let mut visible = Vec::new();
-    for (id,) in ids {
-        if let Ok(r) = api.core.do_get(&api.actor, ch_core::RepoId(id)).await {
-            visible.push(r);
-        }
-    }
+    let visible = api.core.do_forks(&api.actor, repo.id).await?;
     let (rows, more) = trim_page(visible.into_iter().skip(q.skip() as usize).take(q.per_page() as usize + 1).collect(), q);
     let out = repositories(&api, &rows).await?;
     Ok(paged(&format!("{}/repos/{owner}/{name}/forks", api_url(api.base())), q, out, more))

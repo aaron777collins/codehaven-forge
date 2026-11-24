@@ -73,6 +73,11 @@ pub const PUBLIC_ROUTES: &[PublicRoute] = &[
     PublicRoute { methods: &["GET", "POST"], pattern: "/login", why: "Signing in" },
     PublicRoute { methods: &["GET", "POST"], pattern: "/login/two-factor", why: "Second step of signing in" },
     PublicRoute { methods: &["GET", "POST"], pattern: "/invite/{token}", why: "Accepting an invite" },
+    PublicRoute {
+        methods: &["GET", "POST"],
+        pattern: "/password/forgot",
+        why: "Asks for a reset link by email (ch-bfa). The answer is the same whether or not an account matches, and with mail off nothing is looked up",
+    },
     PublicRoute { methods: &["GET", "POST"], pattern: "/password/{token}", why: "One-time set-password and reset links" },
     PublicRoute { methods: &["GET"], pattern: "/login/oidc/{provider}", why: "Only answers when a provider is configured" },
     PublicRoute { methods: &["GET"], pattern: "/login/oidc/{provider}/callback", why: "Only answers when a provider is configured" },
@@ -642,7 +647,7 @@ mod tests {
                 "/oauth/revoke",
             ]
         );
-        assert_eq!(PUBLIC_ROUTES.len(), 11 + 5, "the eleven that existed before, plus five");
+        assert_eq!(PUBLIC_ROUTES.len(), 11 + 5 + 1, "the eleven that existed before, plus five, plus forgot password (ch-bfa)");
         for p in [
             "/oauth/register",
             "/register",

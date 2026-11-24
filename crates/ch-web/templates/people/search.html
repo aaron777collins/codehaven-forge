@@ -6,14 +6,25 @@
   <form class="filter-bar" method="get" action="/search">
     <input type="hidden" name="type" value="{{ kind }}">
     <label class="sr-only" for="search-q">Search</label>
-    <input id="search-q" class="filter-search" type="search" name="q" value="{{ q }}" placeholder="Search repositories, issues and people">
+    <input id="search-q" class="filter-search" type="search" name="q" value="{{ q }}" placeholder="Search repositories, issues, code and people">
     <button class="btn" type="submit">Search</button>
   </form>
-  <nav class="tabs" role="tablist">
-    {% for t in tabs %}<a class="tab{% if t.current %} current{% endif %}" href="{{ t.href }}">{{ t.label }}</a>{% endfor %}
+  <nav class="tabs" aria-label="What to search">
+    {% for t in tabs %}<a class="tab{% if t.current %} current{% endif %}"{% if t.current %} aria-current="page"{% endif %} href="{{ t.href }}">{{ t.label }}</a>{% endfor %}
   </nav>
   {% if q.is_empty() %}
-  {% call ui::empty("Search this server", "Type something to look for repositories, issues and people you can see.") %}
+  {% call ui::empty("Search this server", "Type something to look for repositories, issues, code and people you can see.") %}
+  {% else if kind == "code" %}
+  {% if code.is_empty() %}
+  {% call ui::empty("No code matches", "Code search looks at the default branch of the 30 most recently pushed repositories you can read. Add repo:owner/name to search one repository.") %}
+  {% else %}
+  <ul class="card code-hits">
+    {% for h in code %}
+    <li class="hit-item"><a class="hit-title" href="{{ h.href }}"><code>{{ h.location }}</code></a> <a class="muted small" href="{{ h.repo_href }}">{{ h.repo }}</a>
+      <pre class="code-hit"><code>{{ h.text }}</code></pre></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
   {% else if hits.is_empty() %}
   {% call ui::empty("Nothing matches", "Try different words, or fewer of them.") %}
   {% else %}

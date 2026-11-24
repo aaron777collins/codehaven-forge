@@ -149,9 +149,9 @@ The Rust harness in `tests/e2e/src` runs steps 0 and 1 inside the same throwaway
 2 and later live in the Python script because they need `git`, `ssh` and a runner, and the e2e
 compose project has neither a runner nor a Docker daemon for jobs.
 
-Not covered yet: the SSE log stream (the log is fetched whole; `tests/e2e/livelog.mjs` checks
-that separately in a real browser), registering twice with one runner token, the OCI registry
-with a real `docker login`.
+Not covered yet: registering twice with one runner token, and the OCI registry with a real
+`docker login`. The live job log is covered by step 21, which runs `tests/e2e/livelog.mjs` in a
+real browser.
 
 ## Screenshots
 

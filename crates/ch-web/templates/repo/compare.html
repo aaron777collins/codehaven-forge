@@ -5,15 +5,20 @@
 <h2 class="page-h">Compare changes</h2>
 <form class="compare-form" method="get" action="{{ action }}">
   <label class="field-inline"><span>Base</span>
-    <select name="base">{% for b in branches %}<option value="{{ b }}"{% if *b == base_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</select></label>
+    <select name="base"><optgroup label="Branches">{% for b in branches %}<option value="{{ b }}"{% if *b == base_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</optgroup>{% if !tags.is_empty() %}<optgroup label="Tags">{% for t in tags %}<option value="{{ t }}"{% if *t == base_ref %} selected{% endif %}>{{ t }}</option>{% endfor %}</optgroup>{% endif %}</select></label>
   <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"/></svg>
   <label class="field-inline"><span>Compare</span>
-    <select name="head">{% for b in branches %}<option value="{{ b }}"{% if *b == head_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</select></label>
+    <select name="head"><optgroup label="Branches">{% for b in branches %}<option value="{{ b }}"{% if *b == head_ref %} selected{% endif %}>{{ b }}</option>{% endfor %}</optgroup>{% if !tags.is_empty() %}<optgroup label="Tags">{% for t in tags %}<option value="{{ t }}"{% if *t == head_ref %} selected{% endif %}>{{ t }}</option>{% endfor %}</optgroup>{% endif %}</select></label>
   <button class="btn" type="submit">Compare</button>
 </form>
+{% if !problem.is_empty() %}
+  {% call ui::empty("Nothing to compare", problem) %}
+{% endif %}
 {% if has_result %}
-  {% if same %}
-  {% call ui::empty("Nothing to compare", "These two are the same. There are no changes between them.") %}
+  {% if same_commit %}
+  {% call ui::empty("Nothing to compare", "These two point at the same commit.") %}
+  {% else if same %}
+  <div class="empty"><h3>No new commits</h3><p class="muted"><code>{{ head_ref }}</code> has no commits that <code>{{ base_ref }}</code> does not already have{% if behind > 0 %}. It is {{ behind }} commit{% if behind != 1 %}s{% endif %} behind{% endif %}. Try swapping the two.</p></div>
   {% else %}
   <div class="card compare-summary">
     <p><strong>{{ ahead }}</strong> commit{% if ahead != 1 %}s{% endif %} ahead{% if behind > 0 %}, <strong>{{ behind }}</strong> behind{% endif %}.</p>

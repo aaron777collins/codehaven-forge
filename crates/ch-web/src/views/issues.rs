@@ -137,6 +137,30 @@ struct ListPage {
     clear_href: String,
     labels_href: String,
     milestones_href: String,
+    /// Filter menus: milestones as links, and the people filters as typed usernames.
+    milestone_items: Vec<LabelFilterItem>,
+    milestone_id: String,
+    author: String,
+    assignee: String,
+    /// The milestone this list is narrowed to, shown as its page header (ch-d9t).
+    milestone: Option<MilestoneHead>,
+}
+
+/// Closed issues as a whole percent of all of them. None at all reads as 0.
+pub fn milestone_percent(open: i64, closed: i64) -> u8 {
+    let total = open.max(0) + closed.max(0);
+    if total == 0 { 0 } else { u8::try_from(closed.max(0) * 100 / total).unwrap_or(100) }
+}
+
+/// A milestone as the header of the issue list filtered to it.
+pub struct MilestoneHead {
+    pub title: String,
+    pub description: String,
+    pub due: Option<String>,
+    pub open: bool,
+    pub open_issues: i64,
+    pub closed_issues: i64,
+    pub percent: u8,
 }
 
 pub struct ListQuery {
@@ -233,6 +257,30 @@ pub async fn list(ctx: Ctx, Path((owner, name)): Path<(String, String)>, Query(q
         .collect();
     let rows = rows_for(&ctx, &rc, &issues, "issues").await;
     let filtered = q.keys().any(|k| matches!(k.as_str(), "labels" | "assignee" | "author" | "milestone" | "q"));
+    let all_milestones = ctx.state.tracker.milestones(&ctx.actor, rc.id(), None).await.unwrap_or_default();
+    let picked = lq.filter.milestone;
+    let milestone_items = all_milestones
+        .iter()
+        .filter(|m| m.open || Some(m.id) == picked)
+        .map(|m| LabelFilterItem {
+            name: m.title.clone(),
+            class: String::new(),
+            on: Some(m.id) == picked,
+            href: format!(
+                "{base}/issues{}",
+                if Some(m.id) == picked { qs(&q, &[], &["milestone"]) } else { qs(&q, &[("milestone", &m.id.0.to_string())], &[]) }
+            ),
+        })
+        .collect();
+    let milestone = picked.and_then(|id| all_milestones.iter().find(|m| m.id == id)).map(|m| MilestoneHead {
+        title: m.title.clone(),
+        description: m.description.clone(),
+        due: m.due_on.map(|d| d.format("%-d %B %Y").to_string()),
+        open: m.open,
+        open_issues: m.open_issues,
+        closed_issues: m.closed_issues,
+        percent: milestone_percent(m.open_issues, m.closed_issues),
+    });
     let c = rc.chrome(&ctx, "Issues", "issues").await;
     ctx.page(&ListPage {
         c,
@@ -252,6 +300,11 @@ pub async fn list(ctx: Ctx, Path((owner, name)): Path<(String, String)>, Query(q
         clear_href: format!("{base}/issues"),
         labels_href: format!("{base}/labels"),
         milestones_href: format!("{base}/milestones"),
+        milestone_items,
+        milestone_id: picked.map(|m| m.0.to_string()).unwrap_or_default(),
+        author: q.get("author").cloned().unwrap_or_default(),
+        assignee: q.get("assignee").cloned().unwrap_or_default(),
+        milestone,
         base,
     })
 }
@@ -858,6 +911,14 @@ fn _unused(_: WebError, _: Error) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn milestone_progress_is_a_whole_percent() {
+        assert_eq!(milestone_percent(3, 5), 62);
+        assert_eq!(milestone_percent(0, 0), 0);
+        assert_eq!(milestone_percent(0, 4), 100);
+        assert_eq!(milestone_percent(-1, 1), 100);
+    }
 
     fn q(pairs: &[(&str, &str)]) -> Params {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()

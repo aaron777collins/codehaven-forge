@@ -243,8 +243,9 @@ impl Ctx {
             assignees: issue.assignees,
             requested_reviewers: v.requested.users.iter().map(|u| self.user(u)).collect(),
             head: api_p::PullBranch {
-                // A head repository the caller cannot read shows as its branch name only.
-                label: if v.head_repo.is_some() && head_repo.is_none() {
+                // A head repository the caller cannot read, or one that was deleted, shows as
+                // its branch name only.
+                label: if head_repo.is_none() && (v.head_repo.is_some() || v.pull.from_fork) {
                     v.pull.head_ref.clone()
                 } else {
                     format!("{}:{}", head_owner, v.pull.head_ref)
@@ -310,7 +311,7 @@ impl Ctx {
                 name: t.name.clone(),
                 slug: t.name.clone(),
                 description: None,
-                permission: "pull".into(),
+                permission: t.permission.clone().unwrap_or_else(|| "pull".into()),
                 url: format!("{}/api/v3/orgs/{}/teams/{}", self.base, t.org, t.name),
                 html_url: format!("{}/orgs/{}/teams/{}", self.base, t.org, t.name),
                 members_count: 0,

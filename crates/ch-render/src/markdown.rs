@@ -275,7 +275,8 @@ fn sanitizer() -> Builder<'static> {
     b.add_allowed_classes("span", HL_CLASSES.iter().copied());
     b.add_allowed_classes("a", ["mention", "issue-ref", "sha-ref", "anchor"]);
     b.add_allowed_classes("pre", ["hl-block"]);
-    b.add_allowed_classes("div", ["table-wrap"]);
+    b.add_allowed_classes("div", ["table-wrap", "suggestion"]);
+    b.add_allowed_classes("p", ["suggestion-label"]);
     // Off-site images are never loaded: the policy blocks them anyway, and dropping the
     // source means a stray `<img>` cannot even try.
     b.attribute_filter(|tag, attr, value| {
@@ -313,7 +314,15 @@ pub fn render(src: &str, ctx: &MdContext) -> String {
             }
             Event::End(TagEnd::CodeBlock) => {
                 if let Some((lang, body)) = code.take() {
-                    out.push(Event::Html(CowStr::from(highlight::highlight_block(&body, &lang))));
+                    // A review's ```suggestion block is the change it proposes, so it says so.
+                    if lang == "suggestion" {
+                        out.push(Event::Html(CowStr::from(format!(
+                            "<div class=\"suggestion\"><p class=\"suggestion-label\">Suggested change</p>{}</div>",
+                            highlight::highlight_block(&body, "")
+                        ))));
+                    } else {
+                        out.push(Event::Html(CowStr::from(highlight::highlight_block(&body, &lang))));
+                    }
                 }
             }
             Event::Text(t) if code.is_some() => {
@@ -454,6 +463,18 @@ mod tests {
 
     fn repo() -> MdContext {
         MdContext { owner: "ada".into(), repo: "lh".into(), git_ref: "main".into(), dir: String::new(), link_refs: true, heading_ids: true }
+    }
+
+    #[test]
+    fn a_suggestion_block_is_labelled() {
+        let html = render("Try this:\n\n```suggestion\nlet x = 2;\n```\n", &MdContext::default());
+        assert!(
+            html.contains("<div class=\"suggestion\"><p class=\"suggestion-label\">Suggested change</p><pre class=\"hl-block\"><code>"),
+            "{html}"
+        );
+        assert!(html.contains("let x = 2;"));
+        let plain = render("```rust\nlet x = 2;\n```\n", &MdContext::default());
+        assert!(!plain.contains("Suggested change"));
     }
 
     #[test]

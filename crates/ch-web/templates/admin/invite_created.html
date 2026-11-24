@@ -1,6 +1,7 @@
 {% extends "admin/layout.html" %}
 {% block admin_body %}
 <h1>Invite created</h1>
+{% if let Some(to) = emailed %}<p class="notice" role="status">We emailed this link to {{ to }}.</p>{% endif %}
 <p>Copy the link now. For safety the server only keeps a hash and cannot show it again.</p>
 <div class="copy-box"><code>{{ url }}</code><button type="button" class="btn small" data-copy="{{ url }}">Copy</button></div>
 <p>It works until <time datetime="{{ expires.iso }}" title="{{ expires.title }}">{{ expires.title }}</time>.</p>
