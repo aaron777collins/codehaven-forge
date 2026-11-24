@@ -19,7 +19,32 @@ use tokio_util::io::ReaderStream;
 #[derive(Clone, Debug)]
 pub struct FsBlobStore {
     root: PathBuf,
+    /// Bytes every write leaves free on the file system (ch-ctk.2). Zero checks nothing.
+    min_free: u64,
 }
+
+/// Bytes an ordinary process may still write on the file system that holds `path`.
+pub fn free_bytes(path: &Path) -> std::io::Result<u64> {
+    let st = rustix::fs::statvfs(path).map_err(std::io::Error::from)?;
+    Ok(st.f_bavail.saturating_mul(st.f_frsize))
+}
+
+/// `Err` when writing `more` bytes under `path` would leave less than `floor` free. A file
+/// system that cannot be measured counts as full, so the check fails closed.
+pub fn check_floor(path: &Path, floor: u64, more: u64) -> Result<()> {
+    if floor == 0 {
+        return Ok(());
+    }
+    let free = free_bytes(path).unwrap_or(0);
+    if free.saturating_sub(more) < floor {
+        tracing::warn!(path = %path.display(), free, floor, "refusing a write: the disk is nearly full");
+        return Err(Error::unavailable("The server is low on disk space, so it cannot store this now. Ask an admin to free some space."));
+    }
+    Ok(())
+}
+
+/// How often a stream being written checks the floor again.
+const FLOOR_EVERY: u64 = 8 * 1024 * 1024;
 
 /// Only lowercase hex of the right length reaches the filesystem, so a digest can never be
 /// a path.
@@ -29,7 +54,14 @@ fn valid_digest(s: &str) -> bool {
 
 impl FsBlobStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self { root: root.into(), min_free: 0 }
+    }
+
+    /// Keeps `bytes` free on the file system: a write that would go below it is refused, and a
+    /// stream stops part way when the disk fills up under it.
+    pub fn with_min_free(mut self, bytes: u64) -> Self {
+        self.min_free = bytes;
+        self
     }
 
     pub fn root(&self) -> &Path {
@@ -55,16 +87,24 @@ impl BlobStore for FsBlobStore {
     async fn put_stream(&self, mut body: BoxStream<'static, std::io::Result<Bytes>>, max_bytes: u64) -> Result<BlobRef> {
         let tmp_dir = self.root.join("tmp");
         tokio::fs::create_dir_all(&tmp_dir).await.map_err(Error::internal)?;
+        check_floor(&tmp_dir, self.min_free, 0)?;
         let tmp = tmp_dir.join(uuid::Uuid::new_v4().to_string());
         let mut file = tokio::fs::File::create(&tmp).await.map_err(Error::internal)?;
         let mut hasher = Sha256::new();
         let mut size: u64 = 0;
+        let mut checked: u64 = 0;
         let result: Result<()> = async {
             while let Some(chunk) = body.next().await {
                 let chunk = chunk.map_err(Error::internal)?;
                 size += chunk.len() as u64;
                 if size > max_bytes {
                     return Err(Error::invalid("Blob", "size", format!("larger than the {max_bytes} byte limit")));
+                }
+                // Several uploads at once each see the same free space, so each checks again as
+                // it grows instead of trusting one look at the start.
+                if size - checked >= FLOOR_EVERY {
+                    check_floor(&tmp_dir, self.min_free, chunk.len() as u64)?;
+                    checked = size;
                 }
                 hasher.update(&chunk);
                 file.write_all(&chunk).await.map_err(Error::internal)?;
@@ -182,6 +222,22 @@ mod tests {
     async fn read_all(s: &FsBlobStore, sha: &str) -> Vec<u8> {
         let chunks: Vec<Bytes> = s.get_stream(sha).await.unwrap().try_collect().await.unwrap();
         chunks.concat()
+    }
+
+    #[tokio::test]
+    async fn a_write_below_the_free_space_floor_is_refused_and_leaves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        // A floor no disk can meet.
+        let s = FsBlobStore::new(dir.path()).with_min_free(u64::MAX / 2);
+        s.init().await.unwrap();
+        let e = s.put_bytes(Bytes::from_static(b"abc")).await.unwrap_err();
+        assert!(matches!(e, Error::Unavailable(ref m) if m.contains("low on disk space")), "{e:?}");
+        assert_eq!(std::fs::read_dir(dir.path().join("tmp")).unwrap().count(), 0, "no temp file is left behind");
+        // The floor is checked again while a stream grows.
+        let ok = FsBlobStore::new(dir.path()).with_min_free(1);
+        assert!(ok.put_bytes(Bytes::from_static(b"abc")).await.is_ok());
+        assert!(check_floor(dir.path(), u64::MAX / 2, 0).is_err());
+        assert!(check_floor(dir.path(), 0, u64::MAX).is_ok(), "zero checks nothing");
     }
 
     #[tokio::test]

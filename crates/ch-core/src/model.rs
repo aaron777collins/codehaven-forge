@@ -197,7 +197,7 @@ pub struct AccessToken {
 }
 
 /// What an SSH fingerprint resolves to.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SshIdentity {
     User(UserId),
     /// A deploy key, bound to one repository.
@@ -525,6 +525,11 @@ pub struct MergeRequest {
     /// passed no merge gate, so branch protection treats it as a direct push (ch-jnm).
     #[serde(default)]
     pub update_branch: bool,
+    /// The head commit the merge gate passed and the merger saw. When set, exactly this commit is
+    /// merged, and a head branch that has moved on since refuses the merge, so a push in between
+    /// can never land unreviewed (ch-oz8, ch-m2y).
+    #[serde(default)]
+    pub expected_head_sha: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

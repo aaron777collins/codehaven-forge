@@ -147,16 +147,37 @@ async fn head_moved(
         let built_on = if origin_known { built_on.clone() } else { None };
         let mut tx = core.db().begin().await?;
         Core::add_event(&mut tx, issue.id, pusher, "head_ref_updated", json!({ "before": old_head, "after": fresh.head_sha })).await?;
-        if (app.is_some() || !origin_known) && pull.auto_merge_method.is_some() {
-            // New code from a connected app, or from nobody that can be named, is not what the
-            // person approved for auto-merge. It is cleared before anything can try to merge,
-            // and the timeline says so.
-            sqlx::query("UPDATE pull_requests SET auto_merge_method = NULL, auto_merge_by = NULL WHERE issue_id = $1")
-                .bind(issue.id)
-                .execute(&mut *tx)
-                .await?;
-            let reason = if origin_known { "a connected app pushed to this branch" } else { "it is not known who pushed to this branch" };
-            Core::add_event(&mut tx, issue.id, pusher, "auto_merge_disabled", json!({ "reason": reason })).await?;
+        if pull.auto_merge_method.is_some() {
+            // New code from a connected app, from nobody that can be named, or from someone
+            // without write access on the base (a fork's owner, say) is not what the person
+            // approved for auto-merge. It is cleared before anything can try to merge, and the
+            // timeline says so. A writer's push keeps it armed, for the new head (ch-m2y).
+            let writer = match pusher {
+                Some(u) if origin_known && app.is_none() => {
+                    core.permission(&crate::util::as_user(u), issue.repo_id).await? >= ch_core::Permission::Write
+                }
+                _ => false,
+            };
+            if writer {
+                sqlx::query("UPDATE pull_requests SET auto_merge_head_sha = $2 WHERE issue_id = $1")
+                    .bind(issue.id)
+                    .bind(&fresh.head_sha)
+                    .execute(&mut *tx)
+                    .await?;
+            } else {
+                sqlx::query("UPDATE pull_requests SET auto_merge_method = NULL, auto_merge_by = NULL, auto_merge_head_sha = NULL WHERE issue_id = $1")
+                    .bind(issue.id)
+                    .execute(&mut *tx)
+                    .await?;
+                let reason = if !origin_known {
+                    "it is not known who pushed to this branch"
+                } else if app.is_some() {
+                    "a connected app pushed to this branch"
+                } else {
+                    "someone without write access pushed to this branch"
+                };
+                Core::add_event(&mut tx, issue.id, pusher, "auto_merge_disabled", json!({ "reason": reason })).await?;
+            }
         }
         Core::touch(&mut tx, issue.id).await?;
         core.d

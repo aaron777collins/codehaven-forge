@@ -51,6 +51,22 @@ pub struct Guard {
     api: Quota,
 }
 
+/// The per-address budget for signed-out requests the gate turns away. A rejection never reaches
+/// the guard, so without this a stranger could send rejected requests without limit (ch-ulq).
+/// The same size as the budget for the ones it lets through.
+pub struct SignedOutRejections(Limiter);
+
+impl SignedOutRejections {
+    pub fn new(config: &Config) -> Self {
+        Self(Limiter::new(config.public_access.requests_per_minute, config.public_access.burst))
+    }
+
+    /// `Err(seconds)` when this address has had its share of rejections for now.
+    pub fn hit(&self, ip: IpAddr) -> Result<(), u64> {
+        self.0.hit(&access::address_key(ip))
+    }
+}
+
 impl Guard {
     pub fn new(config: &Config) -> Self {
         // The CSRF key is derived from the master key file so it survives restarts. If the

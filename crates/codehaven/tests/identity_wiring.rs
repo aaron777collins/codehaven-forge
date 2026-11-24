@@ -143,7 +143,9 @@ async fn sessions_tokens_and_the_gate_agree(pool: PgPool) {
     let k =
         send(&h.app, Method::POST, "/api/v3/user/keys", &[("authorization", &bearer), ("content-type", "application/json")], Some(&key))
             .await;
-    assert_eq!(k.status, StatusCode::CREATED, "{}", k.body);
+    // An SSH key acts as the whole account in Git, so a token needs `user`, `repo` and `workflow`
+    // to add one (ch-fwm, ch-s7r). This one has only `repo`.
+    assert_eq!(k.status, StatusCode::FORBIDDEN, "{}", k.body);
     // A token cannot mint tokens, and never reaches the site admin routes.
     let t2 = send(
         &h.app,

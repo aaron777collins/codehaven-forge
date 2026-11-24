@@ -6,12 +6,14 @@
 //! compare-and-swap `git update-ref`. So permissions, protection, events and the audit trail
 //! are identical wherever a change came from.
 
+use crate::command::GitCommand;
 use crate::core::{GitCore, ZERO_SHA, audit_action};
 use crate::hooks::{PushCtx, RefUpdate};
 use crate::protect::{Origin, UpdateKind, check_branch_update};
 use ch_core::audit::Outcome;
 use ch_core::model::{ClientInfo, Repo};
 use ch_core::{Actor, DomainEvent, Error, Permission, RepoId, Result};
+use std::path::Path;
 
 /// Refs people may create, move and delete. Everything else (`refs/pull/*`, `refs/ch/*`) is
 /// written only by the server.
@@ -29,10 +31,14 @@ pub(crate) fn kind_of(u: &RefUpdate) -> UpdateKind {
     }
 }
 
-/// Decides a push. `Err` is the text git shows, one problem per line.
-pub async fn authorize(core: &GitCore, ctx: &PushCtx, updates: &[RefUpdate]) -> std::result::Result<(), String> {
+/// Decides a push. `Err` is the text git shows, one problem per line. `quarantine` is where a
+/// client's push keeps its new objects until this says yes: a checked directory inside the
+/// repository's objects (see `GitCore::quarantine_dir`), or `None` when the objects are already
+/// in the repository, as for a change the server makes.
+pub async fn authorize(core: &GitCore, ctx: &PushCtx, updates: &[RefUpdate], quarantine: Option<&Path>) -> std::result::Result<(), String> {
     let repo = core.repo_row(ctx.repo).await.map_err(|_| "This repository no longer exists.".to_string())?;
-    match check(core, ctx, &repo, updates).await {
+    let objects = Objects { repo: repo.id, quarantine };
+    match check(core, ctx, &repo, updates, objects).await {
         Ok(()) => Ok(()),
         Err(msg) => {
             core.audit_standalone(
@@ -49,7 +55,7 @@ pub async fn authorize(core: &GitCore, ctx: &PushCtx, updates: &[RefUpdate]) -> 
     }
 }
 
-async fn check(core: &GitCore, ctx: &PushCtx, repo: &Repo, updates: &[RefUpdate]) -> std::result::Result<(), String> {
+async fn check(core: &GitCore, ctx: &PushCtx, repo: &Repo, updates: &[RefUpdate], objects: Objects<'_>) -> std::result::Result<(), String> {
     if repo.archived {
         return Err("This repository is archived and read-only.".into());
     }
@@ -76,9 +82,19 @@ async fn check(core: &GitCore, ctx: &PushCtx, repo: &Repo, updates: &[RefUpdate]
             continue;
         }
         if let Actor::App { grant, .. } = &ctx.actor
-            && let Err(msg) = app_ref_rules(core, repo, grant, u).await
+            && let Err(msg) = app_ref_rules(core, repo, grant, u, objects).await
         {
             problems.push(msg);
+            continue;
+        }
+        // A personal access token changes workflow files only with the `workflow` scope (ch-s7r).
+        if let Actor::Token { scopes, .. } = &ctx.actor
+            && !scopes.has("workflow")
+            && u.new != ZERO_SHA
+            && (u.name.starts_with("refs/heads/") || u.name.starts_with("refs/tags/"))
+            && let Err(dir) = workflow_dirs_unchanged(core, u, objects).await
+        {
+            problems.push(format!("This changes {dir}, which runs as CI. A token needs the workflow scope to do that."));
             continue;
         }
         if let Some(branch) = u.name.strip_prefix("refs/heads/")
@@ -97,7 +113,13 @@ const WORKFLOW_DIRS: [&str; 2] = [".codehaven/workflows", ".github/workflows"];
 
 /// What a connected app may do to a ref. Only branches, never a deletion, and no change to the
 /// workflow directories without the `workflows` permission.
-async fn app_ref_rules(core: &GitCore, repo: &Repo, grant: &ch_core::AppGrant, u: &RefUpdate) -> std::result::Result<(), String> {
+async fn app_ref_rules(
+    core: &GitCore,
+    repo: &Repo,
+    grant: &ch_core::AppGrant,
+    u: &RefUpdate,
+    objects: Objects<'_>,
+) -> std::result::Result<(), String> {
     if !u.name.starts_with("refs/heads/") {
         return Err("A connected app can change branches only, not tags or other references.".into());
     }
@@ -118,47 +140,87 @@ async fn app_ref_rules(core: &GitCore, repo: &Repo, grant: &ch_core::AppGrant, u
             return Err("This repository runs scheduled workflows from its default branch, so a connection without workflows access cannot change that branch. Use another branch and a pull request, or give the connection workflows access.".into());
         }
     }
-    // What the new tip is compared with: the old tip, or for a new branch the commit it grows
-    // from. A new branch may only start from a commit that already exists on a branch or tag.
+    workflow_dirs_unchanged(core, u, objects).await.map_err(|dir| {
+        format!("This changes {dir}, which runs as CI. A connection needs the workflows permission on this repository to do that.")
+    })
+}
+
+/// The objects a push check reads: the repository's own, plus the pushed ones still in quarantine.
+#[derive(Clone, Copy)]
+struct Objects<'a> {
+    repo: RepoId,
+    quarantine: Option<&'a Path>,
+}
+
+impl Objects<'_> {
+    /// A git command that sees the pushed objects as well as the repository's. git does the same
+    /// for its own hooks: the quarantine is the object directory and the repository's objects
+    /// (with any `alternates` they have) come after it. Nothing is written.
+    fn git(&self, core: &GitCore) -> GitCommand {
+        let cmd = core.git(self.repo);
+        match self.quarantine {
+            Some(q) => cmd
+                .env("GIT_OBJECT_DIRECTORY", q.to_string_lossy())
+                .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", core.store.repo_path(self.repo).join("objects").to_string_lossy()),
+            None => cmd,
+        }
+    }
+
+    /// The output of a git command that must succeed, as text.
+    async fn read(&self, core: &GitCore, args: &[&str]) -> std::result::Result<String, ()> {
+        let out = core.exec_any(self.git(core).args(args)).await.map_err(|_| ())?;
+        if out.code == 0 { Ok(out.stdout_str()) } else { Err(()) }
+    }
+
+    /// The object id at `dir` in `commit`, or `None` when there is nothing there. A tree, a
+    /// file or a symlink each have their own id, so any replacement shows as a difference.
+    async fn dir_id(&self, core: &GitCore, commit: &str, dir: &str) -> std::result::Result<Option<String>, ()> {
+        let out =
+            core.exec_any(self.git(core).args(["rev-parse", "--verify", "--quiet", &format!("{commit}:{dir}")])).await.map_err(|_| ())?;
+        Ok(if out.code == 0 { Some(out.stdout_str()) } else { None })
+    }
+}
+
+/// `Err(dir)` when the update changes a workflow directory. The new tip is compared with the old
+/// tip, or for a new ref with the commit it grows from: the nearest first-parent ancestor that a
+/// branch or tag already reaches, or nothing for a history that shares none. Anything git
+/// cannot read, such as a pushed commit it cannot see, counts as a change.
+async fn workflow_dirs_unchanged(core: &GitCore, u: &RefUpdate, objects: Objects<'_>) -> std::result::Result<(), String> {
+    let unreadable = |_| WORKFLOW_DIRS[0].to_string();
+    // Both ends are object ids by now. Anything else is not passed to git at all.
+    let id = |s: &str| (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit());
+    if !id(&u.new) || !id(&u.old) {
+        return Err(unreadable(()));
+    }
+    // A tag may name a tag object: what runs is the commit under it.
+    let peel = |sha: &str| format!("{sha}^{{commit}}");
+    let new = objects.read(core, &["rev-parse", "--verify", "--quiet", &peel(&u.new)]).await.map_err(unreadable)?;
     let baseline: Option<String> = if u.old != ZERO_SHA {
-        Some(u.old.clone())
-    } else if core.read_reachable(repo.id, &u.new).await.map_err(|e| e.to_string())? {
-        Some(u.new.clone())
+        Some(objects.read(core, &["rev-parse", "--verify", "--quiet", &peel(&u.old)]).await.map_err(unreadable)?)
     } else {
-        let parents =
-            core.exec_any(core.git(repo.id).args(["rev-list", "--parents", "-n", "1", &u.new])).await.map_err(|e| e.to_string())?;
-        let first = parents.stdout_str();
-        let mut it = first.split_whitespace();
-        let _ = it.next();
-        let parent = it.next().map(str::to_string);
-        match parent {
-            Some(p) if core.read_reachable(repo.id, &p).await.map_err(|e| e.to_string())? => Some(p),
-            // A history with no existing parent is a first commit: compared with nothing.
-            _ => None,
+        // The commits only this ref has, along its first parents, newest first. None means the
+        // tip is already on a branch or tag.
+        let fresh = objects.read(core, &["rev-list", "--first-parent", &new, "--not", "--branches", "--tags"]).await.map_err(unreadable)?;
+        match fresh.lines().last() {
+            None => Some(new.clone()),
+            Some(oldest) => {
+                let line = objects.read(core, &["rev-list", "--parents", "-n", "1", oldest]).await.map_err(unreadable)?;
+                // A first commit, or one whose parent is new too, is compared with nothing.
+                line.split_whitespace().nth(1).map(str::to_string)
+            }
         }
     };
     for dir in WORKFLOW_DIRS {
-        let now = core.workflow_dir_id(repo.id, &u.new, dir).await.map_err(|e| e.to_string())?;
+        let now = objects.dir_id(core, &new, dir).await.map_err(|_| dir.to_string())?;
         let before = match &baseline {
-            Some(b) => core.workflow_dir_id(repo.id, b, dir).await.map_err(|e| e.to_string())?,
+            Some(b) => objects.dir_id(core, b, dir).await.map_err(|_| dir.to_string())?,
             None => None,
         };
         if now != before {
-            return Err(format!(
-                "This changes {dir}, which runs as CI. A connection needs the workflows permission on this repository to do that."
-            ));
+            return Err(dir.to_string());
         }
     }
     Ok(())
-}
-
-impl GitCore {
-    /// The object id at `dir` in `commit`, or `None` when there is nothing there. A tree, a
-    /// file or a symlink each have their own id, so any replacement shows as a difference.
-    pub(crate) async fn workflow_dir_id(&self, repo: RepoId, commit: &str, dir: &str) -> Result<Option<String>> {
-        let out = self.exec_any(self.git(repo).args(["rev-parse", "--verify", "--quiet", &format!("{commit}:{dir}")])).await?;
-        Ok(if out.code == 0 { Some(out.stdout_str()) } else { None })
-    }
 }
 
 /// Records what a push changed: one transaction for the repository row and the events.
@@ -293,7 +355,7 @@ impl GitCore {
             server_built: change.server_built,
         };
         // `require` has already run for the caller, and archived is checked in `check`.
-        if let Err(msg) = authorize(self, &ctx, std::slice::from_ref(&update)).await {
+        if let Err(msg) = authorize(self, &ctx, std::slice::from_ref(&update), None).await {
             return Err(Error::forbidden(msg));
         }
         // The ref move and its push event finish together in their own task. If the request

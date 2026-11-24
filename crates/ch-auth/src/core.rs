@@ -230,6 +230,15 @@ pub fn acting_user(actor: &Actor, scope: Option<&str>) -> Result<UserId> {
     }
 }
 
+/// A token reaches account data (its tokens, its emails) only with the `user` scope. Any other
+/// caller is judged by its own rules.
+pub fn need_user_scope(actor: &Actor) -> Result<()> {
+    match actor {
+        Actor::Token { scopes, .. } if !scopes.has("user") => Err(Error::forbidden("This token needs the user scope")),
+        _ => Ok(()),
+    }
+}
+
 /// `admin:org` includes `read:org`.
 pub fn token_has_scope(scopes: &ch_core::Scopes, scope: &str) -> bool {
     scopes.has(scope) || (scope == "read:org" && scopes.has("admin:org"))

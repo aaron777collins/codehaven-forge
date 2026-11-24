@@ -395,8 +395,11 @@ async fn losing_access_hides_the_inbox_rows(pool: PgPool) {
     let (_, ev) = w.opened(1, w.alice, "Confidential", "x").await;
     w.fan.process(&ev).await.unwrap();
     assert_eq!(w.inbox(w.bob).await.len(), 1);
+    assert_eq!(w.c.state.notifications.unread_count(&user(w.bob)).await.unwrap(), 1);
     sqlx::query("DELETE FROM repo_collaborators WHERE user_id = $1").bind(w.bob.0).execute(&w.c.pool).await.unwrap();
     assert!(w.inbox(w.bob).await.is_empty(), "a title must not outlive the access to read it");
+    // The count follows the same rule, so it never hints at a thread the inbox hides (ch-uph).
+    assert_eq!(w.c.state.notifications.unread_count(&user(w.bob)).await.unwrap(), 0);
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]

@@ -718,7 +718,7 @@ before the admin pages open. The password never passes through a shell, its
 history or the process list. `--password-stdin` exists for the e2e harness.
 
 The same pattern covers recovery: `codehaven admin reset-password <user>` prints
-a fresh one-time link and signs that account out everywhere, and
+a fresh one-time link, signs that account out everywhere and revokes its access tokens, and
 `codehaven admin unlock <user>` clears a lockout. A self-service reset by email
 exists only when SMTP is configured, and its form says the same thing whether or
 not the address has an account.
@@ -1276,7 +1276,7 @@ codehaven admin create-user --username u --email e [--admin] [--password-stdin] 
 codehaven admin invite create [--email e] [--admin] [--org o --team t] [--expires 7d]   # prints the invite link
 codehaven admin invite list|revoke <id>
 codehaven admin runner-token [--repo o/r]
-codehaven admin reset-password u   # prints a 1 hour link, signs the account out everywhere
+codehaven admin reset-password u   # prints a 1 hour link, signs the account out everywhere, revokes its tokens
 codehaven admin unlock u
 codehaven admin suspend u
 codehaven hook pre-receive|post-receive   # called by git, not people

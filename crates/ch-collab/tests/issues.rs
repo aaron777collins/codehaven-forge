@@ -204,8 +204,10 @@ async fn assignees_need_to_see_the_repository_and_are_capped(pool: PgPool) {
     // Adding someone already there changes nothing and does not announce it twice.
     w.core.issue_add_assignees(&w.dave_a(), w.repo, n, vec![w.carol], &w.c()).await.unwrap();
     assert_eq!(w.count_events("issue_assigned").await, 2);
-    let who = w.core.assignable(&w.carol_a(), w.repo).await.unwrap();
+    let who = w.core.assignable(&w.dave_a(), w.repo).await.unwrap();
     assert_eq!(who.iter().map(|u| u.username.as_str()).collect::<Vec<_>>(), vec!["alice", "bob", "carol", "dave"]);
+    // Who has access is for Triage and up, not every reader (ch-uph).
+    assert!(matches!(w.core.assignable(&w.carol_a(), w.repo).await, Err(Error::Forbidden(_))));
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]

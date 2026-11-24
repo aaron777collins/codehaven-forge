@@ -36,6 +36,8 @@ pub struct PullRow {
     pub draft: bool,
     pub auto_merge_method: Option<String>,
     pub auto_merge_by: Option<UserId>,
+    /// The head auto-merge was armed for (ch-m2y). It merges this commit and no other.
+    pub auto_merge_head_sha: Option<String>,
     pub maintainer_can_modify: bool,
     pub commits_count: i32,
     pub additions: i32,
@@ -44,7 +46,7 @@ pub struct PullRow {
 }
 
 pub const PULL_COLS: &str = "p.issue_id, p.repo_id, p.head_repo_id, p.from_fork, p.head_ref, p.head_sha, p.base_ref, p.base_sha, p.merge_base, p.mergeable_state, \
-     p.merge_commit_sha, p.merge_method, p.merged_at, p.merged_by, p.draft, p.auto_merge_method, p.auto_merge_by, p.maintainer_can_modify, \
+     p.merge_commit_sha, p.merge_method, p.merged_at, p.merged_by, p.draft, p.auto_merge_method, p.auto_merge_by, p.auto_merge_head_sha, p.maintainer_can_modify, \
      p.commits_count, p.additions, p.deletions, p.changed_files";
 
 /// The repository that holds a pull request's head branch, in SQL. NULL once the fork it came
@@ -380,6 +382,12 @@ impl Core {
             if !granted && !self.owns_repo_account(actor, user, head_repo_id).await? {
                 return Err(Error::invalid("PullRequest", "head", OWN_FORK_ONLY));
             }
+            // Opening the pull request copies the head's commits into this repository, where
+            // everyone who reads it sees them. Reading someone's private fork is not enough to
+            // publish it (ch-g3r).
+            if !self.may_copy(user, head_repo_id, base_repo.id).await? {
+                return Err(Error::invalid("PullRequest", "head", NOT_YOURS_TO_SHARE));
+            }
         } else if !granted {
             return Err(Error::invalid("PullRequest", "head", OWN_FORK_ONLY));
         } else if head_ref == base_ref {
@@ -477,11 +485,49 @@ impl Core {
     }
 
     /// `refs/pull/<n>/head` in the base repository, so CI and `git fetch origin pull/1/head` work.
+    /// It follows the stored head, which only ever holds a commit the copy rule allowed (ch-cjp).
     pub async fn publish_pull_ref(&self, issue: &IssueRow, pull: &PullRow) {
         let name = format!("refs/pull/{}/head", issue.number);
-        if let Err(e) = self.d.git.create_ref(&Actor::System, pull.repo_id, &name, &pull.head_sha, &ClientInfo::local()).await {
+        let git = &self.d.git;
+        let r = match git.create_ref(&Actor::System, pull.repo_id, &name, &pull.head_sha, &ClientInfo::local()).await {
+            Err(Error::Validation(v)) if v.iter().any(|f| f.code == "already_exists") => {
+                git.update_ref(&Actor::System, pull.repo_id, &name, &pull.head_sha, true, &ClientInfo::local()).await
+            }
+            other => other,
+        };
+        if let Err(e) = r {
             tracing::debug!(repo = pull.repo_id.0, number = issue.number, error = %e, "could not write the pull ref");
         }
+    }
+
+    /// May commits of `source` be copied into `dest` because `user` asked (ch-g3r)? Yes with
+    /// write access on the source, which an owner of a fork has, or when the source is already
+    /// open to everyone who can read the destination. Reading a private fork is not enough.
+    pub(crate) async fn may_copy(&self, user: UserId, source: RepoId, dest: RepoId) -> Result<bool> {
+        if source == dest {
+            return Ok(true);
+        }
+        let perm = self.permission(&util::as_user(user), source).await?;
+        if perm >= Permission::Write {
+            return Ok(true);
+        }
+        if perm < Permission::Read {
+            return Ok(false);
+        }
+        // Private 0, internal 1, public 2 (1 while public repositories are switched off).
+        let ranks: Vec<(RepoId, i32)> = sqlx::query_as(
+            "SELECT r.id, CASE r.access_tier WHEN 'public' THEN CASE WHEN (SELECT allow_public_repos FROM visibility_settings) THEN 2 ELSE 1 END \
+                    WHEN 'internal' THEN 1 ELSE 0 END \
+             FROM repositories r WHERE r.id = ANY($1)",
+        )
+        .bind(vec![source.0, dest.0])
+        .fetch_all(self.db())
+        .await?;
+        let rank = |id: RepoId| ranks.iter().find(|(r, _)| *r == id).map(|(_, n)| *n);
+        Ok(match (rank(source), rank(dest)) {
+            (Some(s), Some(d)) => s >= 1 && s >= d,
+            _ => false,
+        })
     }
 
     // ------------------------------------------------------------ recompute
@@ -498,11 +544,24 @@ impl Core {
         let base_sha = self.d.git.resolve(pull.repo_id, &full_branch(&pull.base_ref)).await.unwrap_or_else(|_| pull.base_sha.clone());
         let (head_sha, state) = match pull.head_repo() {
             Some(head_repo) => {
-                let sha = self.d.git.resolve(head_repo, &full_branch(&pull.head_ref)).await.unwrap_or_else(|_| pull.head_sha.clone());
+                let live = self.d.git.resolve(head_repo, &full_branch(&pull.head_ref)).await.unwrap_or_else(|_| pull.head_sha.clone());
+                // A later head is copied into the base only while the author may still share it
+                // there (ch-g3r). Otherwise the pull request keeps the head it had.
+                let sha = if live != pull.head_sha && !self.may_copy(issue.author_id, head_repo, pull.repo_id).await.unwrap_or(false) {
+                    tracing::info!(
+                        repo = pull.repo_id.0,
+                        number = issue.number,
+                        "a new head is held: its author may no longer share it here"
+                    );
+                    pull.head_sha.clone()
+                } else {
+                    live
+                };
+                // The test merge reads exactly that commit, never the branch as it is now.
                 let state = self
                     .d
                     .git
-                    .test_merge(pull.repo_id, &full_branch(&pull.base_ref), head_repo, &full_branch(&pull.head_ref))
+                    .test_merge(pull.repo_id, &full_branch(&pull.base_ref), head_repo, &sha)
                     .await
                     .unwrap_or(MergeableState::Unknown);
                 (sha, state)
@@ -585,6 +644,16 @@ impl Core {
                     .execute(&mut *tx)
                     .await?;
                 Self::add_event(&mut tx, issue.id, Some(user), "base_ref_changed", json!({ "from": pull.base_ref, "to": base })).await?;
+                // The person who armed auto-merge chose a base. Only someone with write access
+                // may move it without turning auto-merge off (ch-m2y).
+                if pull.auto_merge_method.is_some() && perm < Permission::Write {
+                    sqlx::query("UPDATE pull_requests SET auto_merge_method = NULL, auto_merge_by = NULL, auto_merge_head_sha = NULL WHERE issue_id = $1")
+                        .bind(issue.id)
+                        .execute(&mut *tx)
+                        .await?;
+                    Self::add_event(&mut tx, issue.id, Some(user), "auto_merge_disabled", json!({ "reason": "the base branch changed" }))
+                        .await?;
+                }
                 base_changed = true;
             }
         }
@@ -755,6 +824,8 @@ pub fn stats_of(c: &Compare) -> PullStats {
 
 /// Why someone without access to a repository cannot open a pull request from a branch there.
 pub const OWN_FORK_ONLY: &str = "Without access to this repository, send the pull request from a fork you own";
+/// A pull request copies its head into the base, where everyone who reads the base sees it.
+pub const NOT_YOURS_TO_SHARE: &str = "You need write access to the head repository to share its commits here, or it must already be readable by everyone who can read this repository";
 
 impl Core {
     /// The repository belongs to `user`, or to an organization `user` owns.
@@ -831,6 +902,7 @@ mod tests {
             draft: false,
             auto_merge_method: None,
             auto_merge_by: None,
+            auto_merge_head_sha: None,
             maintainer_can_modify: false,
             commits_count: 0,
             additions: 0,

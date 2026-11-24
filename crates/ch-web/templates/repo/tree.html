@@ -15,7 +15,7 @@
       <div class="menu-panel clone-panel">
         <p class="menu-head">Clone</p>
         <div class="clone-row"><label class="small muted" for="clone-https">HTTPS</label><div class="copyfield"><input id="clone-https" type="text" readonly value="{{ clone.https }}"><button type="button" class="icon-btn" data-copy="{{ clone.https }}" aria-label="Copy HTTPS address"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div></div>
-        {% if let Some(s) = clone.ssh %}<div class="clone-row"><label class="small muted" for="clone-ssh">SSH</label><div class="copyfield"><input id="clone-ssh" type="text" readonly value="{{ s }}"><button type="button" class="icon-btn" data-copy="{{ s }}" aria-label="Copy SSH address"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div></div>{% endif %}
+        {% if let Some(s) = clone.ssh %}<div class="clone-row"><label class="small muted" for="clone-ssh">SSH{% if clone.ssh_tunnel %}, through a tunnel{% endif %}</label><div class="copyfield"><input id="clone-ssh" type="text" readonly value="{{ s }}"><button type="button" class="icon-btn" data-copy="{{ s }}" aria-label="Copy SSH address"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div></div>{% endif %}
         <p class="menu-sub">Download</p>
         <a class="pick" href="{{ archive_zip }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download ZIP</a>
         <a class="pick" href="{{ archive_tgz }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download tar.gz</a>

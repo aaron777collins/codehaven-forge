@@ -74,6 +74,12 @@ impl WebhooksService {
     }
 
     async fn authorize(&self, actor: &Actor, scope: Scope) -> Result<()> {
+        // A repository the caller cannot see is missing, whatever the token's scopes (ch-hcj).
+        if let Scope::Repo(r) = scope
+            && !actor.is_anonymous()
+        {
+            self.authz.require(actor, r, Permission::View).await?;
+        }
         match actor {
             Actor::Anonymous => return Err(Error::unauthorized()),
             Actor::Token { scopes, .. } => {

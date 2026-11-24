@@ -293,9 +293,11 @@ async fn labels_and_milestones_over_http(pool: PgPool) {
         StatusCode::UNPROCESSABLE_ENTITY
     );
     assert_eq!(api.call(&dave, "DELETE", &format!("{R}/milestones/2"), None).await.status, StatusCode::NO_CONTENT);
-    assert_eq!(api.get(&carol, &format!("{R}/assignees")).await.json().as_array().unwrap().len(), 4);
-    assert_eq!(api.get(&carol, &format!("{R}/assignees/bob")).await.status, StatusCode::NO_CONTENT);
-    assert_eq!(api.get(&carol, &format!("{R}/assignees/eve")).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(api.get(&dave, &format!("{R}/assignees")).await.json().as_array().unwrap().len(), 4);
+    assert_eq!(api.get(&dave, &format!("{R}/assignees/bob")).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(api.get(&dave, &format!("{R}/assignees/eve")).await.status, StatusCode::NOT_FOUND);
+    // A reader does not get the list of who has access (ch-uph).
+    assert_eq!(api.get(&carol, &format!("{R}/assignees")).await.status, StatusCode::FORBIDDEN);
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]

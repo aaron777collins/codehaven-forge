@@ -344,7 +344,7 @@ def step3():
 def step4():
     alice = S["alice"]
     tok = alice.csrf("/settings/tokens")
-    r = alice.req("POST", "/settings/tokens", form={"_csrf": tok, "name": "e2e", "scopes": ["repo", "user"], "expires_in_days": "30"})
+    r = alice.req("POST", "/settings/tokens", form={"_csrf": tok, "name": "e2e", "scopes": ["repo", "user", "workflow"], "expires_in_days": "30"})
     check(r.status == 200, f"token create: {r.status} {r.text[:300]}")
     m = re.search(r"chp_[A-Za-z0-9]{40}", r.text)
     check(m, "no token shown after creating it")
@@ -360,7 +360,7 @@ def step4():
     S["alice_key"] = kd
     # Bob's token too, for the later steps.
     bob = S["bob"]
-    r = bob.req("POST", "/settings/tokens", form={"_csrf": bob.csrf("/settings/tokens"), "name": "e2e", "scopes": ["repo", "user"], "expires_in_days": "30"})
+    r = bob.req("POST", "/settings/tokens", form={"_csrf": bob.csrf("/settings/tokens"), "name": "e2e", "scopes": ["repo", "user", "workflow"], "expires_in_days": "30"})
     S["bob_token"] = re.search(r"chp_[A-Za-z0-9]{40}", r.text).group(0)
     # An expired token is refused: delete-style check by making a token with a bad value.
     r = Client("10.9.2.3").api("GET", "/user", auth="chp_" + "a" * 40)
@@ -498,6 +498,31 @@ def step8():
     ssh2 = ssh.replace(S["alice_key"], kd)
     p = git(["ls-remote", f"ssh://git@{host}:{port}/alice/demo.git"], wd, env={"GIT_SSH_COMMAND": ssh2}, check_rc=False)
     check(p.returncode != 0, "an unknown key was accepted")
+    # A token without the workflow scope pushes ordinary commits to a repository that has
+    # workflows, and is refused only when the push changes a workflow file. It cannot add an SSH
+    # key either, since a push over SSH carries no scopes (ch-s7r).
+    a = S["alice"]
+    r = a.req("POST", "/settings/tokens", form={"_csrf": a.csrf("/settings/tokens"), "name": "no-workflow", "scopes": ["repo", "user"], "expires_in_days": "1"})
+    m = re.search(r"chp_[A-Za-z0-9]{40}", r.text)
+    check(r.status == 200 and m, f"token without workflow: {r.status}")
+    narrow = m.group(0)
+    r = Client("10.9.2.2").api("POST", "/user/keys", js={"title": "narrow", "key": open(kd + ".pub").read().strip()}, auth=narrow)
+    check(r.status == 403, f"a token without workflow added an SSH key: {r.status} {r.text[:200]}")
+    sd = os.path.join(WORK, "scope_clone")
+    env = gitenv("10.9.2.4")
+    git(["clone", "-q", http_url("alice", narrow, "alice/demo"), sd], WORK, env=env)
+    for name in ("one", "two"):
+        open(os.path.join(sd, f"{name}.txt"), "w").write(name + "\n")
+        git(["add", "-A"], sd)
+        git(["commit", "-q", "-m", name], sd)
+    p = git(["push", "origin", "HEAD:refs/heads/scope-plain"], sd, env=env, check_rc=False)
+    check(p.returncode == 0, f"a plain push without the workflow scope was refused: {(p.stdout + p.stderr)[-300:]}")
+    open(os.path.join(sd, ".codehaven/workflows/extra.yml"), "w").write(WORKFLOW)
+    git(["add", "-A"], sd)
+    git(["commit", "-q", "-m", "extra workflow"], sd)
+    p = git(["push", "origin", "HEAD:refs/heads/scope-wf"], sd, env=env, check_rc=False)
+    check(p.returncode != 0 and "workflow scope" in p.stderr, f"a workflow push without the workflow scope: {(p.stdout + p.stderr)[-300:]}")
+    git(["push", "-q", "origin", ":scope-plain"], sd, env=env)
 
 
 def step9():

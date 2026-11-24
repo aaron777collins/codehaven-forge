@@ -2,7 +2,7 @@
 {% import "components.html" as ui %}
 {% block settings_body %}
 <h1>SSH keys</h1>
-<p class="muted">Keys this account can git over SSH with. Clone your repositories from <code>{{ ssh_example }}</code>, with your own repository name.</p>
+{% if ssh_tunnel %}<p class="muted">Keys this account can git over SSH with. SSH on this server is reached through a tunnel: clone from <code>{{ ssh_example }}</code> with the tunnel open, with your own repository name.</p>{% else %}<p class="muted">Keys this account can git over SSH with. Clone your repositories from <code>{{ ssh_example }}</code>, with your own repository name.</p>{% endif %}
 {% if rows.is_empty() %}
 {% call ui::empty("No SSH keys", "Add one to clone and push over SSH without typing a password.") %}
 {% else %}

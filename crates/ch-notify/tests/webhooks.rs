@@ -508,11 +508,13 @@ async fn who_may_manage_hooks(pool: PgPool) {
     assert!(c.state.webhooks.list(&repo_token, Some(repo), None).await.is_ok());
     let read_token = ch_testkit::fixtures::token_actor(owner, &["repo:read"]);
     assert!(c.state.webhooks.create(&read_token, new_hook(repo, url, &["push"], None), &client()).await.is_err());
+    // A token with no repository scope cannot see the private repository at all, so it is
+    // missing to that token before any scope is mentioned (ch-hcj).
     let user_token = ch_testkit::fixtures::token_actor(owner, &["user"]);
-    assert!(matches!(
-        c.state.webhooks.create(&user_token, new_hook(repo, url, &["push"], None), &client()).await,
-        Err(Error::Forbidden(_))
-    ));
+    assert!(matches!(c.state.webhooks.create(&user_token, new_hook(repo, url, &["push"], None), &client()).await, Err(Error::NotFound)));
+    // One that can read it but lacks the hook scope is told so.
+    let read_only = ch_testkit::fixtures::token_actor(owner, &["repo:read"]);
+    assert!(matches!(c.state.webhooks.create(&read_only, new_hook(repo, url, &["push"], None), &client()).await, Err(Error::Forbidden(_))));
     // A runner or job credential is not a person.
     assert!(c.state.webhooks.list(&Actor::Runner { runner_id: ch_core::RunnerId(1) }, Some(repo), None).await.is_err());
     let _ = Permission::Admin;

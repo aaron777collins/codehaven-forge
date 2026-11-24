@@ -68,12 +68,17 @@ pub fn classify(uses: &str) -> Result<Builtin, String> {
         Some((p, v)) => (p, Some(v)),
         None => (u, None),
     };
-    let name = match path.split('/').collect::<Vec<_>>().as_slice() {
+    let lower = path.to_ascii_lowercase();
+    let parts = lower.split('/').collect::<Vec<_>>();
+    let name = match parts.as_slice() {
         [n] => *n,
-        [owner, n] if matches!(owner.to_ascii_lowercase().as_str(), "actions" | "codehaven") => *n,
+        [owner, n] if matches!(*owner, "actions" | "codehaven") => *n,
+        // The split cache actions, cache/save and cache/restore, are the same built-in as cache.
+        ["cache", "save" | "restore"] => "cache",
+        [owner, "cache", "save" | "restore"] if matches!(*owner, "actions" | "codehaven") => "cache",
         _ => "",
     };
-    match name.to_ascii_lowercase().as_str() {
+    match name {
         "checkout" => Ok(Builtin::Checkout),
         "cache" => Ok(Builtin::Cache),
         "upload-artifact" => Ok(Builtin::UploadArtifact),
@@ -109,5 +114,22 @@ mod tests {
         assert!(classify("./local").unwrap_err().contains("composite"));
         assert!(classify("docker://").is_err());
         assert!(classify("").is_err());
+    }
+
+    #[test]
+    fn cache_save_and_restore_are_the_cache_action() {
+        for s in [
+            "actions/cache/save@v4",
+            "actions/cache/restore@v4",
+            "Actions/Cache/Restore@v4",
+            "codehaven/cache/save@v1",
+            "cache/save",
+            "cache/restore@v4",
+        ] {
+            assert_eq!(classify(s).unwrap(), Builtin::Cache, "{s}");
+        }
+        for s in ["actions/cache/other@v4", "someone/cache/save@v1", "actions/cache/save/extra@v4", "cache/other"] {
+            assert!(classify(s).is_err(), "{s}");
+        }
     }
 }

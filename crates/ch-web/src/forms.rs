@@ -26,6 +26,11 @@ impl FormData {
         self.pairs.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str()).unwrap_or("")
     }
 
+    /// True when the form carries the field, even with an empty value.
+    pub fn has(&self, name: &str) -> bool {
+        self.pairs.iter().any(|(k, _)| k == name)
+    }
+
     /// The first value, trimmed, `None` when missing or blank.
     pub fn opt(&self, name: &str) -> Option<&str> {
         let v = self.get(name).trim();

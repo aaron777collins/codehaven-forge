@@ -172,8 +172,10 @@ async fn ssh_keys(pool: PgPool) {
     assert!(c.state.accounts.add_ssh_key(&me, bob, "for bob", ED2, &c1()).await.is_err());
     assert!(c.state.accounts.add_ssh_key(&Actor::Anonymous, id, "x", ED2, &c1()).await.is_err());
 
-    // Anyone signed in can read the public keys. Nobody else can remove them.
-    assert_eq!(c.state.accounts.list_ssh_keys(&bob_actor, id).await.unwrap().len(), 4);
+    // Only the person (or a site admin) sees the list with its titles and last use (ch-uph).
+    // Nobody else can remove them.
+    assert_eq!(c.state.accounts.list_ssh_keys(&me, id).await.unwrap().len(), 4);
+    assert!(matches!(c.state.accounts.list_ssh_keys(&bob_actor, id).await, Err(Error::NotFound)));
     assert!(c.state.accounts.list_ssh_keys(&Actor::Anonymous, id).await.is_err());
     assert!(c.state.accounts.delete_ssh_key(&bob_actor, k.id, &c1()).await.is_err());
     c.state.accounts.delete_ssh_key(&me, k.id, &c1()).await.unwrap();
@@ -181,6 +183,44 @@ async fn ssh_keys(pool: PgPool) {
     assert!(matches!(c.state.accounts.delete_ssh_key(&me, k.id, &c1()).await, Err(Error::NotFound)));
     assert_eq!(count_audit(&c, "ssh_key.added").await, 4);
     assert_eq!(count_audit(&c, "ssh_key.removed").await, 1);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_token_adds_a_key_only_with_the_power_the_key_gives(pool: PgPool) {
+    // ch-fwm: an SSH key acts as the whole account in Git, so a token with only `user` must not
+    // be able to turn itself into one. A push over SSH carries no token scopes, so the key also
+    // changes workflow files: the token needs `workflow` as well (ch-s7r).
+    let c = ctx(pool).await;
+    let id = make_user(&c, "alice", false).await;
+    let tok = |s: &[&str]| ch_testkit::fixtures::token_actor(id, s);
+    for scopes in [&["user"][..], &["repo"], &["repo:read", "user"], &["user", "repo"], &["repo", "workflow"], &[]] {
+        let r = c.state.accounts.add_ssh_key(&tok(scopes), id, "k", ED1, &c1()).await;
+        assert!(matches!(r, Err(Error::Forbidden(_))), "{scopes:?}: {r:?}");
+    }
+    assert!(c.state.accounts.add_ssh_key(&tok(&["user", "repo", "workflow"]), id, "k", ED1, &c1()).await.is_ok());
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn account_data_needs_the_user_scope_and_a_reset_ends_tokens(pool: PgPool) {
+    // ch-p9j: a `repo:read` token cannot list token names or read email addresses, and an admin's
+    // reset link revokes every token as well as every session.
+    let c = ctx(pool).await;
+    let id = make_user(&c, "alice", false).await;
+    let (_, me) = session(&c, "alice").await;
+    let (_, secret) = c.state.accounts.create_token(&me, id, "ci", vec!["repo:read".into()], 30, &c1()).await.unwrap();
+    let narrow = c.state.authn.from_bearer(&secret, &c1()).await.unwrap();
+    assert!(matches!(c.state.accounts.list_tokens(&narrow, id).await, Err(Error::Forbidden(_))));
+    assert!(matches!(c.state.directory.emails(&narrow, id).await, Err(Error::Forbidden(_))));
+    let user_tok = ch_testkit::fixtures::token_actor(id, &["user"]);
+    assert!(c.state.accounts.list_tokens(&user_tok, id).await.is_ok());
+    assert!(c.state.directory.emails(&user_tok, id).await.is_ok());
+
+    c.state.accounts.issue_link(&Actor::System, id, LinkPurpose::ResetPassword, 60, &c1()).await.unwrap();
+    assert!(c.state.authn.from_bearer(&secret, &c1()).await.is_err(), "a reset revokes the account's tokens");
+    // A first password link leaves them alone.
+    let (_, kept) = c.state.accounts.create_token(&me, id, "ci2", vec!["repo".into()], 30, &c1()).await.unwrap();
+    c.state.accounts.issue_link(&Actor::System, id, LinkPurpose::SetPassword, 60, &c1()).await.unwrap();
+    assert!(c.state.authn.from_bearer(&kept, &c1()).await.is_ok());
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]

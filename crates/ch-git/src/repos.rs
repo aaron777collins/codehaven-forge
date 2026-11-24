@@ -571,7 +571,8 @@ impl GitCore {
 
     pub(crate) async fn do_collaborators(&self, actor: &Actor, id: RepoId) -> Result<Vec<Collaborator>> {
         let repo = self.repo_row(id).await?;
-        self.require(actor, &repo, Permission::Read)
+        // Who has which access is for those who assign and manage, Triage and up (ch-uph).
+        self.require(actor, &repo, Permission::Triage)
             .await
             .or_else(|e| if repo.archived && matches!(e, Error::Forbidden(_)) { Ok(()) } else { Err(e) })?;
         let rows: Vec<(i64, String, String)> = sqlx::query_as(

@@ -83,6 +83,10 @@ struct Ident {
     caller: GitCaller,
     /// Who to greet in a message.
     label: String,
+    /// The key that signed this connection in. Every command looks it up again, so a key that
+    /// was deleted, or an account that was suspended, stops working on an open connection too.
+    fingerprint: String,
+    found: SshIdentity,
 }
 
 struct Conn {
@@ -147,11 +151,19 @@ impl Handler for Conn {
                     Ok(u) => u.username,
                     Err(_) => format!("user {id}"),
                 };
-                Ident { caller: GitCaller::Actor(Actor::User { id, is_admin: false, has_2fa: false, via: AuthVia::Ssh }), label }
+                Ident {
+                    caller: GitCaller::Actor(Actor::User { id, is_admin: false, has_2fa: false, via: AuthVia::Ssh }),
+                    label,
+                    fingerprint: fingerprint.clone(),
+                    found: SshIdentity::User(id),
+                }
             }
-            Some(SshIdentity::Deploy { repo_id, read_only }) => {
-                Ident { caller: GitCaller::Deploy { repo_id, read_only }, label: format!("deploy key for repository {repo_id}") }
-            }
+            Some(SshIdentity::Deploy { repo_id, read_only }) => Ident {
+                caller: GitCaller::Deploy { repo_id, read_only },
+                label: format!("deploy key for repository {repo_id}"),
+                fingerprint: fingerprint.clone(),
+                found: SshIdentity::Deploy { repo_id, read_only },
+            },
             None => {
                 tracing::info!(peer = ?self.peer, %fingerprint, "ssh key not recognised");
                 return Ok(Auth::reject());
@@ -230,6 +242,24 @@ impl Handler for Conn {
                 return Self::finish(session, channel, &msg, 1);
             }
         };
+        // The key and its account are checked again for every command, not only at sign-in:
+        // one connection can carry many commands (ch-4he).
+        match self.state.authn.from_ssh_key(&ident.fingerprint).await {
+            Ok(Some(now)) if now == ident.found => {}
+            Ok(_) => {
+                tracing::info!(peer = ?self.peer, fingerprint = %ident.fingerprint, "ssh key no longer valid on an open connection");
+                return Self::finish(session, channel, "ERROR: Permission denied.", 1);
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "ssh key lookup failed");
+                return Self::finish(
+                    session,
+                    channel,
+                    "ERROR: Codehaven hit a problem. Try again, and tell an admin if it keeps happening.",
+                    1,
+                );
+            }
+        }
         let Some(chan) = self.channels.remove(&channel) else { return Self::finish(session, channel, "ERROR: No such session.", 1) };
         let state = self.state.clone();
         let client = self.client();

@@ -1160,11 +1160,15 @@ impl Core {
                     }
                 }
                 Owner::Team { org, team } => {
+                    // Only a team of the organization that owns the repository is asked. Another
+                    // organization's team names never get onto the pull request (ch-uph).
                     let t: Option<TeamId> = sqlx::query_scalar(
-                        "SELECT t.id FROM teams t JOIN users o ON o.id = t.org_id WHERE o.username = $1::citext AND t.name = $2::citext",
+                        "SELECT t.id FROM teams t JOIN users o ON o.id = t.org_id \
+                         WHERE o.username = $1::citext AND t.name = $2::citext AND t.org_id = (SELECT owner_id FROM repositories WHERE id = $3)",
                     )
                     .bind(&org)
                     .bind(&team)
+                    .bind(issue.repo_id)
                     .fetch_optional(&mut *tx)
                     .await?;
                     if let Some(t) = t {

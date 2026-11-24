@@ -93,7 +93,7 @@ def account():
     S["secret"] = secret
     S["last_step"] = int(__import__("time").time() // 30)
     # A repository with a README and an issue, through the API with a token.
-    r = me.req("POST", "/settings/tokens", form={"_csrf": me.csrf("/settings/tokens"), "name": "setup", "scopes": ["repo", "user"], "expires_in_days": "1"})
+    r = me.req("POST", "/settings/tokens", form={"_csrf": me.csrf("/settings/tokens"), "name": "setup", "scopes": ["repo", "user", "workflow"], "expires_in_days": "1"})
     e.check(r.status == 200, f"token: {r.status} {r.text[:200]}")
     m = re.search(r"chp_[A-Za-z0-9]{40}", r.text)
     e.check(m, "no token shown after creating it")

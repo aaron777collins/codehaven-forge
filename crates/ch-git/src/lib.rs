@@ -90,6 +90,7 @@ pub fn build(b: &AppStateBuilder) -> Result<GitServices> {
         pushes: hooks::PushRegistry::default(),
         hook_socket: socket,
         procs: tokio::sync::Semaphore::new(48),
+        transfers: Arc::new(tokio::sync::Semaphore::new(crate::transport::MAX_TRANSFERS)),
         pushed: maintenance::Pushed::default(),
         diff_cache: moka::future::Cache::builder().max_capacity(256).time_to_live(std::time::Duration::from_secs(600)).build(),
         writes: tier::WriteGate::default(),

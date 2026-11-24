@@ -122,7 +122,7 @@ pub async fn run(state: &AppState, command: AdminCommand) -> Result<()> {
             state.accounts.sign_out_everywhere(&sys, user.id, &cli_client).await.map_err(describe)?;
             let link = state.accounts.issue_link(&sys, user.id, LinkPurpose::ResetPassword, 60, &cli_client).await.map_err(describe)?;
             println!(
-                "Signed {username} out everywhere. Set a new password here. The link works once and expires at {}:",
+                "Signed {username} out everywhere and revoked their access tokens. Set a new password here. The link works once and expires at {}:",
                 link.expires_at.format("%Y-%m-%d %H:%M UTC")
             );
             println!("{base}{}", link.path);

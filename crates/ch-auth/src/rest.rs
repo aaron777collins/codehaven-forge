@@ -599,6 +599,17 @@ struct PermBody {
     permission: Option<String>,
 }
 
+/// The repository a team route names, only when the caller can see it: one the caller cannot
+/// read is missing, before any scope or permission value is looked at (ch-x0b).
+async fn visible_repo(s: &AppState, actor: &Actor, owner: &str, repo: &str) -> Res<RepoId> {
+    let id = repo_id(s, owner, repo).await?;
+    match s.authz.require(actor, id, Permission::View).await {
+        Ok(()) => Ok(id),
+        Err(Error::Unauthorized(_)) => Err(Error::NotFound),
+        Err(e) => Err(e),
+    }
+}
+
 async fn repo_id(s: &AppState, owner: &str, repo: &str) -> Res<RepoId> {
     let id: Option<i64> = sqlx::query_scalar(
         "SELECT r.id FROM repositories r JOIN users u ON u.id = r.owner_id WHERE u.username = $1::citext AND r.name = $2::citext",
@@ -619,7 +630,7 @@ async fn set_team_repo(
 ) -> Res<StatusCode> {
     let o = s.orgs.get(&actor, &org).await?;
     let t = s.orgs.get_team(&actor, o.id, &slug).await?;
-    let rid = repo_id(&s, &owner, &repo).await?;
+    let rid = visible_repo(&s, &actor, &owner, &repo).await?;
     let perm = match body.and_then(|b| b.0.permission) {
         Some(p) => Permission::parse(&p).filter(|p| *p != Permission::None).ok_or_else(|| {
             Error::Validation(vec![FieldError::custom("Team", "permission", "Use pull, triage, push, maintain or admin.")])
@@ -639,7 +650,7 @@ async fn remove_team_repo(
 ) -> Res<StatusCode> {
     let o = s.orgs.get(&actor, &org).await?;
     let t = s.orgs.get_team(&actor, o.id, &slug).await?;
-    let rid = repo_id(&s, &owner, &repo).await?;
+    let rid = visible_repo(&s, &actor, &owner, &repo).await?;
     s.orgs.remove_team_repo(&actor, t.id, rid, &client).await?;
     Ok(StatusCode::NO_CONTENT)
 }

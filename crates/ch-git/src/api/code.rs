@@ -18,6 +18,8 @@ use serde_json::json;
 
 /// Largest file the contents API returns inline. Anything bigger is a download.
 const MAX_INLINE_BYTES: u64 = 10 * 1024 * 1024;
+/// The most a raw contents answer carries, the same as `/{owner}/{repo}/raw/...` on the web.
+pub const MAX_RAW_BYTES: u64 = 50_000_000;
 /// Largest file the contents API accepts, as base64 in JSON.
 const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 
@@ -163,7 +165,15 @@ async fn contents_at(api: Api, owner: String, name: String, path: String, q: Ref
     if size > MAX_INLINE_BYTES && !wants_raw(&headers) {
         return Err(Error::forbidden("This file is too large to return as JSON. Ask for the raw media type or download an archive."));
     }
-    let blob = api.core.read_blob(repo.id, &rev, &clean, if wants_raw(&headers) { u64::MAX / 2 } else { MAX_INLINE_BYTES }).await?;
+    if size > MAX_RAW_BYTES {
+        return Err(Error::forbidden("This file is too large to return here. Clone the repository or download an archive."));
+    }
+    // A raw answer is read into memory, so it has a ceiling too: the same one as a raw file on
+    // the web (ch-ulq). Larger files come from a clone or an archive.
+    let blob = api.core.read_blob(repo.id, &rev, &clean, if wants_raw(&headers) { MAX_RAW_BYTES } else { MAX_INLINE_BYTES }).await?;
+    if blob.truncated {
+        return Err(Error::forbidden("This file is too large to return here. Clone the repository or download an archive."));
+    }
     if wants_raw(&headers) {
         let mut r = Response::new(Body::from(blob.content));
         r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));

@@ -14,6 +14,9 @@ external_url = "https://code.example.com"
 # Peers allowed to set X-Forwarded-For and X-Forwarded-Proto: the network your reverse proxy reaches
 # the server from. Empty when nothing sits in front.
 trusted_proxies = []
+# Or the proxy's host name, such as its container name on a shared Docker network. Only the
+# addresses that name has are trusted, looked up again every 30 seconds.
+trusted_proxy_hosts = []
 request_timeout_secs = 60
 
 [database]
@@ -22,6 +25,9 @@ max_connections = 20
 
 [storage]
 data_dir = "/data"
+# GiB that uploads (artifacts, caches, release files, image layers) and pushes always leave free on
+# the data disk. A write that would go below it is refused, so the database keeps room to work.
+min_free_gib = 10
 
 [ssh]
 bind = "0.0.0.0:2222"

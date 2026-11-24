@@ -333,6 +333,7 @@ fn merge_req(b: &Branches, method: MergeMethod, expected: &str) -> MergeRequest 
         committer: sig("Maggie", 1_700_003_000),
         expected_base_sha: expected.into(),
         update_branch: false,
+        expected_head_sha: None,
     }
 }
 
@@ -575,6 +576,7 @@ async fn a_pull_request_from_a_fork_merges_into_the_root(pool: PgPool) {
                 committer: sig("Alice", 1_700_002_001),
                 expected_base_sha: base,
                 update_branch: false,
+                expected_head_sha: None,
             },
             &f.client(),
         )
@@ -692,4 +694,61 @@ async fn a_cancelled_commit_never_moves_a_branch_without_its_event(pool: PgPool)
             assert_eq!(pushes.last().unwrap()["after"], after);
         }
     }
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_merge_takes_the_head_it_was_given_or_none(pool: PgPool) {
+    // ch-oz8: the gate passed one head, then a push moved the branch. The merge must not take the
+    // unreviewed commit in its place.
+    let b = pr_setup(pool).await;
+    let base = b.f.branch_sha(&b.repo, "main").await;
+    let reviewed = b.f.branch_sha(&b.repo, "feature").await;
+    b.f.commit(&b.repo, b.alice, "feature", "unreviewed.txt", "x\n", "Pushed after review").await;
+    let req = MergeRequest { expected_head_sha: Some(reviewed.clone()), ..merge_req(&b, MergeMethod::Merge, &base) };
+    let r = b.f.state.git.merge(&b.f.actor(b.alice), req, &b.f.client()).await;
+    assert!(matches!(r, Err(Error::Conflict(_))), "{r:?}");
+    assert_eq!(b.f.branch_sha(&b.repo, "main").await, base, "nothing landed");
+    // With the head it really has, it merges.
+    let now = b.f.branch_sha(&b.repo, "feature").await;
+    let req = MergeRequest { expected_head_sha: Some(now), ..merge_req(&b, MergeMethod::Merge, &base) };
+    assert!(matches!(b.f.state.git.merge(&b.f.actor(b.alice), req, &b.f.client()).await.unwrap(), MergeOutcome::Merged { .. }));
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_person_never_copies_a_commit_in_from_another_repository(pool: PgPool) {
+    // ch-1c5: only the server copies across a fork network, for a pull request it checked. A ref
+    // made by a person names a commit the repository already has, even one the person can read
+    // elsewhere.
+    let (f, alice, _) = setup(pool).await;
+    let bob = f.user("bob").await;
+    let public = f.public_repo(alice, "proj").await;
+    let fork = f.state.repos.fork(&f.actor(bob), public.id, bob, &f.client()).await.unwrap();
+    f.commit(&fork, bob, "main", "only-in-fork.txt", "x\n", "Fork only").await;
+    let sha = f.branch_sha(&fork, "main").await;
+    let r = f.state.git.create_ref(&f.actor(alice), public.id, "refs/heads/from-fork", &sha, &f.client()).await;
+    assert!(matches!(r, Err(Error::Validation(_))), "{r:?}");
+    let r = f.state.git.update_ref(&f.actor(alice), public.id, "refs/heads/main", &sha, true, &f.client()).await;
+    assert!(r.is_err(), "{r:?}");
+    assert!(f.state.git.commit(public.id, &sha).await.is_err(), "the fork's commit was not copied in");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_token_changes_workflow_files_only_with_the_workflow_scope(pool: PgPool) {
+    // ch-s7r: the workflow scope is what lets a token change what runs as CI.
+    let (f, alice, repo) = setup(pool).await;
+    let git = &f.state.git;
+    let c = f.client();
+    let repo_only = ch_testkit::fixtures::token_actor(alice, &["repo"]);
+    let with_workflow = ch_testkit::fixtures::token_actor(alice, &["repo", "workflow"]);
+    for path in [".codehaven/workflows/ci.yml", ".github/workflows/ci.yml"] {
+        let r = git.commit_file_change(&repo_only, req(&repo, "main", vec![put(path, "name: ci\n")], "CI"), &c).await;
+        assert!(matches!(&r, Err(Error::Forbidden(m)) if m.contains("workflow scope")), "{path}: {r:?}");
+    }
+    git.commit_file_change(&repo_only, req(&repo, "main", vec![put("docs/a.md", "a\n")], "Docs"), &c).await.unwrap();
+    git.commit_file_change(&with_workflow, req(&repo, "main", vec![put(".codehaven/workflows/ci.yml", "name: ci\n")], "CI"), &c)
+        .await
+        .unwrap();
+    // A new branch that only points at what is already there changes nothing, so it is fine.
+    let sha = f.branch_sha(&repo, "main").await;
+    git.create_ref(&repo_only, repo.id, "refs/heads/copy", &sha, &c).await.unwrap();
 }

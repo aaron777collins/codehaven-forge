@@ -1158,7 +1158,8 @@ async fn repo_variables(
     Path((o, n)): Path<(String, String)>,
 ) -> Result<Json<dto::VariablesResponse>> {
     no_job_token(&actor)?;
-    let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
+    // Values are settings: Admin, as on the settings page (ch-uph).
+    let repo = repo_for(&state, &actor, &o, &n, Permission::Admin).await?;
     Ok(variables_response(secrets::list_variables(&Ctx::from_state(&state), Scope::Repo(repo.id.0)).await?))
 }
 
@@ -1168,7 +1169,7 @@ async fn repo_variable(
     Path((o, n, name)): Path<(String, String, String)>,
 ) -> Result<Json<dto::Variable>> {
     no_job_token(&actor)?;
-    let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
+    let repo = repo_for(&state, &actor, &o, &n, Permission::Admin).await?;
     let rows = secrets::list_variables(&Ctx::from_state(&state), Scope::Repo(repo.id.0)).await?;
     let (name, value, t) = rows.into_iter().find(|r| r.0 == name).ok_or(Error::NotFound)?;
     Ok(Json(dto::Variable { name, value, created_at: t, updated_at: t }))

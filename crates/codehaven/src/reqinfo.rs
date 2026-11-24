@@ -24,7 +24,11 @@ pub const IDENTITY_HEADERS: &[&str] =
 
 pub async fn request_info(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let peer: IpAddr = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip()).unwrap_or(IpAddr::from([0, 0, 0, 0]));
-    let trusted = &state.config.http.trusted_proxies;
+    let trusted = match state.ext.get::<ch_core::net::ProxyHosts>() {
+        Some(h) => h.trusted(&state.config.http.trusted_proxies),
+        None => state.config.http.trusted_proxies.clone(),
+    };
+    let trusted = &trusted;
     let xff = req.headers().get_all("x-forwarded-for").iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join(",");
     let xfp = req.headers().get("x-forwarded-proto").and_then(|v| v.to_str().ok());
     let ip = net::client_ip(peer, if xff.is_empty() { None } else { Some(&xff) }, trusted);

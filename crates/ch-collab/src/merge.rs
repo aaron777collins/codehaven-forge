@@ -59,13 +59,18 @@ impl Core {
         Ok(out)
     }
 
-    async fn is_team_member(&self, user: UserId, org: &str, team: &str) -> Result<bool> {
+    /// Only a team of the organization that owns the repository counts as a code owner. A team
+    /// of any other organization is neither looked up nor shown (ch-uph).
+    async fn is_team_member(&self, repo: RepoId, user: UserId, org: &str, team: &str) -> Result<bool> {
         let n: Option<i32> = sqlx::query_scalar(
-            "SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id JOIN users o ON o.id = t.org_id WHERE o.username = $1::citext AND t.name = $2::citext AND tm.user_id = $3",
+            "SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id JOIN users o ON o.id = t.org_id \
+             WHERE o.username = $1::citext AND t.name = $2::citext AND tm.user_id = $3 \
+               AND t.org_id = (SELECT owner_id FROM repositories WHERE id = $4)",
         )
         .bind(org)
         .bind(team)
         .bind(user)
+        .bind(repo)
         .fetch_optional(self.db())
         .await?;
         Ok(n.is_some())
@@ -107,7 +112,7 @@ impl Core {
                     let Some(u) = approver_refs.get(a) else { continue };
                     ok = match o {
                         Owner::User(n) => n.eq_ignore_ascii_case(&u.username),
-                        Owner::Team { org, team } => self.is_team_member(*a, org, team).await?,
+                        Owner::Team { org, team } => self.is_team_member(pull.repo_id, *a, org, team).await?,
                         Owner::Email(_) => false,
                     };
                     if ok {
@@ -319,6 +324,8 @@ impl Core {
             committer,
             expected_base_sha: pull.base_sha.clone(),
             update_branch: false,
+            // The head the gate just passed, and nothing pushed after it (ch-oz8).
+            expected_head_sha: Some(pull.head_sha.clone()),
         };
         let outcome = self.d.git.merge(actor, req, client).await?;
         let sha = match outcome {
@@ -574,6 +581,7 @@ impl Core {
             committer: sig,
             expected_base_sha: head_sha.clone(),
             update_branch: true,
+            expected_head_sha: Some(base_sha.clone()),
         };
         match self.d.git.merge(actor, req, client).await? {
             MergeOutcome::Merged { sha } => {
@@ -584,6 +592,32 @@ impl Core {
                     .bind(&base_sha)
                     .execute(&mut *tx)
                     .await?;
+                // Armed auto-merge follows the new head only when the person updating it may
+                // write to the base; otherwise it is turned off (ch-m2y).
+                if pull.auto_merge_method.is_some() {
+                    if self.permission(actor, repo).await? >= Permission::Write {
+                        sqlx::query("UPDATE pull_requests SET auto_merge_head_sha = $2 WHERE issue_id = $1")
+                            .bind(issue.id)
+                            .bind(&sha)
+                            .execute(&mut *tx)
+                            .await?;
+                    } else {
+                        sqlx::query(
+                            "UPDATE pull_requests SET auto_merge_method = NULL, auto_merge_by = NULL, auto_merge_head_sha = NULL WHERE issue_id = $1",
+                        )
+                        .bind(issue.id)
+                        .execute(&mut *tx)
+                        .await?;
+                        Self::add_event(
+                            &mut tx,
+                            issue.id,
+                            Some(user),
+                            "auto_merge_disabled",
+                            json!({ "reason": "someone without write access updated the branch" }),
+                        )
+                        .await?;
+                    }
+                }
                 Self::add_event(
                     &mut tx,
                     issue.id,
@@ -663,12 +697,16 @@ impl Core {
                 {
                     return Err(Error::MergeBlocked(report.reasons));
                 }
-                sqlx::query("UPDATE pull_requests SET auto_merge_method = $2, auto_merge_by = $3 WHERE issue_id = $1")
-                    .bind(issue.id)
-                    .bind(method_str(m))
-                    .bind(user)
-                    .execute(&mut *tx)
-                    .await?;
+                // Armed for the head the person sees now, and no other (ch-m2y).
+                sqlx::query(
+                    "UPDATE pull_requests SET auto_merge_method = $2, auto_merge_by = $3, auto_merge_head_sha = $4 WHERE issue_id = $1",
+                )
+                .bind(issue.id)
+                .bind(method_str(m))
+                .bind(user)
+                .bind(&pull.head_sha)
+                .execute(&mut *tx)
+                .await?;
                 Self::add_event(&mut tx, issue.id, Some(user), "auto_merge_enabled", json!({ "method": method_str(m) })).await?;
             }
             None => {
@@ -714,11 +752,16 @@ impl Core {
                 .await?;
             return Ok(false);
         }
+        // Only the head it was armed for, or one a writer pushed since, ever merges (ch-m2y).
+        let armed = pull.auto_merge_head_sha.clone().unwrap_or_else(|| pull.head_sha.clone());
+        if armed != pull.head_sha {
+            return Ok(false);
+        }
         let report = self.gate_for(&issue, &pull, Some(method)).await?;
         if !report.mergeable {
             return Ok(false);
         }
-        let opts = MergeOptions { method: Some(method), expected_head_sha: Some(pull.head_sha.clone()), ..Default::default() };
+        let opts = MergeOptions { method: Some(method), expected_head_sha: Some(armed), ..Default::default() };
         match self.merge_pull(&Actor::System, by, issue_id, opts, &ClientInfo::local()).await {
             Ok(()) => Ok(true),
             Err(Error::MergeBlocked(_)) | Err(Error::Conflict(_)) => Ok(false),

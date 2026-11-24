@@ -277,6 +277,29 @@ ENVEOF
       bad 'B: with no CODEHAVEN_TAG the commit id is the tag'
     fi
 
+    # ch-2lq: after up.sh rolled a deploy back, later compose calls keep the rolled back tag and
+    # stay off migrations, and up.sh itself (CODEHAVEN_DEPLOYING) picks its own tag.
+    mkdir -p "$T/build/run"
+    printf 'test-keys-previous\n' > "$T/build/run/test-keys.rolled-back"
+    write_env "$T/r.env"
+    printf 'CODEHAVEN_BUILD_ROOT=%s\n' "$T/build" >> "$T/r.env"
+    compose_run "$T/r.env" config
+    if [ "$run_rc" = 0 ] && printf '%s' "$run_out" | grep -Fq "codehaven-server:test-keys-previous" \
+      && ! printf '%s' "$run_out" | grep -Fq -- "--migrate"; then
+      ok 'B: a rolled back deploy stays on its tag without migrating'
+    else
+      bad 'B: a rolled back deploy stays on its tag without migrating'
+    fi
+    printf 'CODEHAVEN_DEPLOYING=1\n' >> "$T/r.env"
+    compose_run "$T/r.env" config
+    if [ "$run_rc" = 0 ] && printf '%s' "$run_out" | grep -Fq "codehaven-server:test-keys" \
+      && ! printf '%s' "$run_out" | grep -Fq "codehaven-server:test-keys-previous"; then
+      ok 'B: up.sh is not pinned by the rollback mark'
+    else
+      bad 'B: up.sh is not pinned by the rollback mark'
+    fi
+    rm -rf "$T/build"
+
     # b_proxy <name> <proxy-value> <key>: the env with CODEHAVEN_PROXY=<proxy-value> and the key
     # removed must stop, and the message must name the key.
     b_proxy() {

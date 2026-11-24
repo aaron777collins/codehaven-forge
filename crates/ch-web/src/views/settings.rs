@@ -487,6 +487,7 @@ struct KeysPage {
     rows: Vec<KeyRow>,
     form: KeyForm,
     ssh_example: String,
+    ssh_tunnel: bool,
     errors: FieldErrors,
 }
 
@@ -506,8 +507,9 @@ async fn keys_page(ctx: &Ctx, form: KeyForm, errors: FieldErrors, status: Status
         .collect();
     let username = ctx.state.accounts.get_user(uid).await.map(|u| u.username).unwrap_or_default();
     let ssh_example = format!("git@{}:{}/repo.git", ctx.state.config.ssh.external, username);
+    let ssh_tunnel = ctx.state.config.ssh.tunnel_only();
     let c = ctx.chrome("SSH keys").await.nav("settings");
-    ctx.page_status(status, &KeysPage { c, section: "keys".into(), rows, form, ssh_example, errors })
+    ctx.page_status(status, &KeysPage { c, section: "keys".into(), rows, form, ssh_example, ssh_tunnel, errors })
 }
 
 pub async fn keys_get(ctx: Ctx) -> WebResult<Response> {

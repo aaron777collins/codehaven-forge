@@ -2,6 +2,7 @@
 {% block admin_body %}
 <h1>Password reset link</h1>
 {% if !username.is_empty() %}<p>For <strong>{{ username }}</strong>.</p>{% endif %}
+<p>They are signed out everywhere, and their access tokens and connected apps no longer work.</p>
 <p>Copy it now. You will not see it again.</p>
 <div class="copy-box"><code>{{ url }}</code><button type="button" class="btn small" data-copy="{{ url }}">Copy</button></div>
 <p>Valid for 1 hour, until <time datetime="{{ expires.iso }}" title="{{ expires.title }}">{{ expires.title }}</time>.</p>

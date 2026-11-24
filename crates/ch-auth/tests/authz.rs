@@ -185,3 +185,29 @@ async fn org_role_lookup(pool: PgPool) {
     assert_eq!(c.state.authz.org_role(&Actor::Anonymous, org.id).await.unwrap(), None);
     let _ = owner;
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_suspended_account_has_no_grant_anywhere(pool: PgPool) {
+    // ch-4he: whatever is still open for the account (an SSH connection, an armed auto-merge, a
+    // token) asks Authz, and Authz itself says no.
+    let c = ctx(pool).await;
+    let alice = c.env.user("alice").await;
+    let bob = c.env.user("bob").await;
+    let mine = c.env.repo(alice, "mine").await;
+    let shared = c.env.repo(alice, "shared").await;
+    let public = c.env.public_repo(alice, "pub").await;
+    c.env.collaborator(shared, bob, "write").await;
+    assert_eq!(c.state.authz.repo_permission(&user(bob), shared).await.unwrap(), Permission::Write);
+    sqlx::query("UPDATE users SET suspended_at = now() WHERE id = $1 OR id = $2")
+        .bind(alice.0)
+        .bind(bob.0)
+        .execute(&c.state.db)
+        .await
+        .unwrap();
+    for (who, repo) in [(alice, mine), (bob, shared), (alice, public)] {
+        assert_eq!(c.state.authz.repo_permission(&user(who), repo).await.unwrap(), Permission::None, "{who} on {repo}");
+        assert_eq!(c.state.authz.repo_permission(&token_actor(who, &["repo"]), repo).await.unwrap(), Permission::None);
+        assert!(!c.state.authz.has_grant(&user(who), repo).await.unwrap());
+    }
+    assert!(matches!(c.state.authz.require(&user(bob), shared, Permission::Read).await, Err(Error::NotFound)));
+}

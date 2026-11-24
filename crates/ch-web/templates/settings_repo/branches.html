@@ -29,6 +29,7 @@
     <label class="check"><input type="checkbox" name="block_force_push" value="1"{% if f.block_force_push %} checked{% endif %}> Block force push</label>
     <label class="check"><input type="checkbox" name="block_deletion" value="1"{% if f.block_deletion %} checked{% endif %}> Block deletion</label>
     <label class="check"><input type="checkbox" name="allow_direct_push" value="1"{% if f.allow_direct_push %} checked{% endif %}> Allow direct push without a pull request</label>
+    <p class="hint">A branch that changes only through pull requests cannot be deleted either. Allow direct push, or remove the rule, to delete it.</p>
   </fieldset>
   <div class="field">
     <label for="required_checks">Required checks</label>

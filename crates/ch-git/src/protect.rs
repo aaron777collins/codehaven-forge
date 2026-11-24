@@ -72,10 +72,18 @@ pub fn check_branch_update(
     if rules.is_empty() {
         return Ok(());
     }
+    let direct_ok = matches!(origin, Origin::PullRequestMerge | Origin::System) || rules.iter().all(|r| r.allow_direct_push);
     match kind {
         UpdateKind::Delete => {
             if rules.iter().any(|r| r.block_deletion) {
                 return Err(format!("Branch '{branch}' is protected and cannot be deleted."));
+            }
+            // Deleting a branch that takes changes only through pull requests, then pushing it
+            // again, would replace its contents with no review (ch-1gn).
+            if !direct_ok {
+                return Err(format!(
+                    "Branch '{branch}' is protected and changes only through pull requests, so it cannot be deleted. Remove its protection first."
+                ));
             }
         }
         UpdateKind::Update { forced: true } => {
@@ -85,7 +93,6 @@ pub fn check_branch_update(
         }
         UpdateKind::Update { forced: false } | UpdateKind::Create => {}
     }
-    let direct_ok = matches!(origin, Origin::PullRequestMerge | Origin::System) || rules.iter().all(|r| r.allow_direct_push);
     // Creating a branch is allowed: a pull request needs the branch to exist before it can
     // be opened. Only changing the contents of a protected branch needs a pull request.
     if !direct_ok && matches!(kind, UpdateKind::Update { .. }) {
@@ -183,6 +190,19 @@ mod tests {
         let e = check_branch_update(&[], "main", "main", UpdateKind::Delete, Origin::Push).unwrap_err();
         assert!(e.contains("default branch"), "{e}");
         assert!(check_branch_update(&[], "other", "main", UpdateKind::Delete, Origin::Push).is_ok());
+    }
+
+    #[test]
+    fn a_branch_that_needs_pull_requests_cannot_be_deleted_and_pushed_again() {
+        // ch-1gn: with "Block deletion" off, delete then push again would replace the contents.
+        let mut r = rule("release/*");
+        r.block_deletion = false;
+        let e = check_branch_update(&[r.clone()], "release/1", "main", UpdateKind::Delete, Origin::Push).unwrap_err();
+        assert!(e.contains("pull requests"), "{e}");
+        assert!(check_branch_update(&[r.clone()], "release/1", "main", UpdateKind::Delete, Origin::Web).is_err());
+        // When direct pushes are allowed anyway, deletion follows "Block deletion" alone.
+        r.allow_direct_push = true;
+        assert!(check_branch_update(&[r], "release/1", "main", UpdateKind::Delete, Origin::Push).is_ok());
     }
 
     #[test]

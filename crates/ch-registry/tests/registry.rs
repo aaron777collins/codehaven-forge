@@ -27,7 +27,9 @@ impl Authz for FakeAuthz {
     async fn repo_permission(&self, actor: &Actor, repo: RepoId) -> Result<Permission> {
         let (uid, cap) = match actor {
             Actor::User { id, .. } => (*id, Permission::Admin),
-            Actor::Token { user_id, .. } => (*user_id, Permission::Admin),
+            // As the real Authz does: a token is capped by its repository scopes, so a
+            // packages-only token has no repository permission at all.
+            Actor::Token { user_id, scopes, .. } => (*user_id, scopes.repo_cap()),
             _ => return Ok(Permission::None),
         };
         let row: Option<(i64, String)> =
@@ -727,4 +729,57 @@ async fn a_handler_reached_without_a_caller_fails_closed(pool: PgPool) {
         let r = c.request(m.parse().unwrap(), format!("http://{addr}{p}")).send().await.unwrap();
         assert_eq!(r.status(), 403, "{m} {p}");
     }
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn package_tokens_work_on_linked_images_and_deleting_the_repository_narrows(pool: PgPool) {
+    // ch-ctk.12: a packages scope gives package access on the repositories the person may use,
+    // with no `repo` scope. Deleting the repository leaves the image to its owner alone.
+    let (r, alice) = world(pool).await;
+    let bob = r.env.user("bob").await;
+    let carol = r.env.user("carol").await;
+    let org = r.env.org("crew").await;
+    for (u, role) in [(alice, "owner"), (carol, "member")] {
+        sqlx::query("INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, $3)")
+            .bind(org.0)
+            .bind(u.0)
+            .bind(role)
+            .execute(&r.env.pool)
+            .await
+            .unwrap();
+    }
+    let repo = r.env.repo(org, "app").await;
+    r.env.collaborator(repo, alice, "admin").await;
+    r.env.collaborator(repo, bob, "write").await;
+    r.push_image("crew/app", "latest", "pkg-alice", &[b"a"]).await;
+    let linked: (Option<i64>,) = sqlx::query_as("SELECT repo_id FROM packages WHERE name = 'app'").fetch_one(&r.env.pool).await.unwrap();
+    assert_eq!(linked.0, Some(repo.0), "linked on first push by a writer with a packages token");
+    r.push_image("crew/app", "v2", "pkg-bob", &[b"b"]).await;
+    assert_eq!(r.get("/v2/crew/app/manifests/latest", "pull-bob").await.status, 200, "read:packages pulls a linked private image");
+    let p = r.req(reqwest::Method::POST, "/v2/crew/app/blobs/uploads/", "pull-bob", vec![], None).await;
+    assert_eq!(p.status, 403, "read:packages never pushes");
+    // Carol is in the organization but has no access to the private repository.
+    assert_eq!(r.get("/v2/crew/app/manifests/latest", "pw-carol").await.code(), "NAME_UNKNOWN");
+    sqlx::query("DELETE FROM repositories WHERE id = $1").bind(repo.0).execute(&r.env.pool).await.unwrap();
+    assert_eq!(
+        r.get("/v2/crew/app/manifests/latest", "pw-carol").await.code(),
+        "NAME_UNKNOWN",
+        "an orphan does not open up to every member"
+    );
+    assert_eq!(r.get("/v2/crew/app/manifests/latest", "pull-bob").await.code(), "NAME_UNKNOWN");
+    assert_eq!(r.get("/v2/crew/app/manifests/latest", "pw-alice").await.status, 200, "the organization's owner keeps it");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_push_to_someone_elses_account_answers_like_a_hidden_image(pool: PgPool) {
+    // ch-x0b: an image you cannot read and one that does not exist give one answer to a push.
+    let (r, _alice) = world(pool).await;
+    r.env.user("bob").await;
+    r.push_image("alice/private", "latest", "pw-alice", &[b"l"]).await;
+    let hidden = r.req(reqwest::Method::POST, "/v2/alice/private/blobs/uploads/", "pw-bob", vec![], None).await;
+    let missing = r.req(reqwest::Method::POST, "/v2/alice/brand-new/blobs/uploads/", "pw-bob", vec![], None).await;
+    let no_owner = r.req(reqwest::Method::POST, "/v2/nobody/brand-new/blobs/uploads/", "pw-bob", vec![], None).await;
+    assert_eq!((hidden.status, hidden.code()), (404, "NAME_UNKNOWN".to_string()));
+    assert_eq!((missing.status, missing.body.clone()), (hidden.status, hidden.body.clone()));
+    assert_eq!((no_owner.status, no_owner.body), (hidden.status, hidden.body));
 }

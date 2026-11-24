@@ -542,8 +542,8 @@ impl GitCore {
             ArchiveFormat::Zip => "--format=zip",
             ArchiveFormat::TarGz => "--format=tar",
         };
-        let child = self.git(repo).args(["archive", fmt, &format!("--prefix={prefix}"), &sha]).spawn()?;
-        let reader = ChildStdout::new(child)?;
+        let child = self.git(repo).args(["archive", fmt, &format!("--prefix={prefix}"), &sha]).own_group().spawn()?;
+        let reader = ChildStdout::new(child)?.with_deadline(std::time::Duration::from_secs(ARCHIVE_DEADLINE_SECS));
         Ok(match format {
             ArchiveFormat::Zip => ReaderStream::new(reader).boxed(),
             ArchiveFormat::TarGz => ReaderStream::new(GzipEncoder::new(tokio::io::BufReader::new(reader))).boxed(),
@@ -551,22 +551,54 @@ impl GitCore {
     }
 }
 
+/// How long one archive download may take, signed in or not (ch-ulq). The gate has its own,
+/// shorter limit for signed-out downloads.
+const ARCHIVE_DEADLINE_SECS: u64 = 30 * 60;
+
 /// A child's stdout that kills the child when the reader is dropped, so a download the
-/// browser abandons does not leave `git archive` running.
+/// browser abandons does not leave `git archive` running. With a deadline, the child and
+/// everything it started are stopped at that time even if nobody reads, and the reader then
+/// fails, so a cut-off download never looks complete.
 pub(crate) struct ChildStdout {
     _child: tokio::process::Child,
     out: tokio::process::ChildStdout,
+    stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    watchdog: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl ChildStdout {
     pub(crate) fn new(mut child: tokio::process::Child) -> Result<Self> {
         let out = child.stdout.take().ok_or_else(|| Error::internal(anyhow::anyhow!("no stdout")))?;
-        Ok(Self { _child: child, out })
+        Ok(Self { _child: child, out, stopped: Default::default(), watchdog: None })
+    }
+
+    pub(crate) fn with_deadline(mut self, after: std::time::Duration) -> Self {
+        let pid = self._child.id();
+        let stopped = self.stopped.clone();
+        self.watchdog = Some(tokio::spawn(async move {
+            tokio::time::sleep(after).await;
+            stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+            tracing::warn!(?pid, "a git download ran past its deadline and was stopped");
+            crate::command::kill_group(pid);
+        }));
+        self
+    }
+}
+
+impl Drop for ChildStdout {
+    fn drop(&mut self) {
+        if let Some(w) = self.watchdog.take() {
+            w.abort();
+        }
+        crate::command::kill_group(self._child.id());
     }
 }
 
 impl AsyncRead for ChildStdout {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        if self.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            return Poll::Ready(Err(std::io::Error::other("the download ran past its deadline")));
+        }
         Pin::new(&mut self.out).poll_read(cx, buf)
     }
 }

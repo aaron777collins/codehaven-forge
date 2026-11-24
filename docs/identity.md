@@ -169,7 +169,7 @@ and the IPv6 equivalents (also when wrapped as `::ffff:a.b.c.d`, NAT64 or 6to4) 
 
 ```
 codehaven admin create-user --username alice --email alice@example.com --admin --can-run-ci   # prints a 1 hour set-password link
-codehaven admin reset-password <user>                                 # signs them out everywhere, prints a link
+codehaven admin reset-password <user>                                 # signs them out everywhere, revokes their tokens, prints a link
 codehaven admin unlock <user>                                         # clears a lockout
 codehaven admin suspend <user> | unsuspend <user>
 codehaven admin users                                                 # list accounts and their flags

@@ -188,6 +188,61 @@ async fn tokens_follow_their_scopes(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_pushed_token_needs_the_workflow_scope_only_to_change_workflow_files(pool: PgPool) {
+    // ch-s7r: the check runs in pre-receive, before git moves the pushed objects out of
+    // quarantine, so it must look at the commits being pushed. A repository that already has
+    // workflows takes ordinary pushes from a token without `workflow`, and refuses a workflow
+    // change on a new branch, a new tag or an existing branch.
+    let w = world(pool).await;
+    w.f.commit(&w.repo, w.alice, "main", ".codehaven/workflows/ci.yml", "name: ci\n", "CI").await;
+    let work = w.clone_as("alice", "tok-alice", "tok").await;
+    let refused = |out: &GitOut| !out.ok && out.stderr.contains("A token needs the workflow scope");
+
+    // An ordinary commit on top of main, then two more on a new branch.
+    w.c.write(&work, "plain.txt", "p\n");
+    let plain = w.c.commit_all(&work, "Plain").await;
+    let out = w.c.git_in(&work, &["push", "origin", "HEAD:main"]).await;
+    assert!(out.ok, "{}", out.stderr);
+    assert_eq!(w.f.branch_sha(&w.repo, "main").await, plain);
+    w.c.write(&work, "one.txt", "1\n");
+    w.c.commit_all(&work, "One").await;
+    w.c.write(&work, "two.txt", "2\n");
+    let two = w.c.commit_all(&work, "Two").await;
+    let out = w.c.git_in(&work, &["push", "origin", "HEAD:refs/heads/feature"]).await;
+    assert!(out.ok, "{}", out.stderr);
+    assert_eq!(w.f.branch_sha(&w.repo, "feature").await, two);
+    // An annotated tag on a commit the repository has.
+    w.c.git(&work, &["tag", "-a", "v1", "-m", "release", &plain]).await;
+    let out = w.c.git_in(&work, &["push", "origin", "v1"]).await;
+    assert!(out.ok, "{}", out.stderr);
+
+    // A new workflow file, behind an ordinary commit, on a new branch or a new tag.
+    w.c.write(&work, ".codehaven/workflows/evil.yml", "name: evil\n");
+    w.c.commit_all(&work, "Evil").await;
+    w.c.write(&work, "cover.txt", "c\n");
+    w.c.commit_all(&work, "Cover").await;
+    assert!(refused(&w.c.git_in(&work, &["push", "origin", "HEAD:refs/heads/evilbranch"]).await));
+    assert!(w.f.state.git.resolve(w.repo.id, "evilbranch").await.is_err());
+    w.c.git(&work, &["tag", "evil-light"]).await;
+    w.c.git(&work, &["tag", "-a", "evil-annotated", "-m", "x"]).await;
+    for tag in ["evil-light", "evil-annotated"] {
+        assert!(refused(&w.c.git_in(&work, &["push", "origin", tag]).await), "{tag}");
+        assert!(w.f.state.git.resolve(w.repo.id, &format!("refs/tags/{tag}")).await.is_err(), "{tag}");
+    }
+    // An edit to the existing workflow, on the branch that has it.
+    w.c.git(&work, &["reset", "-q", "--hard", &plain]).await;
+    w.c.write(&work, ".codehaven/workflows/ci.yml", "name: ci\non: push\n");
+    w.c.commit_all(&work, "Edit CI").await;
+    assert!(refused(&w.c.git_in(&work, &["push", "origin", "HEAD:main"]).await));
+    assert_eq!(w.f.branch_sha(&w.repo, "main").await, plain);
+
+    // The same pushes with the workflow scope go through.
+    w.c.git(&work, &["remote", "set-url", "origin", &w.url("alice", "wf-alice")]).await;
+    let out = w.c.git_in(&work, &["push", "origin", "HEAD:main", "evil-light:refs/heads/evilbranch"]).await;
+    assert!(out.ok, "{}", out.stderr);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
 async fn protected_branches_refuse_pushes_with_a_readable_reason(pool: PgPool) {
     let w = world(pool).await;
     w.f.state

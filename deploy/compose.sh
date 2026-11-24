@@ -9,6 +9,15 @@ dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$dir/deploy/lib/env.sh"
 ch_env_load
 ch_need CODEHAVEN_PROJECT CODEHAVEN_PROXY
+# After a deploy that up.sh rolled back, every later compose call (ci-up.sh, a restart by hand)
+# keeps running the rolled back images without migrating, until up.sh deploys a fixed version.
+# Without this the next routine `up` would bring back the tag in the env file, with migrations on.
+rolled_back="${CODEHAVEN_BUILD_ROOT:+$CODEHAVEN_BUILD_ROOT/run/$CODEHAVEN_PROJECT.rolled-back}"
+if [ -n "$rolled_back" ] && [ -f "$rolled_back" ] && [ -z "${CODEHAVEN_DEPLOYING:-}" ]; then
+  export CODEHAVEN_TAG CODEHAVEN_NO_MIGRATE=1
+  CODEHAVEN_TAG="$(head -n 1 "$rolled_back")"
+  echo "compose: the last deploy was rolled back, so this uses tag $CODEHAVEN_TAG without migrating. Deploy a fixed version with deploy/prod/up.sh." >&2
+fi
 # The image tag: CODEHAVEN_TAG, else the short commit id of this checkout. Never a fixed name.
 if [ -z "${CODEHAVEN_TAG:-}" ] && git -C "$dir" rev-parse --short=12 HEAD >/dev/null 2>&1; then
   export CODEHAVEN_TAG; CODEHAVEN_TAG="$(git -C "$dir" rev-parse --short=12 HEAD)"

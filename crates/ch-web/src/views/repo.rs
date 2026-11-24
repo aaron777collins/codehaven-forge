@@ -158,6 +158,7 @@ pub struct LastCommit {
 pub struct CloneBox {
     pub https: String,
     pub ssh: Option<String>,
+    pub ssh_tunnel: bool,
 }
 
 pub struct ReleaseChip {
@@ -227,7 +228,7 @@ async fn tree_view(ctx: Ctx, rc: RepoCtx, rest: &str, home: bool) -> WebResult<R
     let (rp, branches, tags) = resolve_ref(&ctx, &rc, rest).await?;
     let base = rc.base();
     if rc.repo.is_empty {
-        let clone = CloneBox { https: rc.clone_https(&ctx), ssh: rc.clone_ssh(&ctx) };
+        let clone = CloneBox { https: rc.clone_https(&ctx), ssh: rc.clone_ssh(&ctx), ssh_tunnel: ctx.state.config.ssh.tunnel_only() };
         let c = rc.chrome(&ctx, "", "code").await;
         return ctx.page(&EmptyPage { c, clone, branch: rc.repo.default_branch.clone(), can_write: rc.perm.allows(Permission::Write) });
     }
@@ -292,7 +293,7 @@ async fn tree_view(ctx: Ctx, rc: RepoCtx, rest: &str, home: bool) -> WebResult<R
         entries: sorted_entries(&rc, &rp, entries),
         last,
         readme,
-        clone: CloneBox { https: rc.clone_https(&ctx), ssh: rc.clone_ssh(&ctx) },
+        clone: CloneBox { https: rc.clone_https(&ctx), ssh: rc.clone_ssh(&ctx), ssh_tunnel: ctx.state.config.ssh.tunnel_only() },
         release,
         topics: rc.repo.topics.clone(),
         description: rc.repo.description.clone(),
@@ -1176,6 +1177,12 @@ async fn commit_change(ctx: Ctx, owner: String, name: String, rest: String, form
     if path.is_empty() || path.ends_with('/') || path.split('/').any(|s| s == ".." || s == "." || s.is_empty()) {
         let c = t.rc.chrome(&ctx, &title, "code").await;
         return again(&ctx, "Give the file a name, such as docs/notes.md.".into(), c);
+    }
+    // An empty textarea empties the file. A form with no content field at all is a broken
+    // request, never an instruction to commit an empty file.
+    if mode != "delete" && !form.has("content") {
+        let c = t.rc.chrome(&ctx, &title, "code").await;
+        return again(&ctx, "The file contents were missing from the form. Nothing was committed.".into(), c);
     }
     if !direct && new_branch.is_none() {
         let c = t.rc.chrome(&ctx, &title, "code").await;

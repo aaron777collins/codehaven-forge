@@ -84,6 +84,8 @@ pub struct GitCommand {
     stdin: Option<Vec<u8>>,
     timeout: Duration,
     max_output: usize,
+    /// Starts the process in a group of its own, so everything it starts can be stopped with it.
+    own_group: bool,
 }
 
 impl GitCommand {
@@ -96,7 +98,14 @@ impl GitCommand {
             stdin: None,
             timeout: Duration::from_secs(30),
             max_output: 64 * 1024 * 1024,
+            own_group: false,
         }
+    }
+
+    /// Runs in a process group of its own (see [`kill_group`]).
+    pub fn own_group(mut self) -> Self {
+        self.own_group = true;
+        self
     }
 
     /// Runs against this bare repository (`GIT_DIR`).
@@ -165,6 +174,9 @@ impl GitCommand {
         c.args(["-c", "core.quotePath=false"]);
         c.args(&self.args);
         c.kill_on_drop(true);
+        if self.own_group {
+            c.process_group(0);
+        }
         c
     }
 
@@ -244,6 +256,14 @@ impl GitCommand {
     }
 }
 
+/// Stops a process started with [`GitCommand::own_group`] and everything it started, such as
+/// the `pack-objects` under `upload-pack` and the hooks under `receive-pack`.
+pub fn kill_group(pid: Option<u32>) {
+    if let Some(pid) = pid.and_then(|p| i32::try_from(p).ok()).and_then(rustix::process::Pid::from_raw) {
+        let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    }
+}
+
 /// A revision or ref that is safe to put on a command line: not empty, not an option, no
 /// control characters, no whitespace, nothing git treats specially in a path position.
 pub fn check_rev(rev: &str) -> Result<&str, ch_core::Error> {
@@ -296,6 +316,31 @@ mod tests {
     async fn output_cap_is_enforced() {
         let e = GitCommand::new(&env()).args(["--version"]).max_output(3).run().await.unwrap_err();
         assert!(matches!(e, GitError::TooLarge(3)));
+    }
+
+    #[tokio::test]
+    async fn killing_the_group_ends_the_children_too() {
+        // A transfer's git starts children of its own (pack-objects, hooks). Here `sh` starts
+        // one that would sleep for a minute; killing the group ends it too.
+        let mut c = tokio::process::Command::new("sh");
+        c.args(["-c", "sleep 60 & echo $!; wait"]).stdout(Stdio::piped()).process_group(0).kill_on_drop(true);
+        let mut child = c.spawn().unwrap();
+        use tokio::io::AsyncBufReadExt;
+        let mut out = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+        let grandchild: u32 = out.next_line().await.unwrap().unwrap().trim().parse().unwrap();
+        kill_group(child.id());
+        tokio::time::timeout(Duration::from_secs(5), child.wait()).await.unwrap().unwrap();
+        let gone = || {
+            let stat = std::fs::read_to_string(format!("/proc/{grandchild}/stat")).unwrap_or_default();
+            stat.is_empty() || stat.contains(") Z ")
+        };
+        for _ in 0..50 {
+            if gone() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("the child of the child is still running");
     }
 
     #[tokio::test]

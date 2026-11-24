@@ -13,7 +13,7 @@ git push -u origin {{ branch }}</pre>
   <h3>Or push an existing repository</h3>
   <pre class="plain">git remote add origin {{ clone.https }}
 git push -u origin {{ branch }}</pre>
-  {% if let Some(s) = clone.ssh %}<p class="muted small">Over SSH use <code>{{ s }}</code> instead.</p>{% endif %}
+  {% if let Some(s) = clone.ssh %}{% if clone.ssh_tunnel %}<p class="muted small">Over SSH, through a tunnel to this server, use <code>{{ s }}</code> instead.</p>{% else %}<p class="muted small">Over SSH use <code>{{ s }}</code> instead.</p>{% endif %}{% endif %}
   <p class="muted small">Sign in with your username and a personal access token as the password. Make one in <a href="/settings/tokens">Settings</a>.</p>
   {% endif %}
 </section>

@@ -26,7 +26,7 @@ impl TestEnv {
     /// An `AppStateBuilder` with the real audit log, event bus and blob store, and every
     /// service `NotBuilt`. Install the services under test on it.
     pub async fn builder(&self) -> AppStateBuilder {
-        let blobs = FsBlobStore::new(self.config.blobs_dir());
+        let blobs = FsBlobStore::new(self.config.blobs_dir()).with_min_free(self.config.storage.min_free_gib.saturating_mul(1 << 30));
         blobs.init().await.expect("blob store");
         AppStateBuilder::new(
             self.config.clone(),

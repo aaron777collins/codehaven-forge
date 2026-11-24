@@ -243,3 +243,41 @@ async fn a_removed_key_stops_working_at_once(pool: PgPool) {
     let out = s.git(&key, s.c.dir.path(), &["ls-remote", &s.url("demo")]).await;
     assert!(!out.ok && out.stderr.contains("Permission denied"), "{}", out.stderr);
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_removed_key_stops_working_on_a_connection_that_is_already_open(pool: PgPool) {
+    // ch-4he: one SSH connection carries many commands (OpenSSH connection sharing). The key is
+    // looked up again for each one, so removing it (or suspending its account, which the real
+    // lookup treats the same) ends access on the open connection too.
+    let s = Ssh::new(pool).await;
+    let key = s.key("alice_key").await;
+    s.register(&key, SshIdentity::User(s.alice));
+    let sock = std::env::temp_dir().join(format!("ch-cm-{}", std::process::id()));
+    let _ = std::fs::remove_file(&sock);
+    let master = tokio::process::Command::new("ssh")
+        .arg("-i")
+        .arg(&key.path)
+        .args(["-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"])
+        .args(["-o", "BatchMode=yes", "-o", "LogLevel=ERROR", "-o", "ControlPersist=60", "-M", "-S"])
+        .arg(&sock)
+        .args(["-f", "-N", "-p", &s.port.to_string(), "git@127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let status = tokio::time::timeout(std::time::Duration::from_secs(30), master).await.unwrap().unwrap();
+    assert!(status.success(), "the shared connection opens");
+    let shared = format!("ssh -S {} -o ControlMaster=no -o BatchMode=yes -o LogLevel=ERROR", sock.display());
+    let ls = |c: &str| {
+        let c = c.to_string();
+        let url = s.url("demo");
+        let s = &s;
+        async move { s.c.git_env(s.c.dir.path(), &["ls-remote", &url], &[("GIT_SSH_COMMAND", &c), ("GIT_SSH_VARIANT", "ssh")]).await }
+    };
+    let out = ls(&shared).await;
+    assert!(out.ok, "{}", out.stderr);
+    s.f.authn.keys.lock().unwrap().clear();
+    let out = ls(&shared).await;
+    assert!(!out.ok && out.stderr.contains("Permission denied"), "the open connection is refused too: {}", out.stderr);
+    let _ = tokio::process::Command::new("ssh").arg("-S").arg(&sock).args(["-O", "exit", "git@127.0.0.1"]).output().await;
+    let _ = std::fs::remove_file(&sock);
+}

@@ -108,24 +108,29 @@ impl Notifications for NotificationsService {
 
     async fn unread_count(&self, actor: &Actor) -> Result<i64> {
         let user = Self::owner(actor)?;
-        if actor.is_app() {
-            // Counted by repository, so the number never includes a thread the app cannot see.
-            let rows: Vec<(i64, i64)> = sqlx::query_as("SELECT repo_id, count(*) FROM notifications WHERE user_id = $1 AND unread AND NOT done AND repo_id IS NOT NULL GROUP BY repo_id")
+        // Counted by repository with the inbox's own rule, so the number never includes a thread
+        // the person (or the app) can no longer open (ch-uph).
+        let as_user = if actor.is_app() {
+            actor.clone()
+        } else {
+            Actor::User { id: user, is_admin: false, has_2fa: false, via: ch_core::AuthVia::Session }
+        };
+        let rows: Vec<(Option<i64>, i64)> =
+            sqlx::query_as("SELECT repo_id, count(*) FROM notifications WHERE user_id = $1 AND unread AND NOT done GROUP BY repo_id")
                 .bind(user.0)
                 .fetch_all(&self.pool)
                 .await?;
-            let mut total = 0;
-            for (repo, n) in rows {
-                if self.authz.repo_permission(actor, RepoId(repo)).await? >= Permission::View {
-                    total += n;
-                }
+        let mut total = 0;
+        for (repo, n) in rows {
+            let counted = match repo {
+                None => !actor.is_app(),
+                Some(r) => self.authz.repo_permission(&as_user, RepoId(r)).await? >= Permission::View,
+            };
+            if counted {
+                total += n;
             }
-            return Ok(total);
         }
-        Ok(sqlx::query_scalar("SELECT count(*) FROM notifications WHERE user_id = $1 AND unread AND NOT done")
-            .bind(user.0)
-            .fetch_one(&self.pool)
-            .await?)
+        Ok(total)
     }
 
     async fn mark_read(&self, actor: &Actor, id: Option<NotificationId>) -> Result<()> {
@@ -166,19 +171,20 @@ impl Notifications for NotificationsService {
     }
 
     async fn subscribe(&self, actor: &Actor, repo: RepoId, level: &str) -> Result<()> {
+        // You can only watch what you can read, and one you cannot read is missing before any
+        // scope or value is looked at (ch-hcj).
+        self.authz.require(actor, repo, Permission::View).await?;
         let user = Self::owner(actor)?;
         if !LEVELS.contains(&level) {
             return Err(Error::invalid("Subscription", "level", "Use all, participating or ignore."));
         }
-        // You can only watch what you can read.
-        self.authz.require(actor, repo, Permission::View).await?;
         sqlx::query("INSERT INTO watches (user_id, repo_id, level) VALUES ($1, $2, $3) ON CONFLICT (user_id, repo_id) DO UPDATE SET level = EXCLUDED.level").bind(user.0).bind(repo.0).bind(level).execute(&self.pool).await?;
         Ok(())
     }
 
     async fn watch_level(&self, actor: &Actor, repo: RepoId) -> Result<String> {
-        let user = Self::owner(actor)?;
         self.authz.require(actor, repo, Permission::View).await?;
+        let user = Self::owner(actor)?;
         let level: Option<String> = sqlx::query_scalar("SELECT level FROM watches WHERE user_id = $1 AND repo_id = $2")
             .bind(user.0)
             .bind(repo.0)

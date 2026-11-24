@@ -45,6 +45,10 @@ pub struct HttpConfig {
     /// Peers allowed to set `X-Forwarded-For` and `X-Forwarded-Proto`. From any other
     /// peer those headers are ignored and the socket address is used.
     pub trusted_proxies: Vec<IpNet>,
+    /// Host names whose addresses are trusted the same way, looked up again every 30 seconds:
+    /// the reverse proxy's container name, so only that container is believed, not every
+    /// neighbour on a shared Docker network (ch-dc1).
+    pub trusted_proxy_hosts: Vec<String>,
     pub request_timeout_secs: u64,
 }
 
@@ -62,6 +66,10 @@ pub struct DatabaseConfig {
 pub struct StorageConfig {
     /// Holds `git/`, `blobs/`, `logs/`, `secrets/`.
     pub data_dir: PathBuf,
+    /// Free space, in GiB, that uploads and pushes always leave on the data file system: an
+    /// artifact, cache, release file, image layer or push that would go below it is refused, so
+    /// the database and everything else on the disk keep room to work (ch-ctk.2).
+    pub min_free_gib: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,7 +208,7 @@ impl Default for ServerConfig {
 }
 impl Default for HttpConfig {
     fn default() -> Self {
-        Self { trusted_proxies: Vec::new(), request_timeout_secs: 60 }
+        Self { trusted_proxies: Vec::new(), trusted_proxy_hosts: Vec::new(), request_timeout_secs: 60 }
     }
 }
 impl Default for DatabaseConfig {
@@ -210,12 +218,37 @@ impl Default for DatabaseConfig {
 }
 impl Default for StorageConfig {
     fn default() -> Self {
-        Self { data_dir: PathBuf::from("/data") }
+        Self { data_dir: PathBuf::from("/data"), min_free_gib: 10 }
     }
 }
 impl Default for SshConfig {
     fn default() -> Self {
         Self { bind: "0.0.0.0:2222".into(), external: "127.0.0.1:2222".into(), enabled: true }
+    }
+}
+impl SshConfig {
+    /// True when `external` names this machine or a private network, so only someone with a
+    /// tunnel can use it: a loopback, private, link-local or unspecified address, or `localhost`.
+    pub fn tunnel_only(&self) -> bool {
+        // An unbracketed IPv6 literal such as `::1` has colons of its own, so it would be
+        // split apart below: try the whole string first.
+        if let Ok(ip) = self.external.parse::<std::net::IpAddr>() {
+            return !crate::net::is_internet_address(ip);
+        }
+        let host = match self.external.rsplit_once(':') {
+            // A bracketed IPv6 address keeps its colons inside the brackets.
+            Some((h, p)) if !h.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => h,
+            _ => self.external.as_str(),
+        };
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        let lower = host.to_ascii_lowercase();
+        if lower == "localhost" || lower.ends_with(".localhost") {
+            return true;
+        }
+        match host.parse::<std::net::IpAddr>() {
+            Ok(ip) => !crate::net::is_internet_address(ip),
+            Err(_) => false,
+        }
     }
 }
 impl Default for InvitesConfig {
@@ -325,6 +358,8 @@ impl Config {
     pub fn for_tests() -> Config {
         let mut c = Config::default();
         c.server.external_url = "http://127.0.0.1:3200".into();
+        // Test machines are not servers: a small floor still exercises the check.
+        c.storage.min_free_gib = 1;
         c
     }
 
@@ -356,6 +391,16 @@ impl Config {
         }
         let _: std::net::SocketAddr =
             self.server.bind.parse().map_err(|_| ConfigError::Invalid("server.bind must be an ip:port".into()))?;
+        for h in &self.http.trusted_proxy_hosts {
+            let plain = !h.is_empty()
+                && h.len() <= 253
+                && h.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.' || b == b'_');
+            if !plain {
+                return Err(ConfigError::Invalid(format!(
+                    "http.trusted_proxy_hosts holds {h:?}: write plain lowercase host names such as caddy"
+                )));
+            }
+        }
         for net in &self.http.trusted_proxies {
             if net.prefix_len() == 0 {
                 return Err(ConfigError::Invalid(
@@ -616,5 +661,27 @@ mod tests {
             c.validate().unwrap_err().to_string(),
             "invalid configuration: public_access.archive_instance must be at least public_access.archive_per_address"
         );
+    }
+
+    #[test]
+    fn trusted_proxy_hosts_are_plain_names() {
+        let mut c = Config::for_tests();
+        c.http.trusted_proxy_hosts = vec!["caddy".into(), "proxy_1.internal".into()];
+        assert!(c.validate().is_ok());
+        for bad in ["", "Caddy", "caddy:80", "http://caddy", "a b"] {
+            c.http.trusted_proxy_hosts = vec![bad.into()];
+            assert!(c.validate().is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn ssh_behind_a_tunnel_is_recognised() {
+        let s = |e: &str| SshConfig { external: e.into(), ..SshConfig::default() };
+        for e in ["127.0.0.1:2222", "localhost:22", "10.0.0.5:22", "192.168.0.1", "[::1]:2222", "::1", "0.0.0.0:2222"] {
+            assert!(s(e).tunnel_only(), "{e}");
+        }
+        for e in ["code.example.com:22", "code.example.com", "8.8.8.8:2222", "[2001:4860:4860::8888]:22"] {
+            assert!(!s(e).tunnel_only(), "{e}");
+        }
     }
 }

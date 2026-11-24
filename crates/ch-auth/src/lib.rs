@@ -105,6 +105,7 @@ pub fn build_with(b: &AppStateBuilder, opts: AuthOptions) -> Result<AuthServices
     let authz = Arc::new(authz::AuthzService::new(core.clone()));
     let fetcher = client_fetcher.unwrap_or_else(|| Arc::new(apps::cimd::HttpFetcher));
     b.ext.insert(Arc::new(apps::OAuthLimits::new()));
+    b.ext.insert(Arc::new(guard::SignedOutRejections::new(&b.config)));
     let accounts: Arc<dyn Accounts> = Arc::new(accounts::AccountsService::new(core.clone()));
     let credentials: Arc<dyn Credentials> = Arc::new(credentials::CredentialsService::new(core.clone()));
     let twofactor: Arc<dyn TwoFactor> = Arc::new(twofactor::TwoFactorService::new(core.clone()));

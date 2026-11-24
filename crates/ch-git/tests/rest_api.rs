@@ -560,3 +560,20 @@ async fn git_data_refs_trees_and_blobs(pool: PgPool) {
     assert_eq!(h.get("alice", &format!("/repos/alice/demo/git/blobs/{}", "0".repeat(40))).await.status, 404);
     assert_eq!(h.get("alice", &format!("/repos/alice/demo/git/commits/{sha}")).await.body["sha"], sha);
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn raw_contents_have_a_ceiling(pool: PgPool) {
+    // ch-ulq: the raw media type used to read a file of any size into memory.
+    let (f, h, alice) = setup(pool).await;
+    let repo = f.repo(alice, "demo", true).await;
+    let big = "0".repeat(50_000_001);
+    f.commit(&repo, alice, "main", "big.bin", &big, "Big").await;
+    let raw = h
+        .send(
+            h.c.get(format!("{}/repos/alice/demo/contents/big.bin", h.base)).header("accept", "application/vnd.github.raw+json"),
+            Some("alice"),
+        )
+        .await;
+    assert_eq!(raw.status, 403, "{}", String::from_utf8_lossy(&raw.raw[..raw.raw.len().min(300)]));
+    assert!(raw.body["message"].as_str().unwrap_or("").contains("too large"));
+}

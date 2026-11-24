@@ -121,6 +121,18 @@ impl GitCore {
         Err(Error::invalid("Object", "sha", "that commit does not exist in this repository"))
     }
 
+    /// `sha` must be a commit this repository already holds. Nothing is fetched.
+    async fn ensure_local_commit(&self, repo: RepoId, sha: &str) -> Result<()> {
+        if !is_sha(sha) {
+            return Err(Error::invalid("Object", "sha", "not a full commit id"));
+        }
+        let out = self.exec_any(self.git(repo).args(["cat-file", "-e", &format!("{sha}^{{commit}}")])).await?;
+        if out.code != 0 {
+            return Err(Error::invalid("Object", "sha", "that commit does not exist in this repository"));
+        }
+        Ok(())
+    }
+
     pub(crate) async fn do_create_ref(&self, actor: &Actor, repo_id: RepoId, name: &str, sha: &str, client: &ClientInfo) -> Result<()> {
         let repo = self.repo_row(repo_id).await?;
         self.require(actor, &repo, Permission::Write).await?;
@@ -132,7 +144,13 @@ impl GitCore {
         if !crate::pipeline::namespace_allowed(&full) && !actor.is_system() {
             return Err(Error::invalid("Reference", "ref", "only refs/heads/ and refs/tags/ can be changed"));
         }
-        self.ensure_object(Some(actor), repo_id, sha).await?;
+        // A person names a commit that is already here. Only the server copies across the fork
+        // network, for a pull request it has checked (ch-1c5, ch-g3r).
+        if actor.is_system() {
+            self.ensure_object(Some(actor), repo_id, sha).await?;
+        } else {
+            self.ensure_local_commit(repo_id, sha).await?;
+        }
         let existing = self.read_refs(repo_id, Some(&full)).await?.into_iter().any(|r| r.name == full);
         if existing {
             return Err(Error::Validation(vec![ch_core::FieldError::new("Reference", "ref", "already_exists")]));
@@ -181,7 +199,13 @@ impl GitCore {
         if !crate::pipeline::namespace_allowed(&full) && !actor.is_system() {
             return Err(Error::invalid("Reference", "ref", "only refs/heads/ and refs/tags/ can be changed"));
         }
-        self.ensure_object(Some(actor), repo_id, sha).await?;
+        // A person names a commit that is already here. Only the server copies across the fork
+        // network, for a pull request it has checked (ch-1c5, ch-g3r).
+        if actor.is_system() {
+            self.ensure_object(Some(actor), repo_id, sha).await?;
+        } else {
+            self.ensure_local_commit(repo_id, sha).await?;
+        }
         let raw = self.exec_any(self.git(repo_id).args(["rev-parse", "--verify", "--quiet", &full])).await?;
         if raw.code != 0 {
             return Err(Error::NotFound);
@@ -457,6 +481,11 @@ impl GitCore {
             return Ok(MergeOutcome::BaseMoved { current_sha: base });
         }
         let head = self.read_resolve(req.head_repo_id, &req.head_ref).await?;
+        if let Some(expected) = &req.expected_head_sha
+            && *expected != head
+        {
+            return Err(Error::conflict("The head branch was modified. Review the changes and try again"));
+        }
         if req.head_repo_id != req.repo_id {
             self.ensure_object(None, req.repo_id, &head).await?;
         }

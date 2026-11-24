@@ -45,6 +45,10 @@ pub struct HookRequest {
     pub repo_id: i64,
     pub stage: Stage,
     pub updates: Vec<RefUpdate>,
+    /// Where git keeps the pushed objects until pre-receive accepts them (`GIT_QUARANTINE_PATH`).
+    /// The server reads the pushed commits from there; without it they look missing (ch-s7r).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +119,23 @@ impl PushRegistry {
     }
 }
 
+/// The quarantine directory a pre-receive hook named, when it really is one inside this
+/// repository's objects directory: `objects/tmp_objdir-incoming-*`, the name git gives it. Both
+/// paths are resolved first, so a link or `..` cannot point the check somewhere else.
+pub(crate) fn valid_quarantine(objects: &std::path::Path, given: &str) -> Option<std::path::PathBuf> {
+    let objects = std::fs::canonicalize(objects).ok()?;
+    let q = std::fs::canonicalize(given).ok()?;
+    let named = q.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("tmp_objdir-incoming-"));
+    (named && q.parent() == Some(objects.as_path()) && q.is_dir()).then_some(q)
+}
+
+impl GitCore {
+    /// The checked quarantine directory of a push into `repo`, or `None` for anything else.
+    pub(crate) fn quarantine_dir(&self, repo: RepoId, given: &str) -> Option<std::path::PathBuf> {
+        valid_quarantine(&self.store.repo_path(repo).join("objects"), given)
+    }
+}
+
 /// Answers hook connections until cancelled.
 pub async fn serve(core: Arc<GitCore>, listener: tokio::net::UnixListener, cancel: CancellationToken) {
     loop {
@@ -169,10 +190,21 @@ async fn respond(core: &Arc<GitCore>, req: HookRequest) -> HookResponse {
         return HookResponse { ok: false, message: "This push does not belong to this repository.".into() };
     }
     match req.stage {
-        Stage::Pre => match crate::pipeline::authorize(core, &ctx, &req.updates).await {
-            Ok(()) => HookResponse { ok: true, message: String::new() },
-            Err(message) => HookResponse { ok: false, message },
-        },
+        Stage::Pre => {
+            // A quarantine that is not this repository's own is refused, not ignored: the checks
+            // would otherwise read the wrong objects.
+            let quarantine = match req.quarantine.as_deref() {
+                None => None,
+                Some(q) => match core.quarantine_dir(ctx.repo, q) {
+                    Some(dir) => Some(dir),
+                    None => return HookResponse { ok: false, message: "Codehaven could not read the pushed objects.".into() },
+                },
+            };
+            match crate::pipeline::authorize(core, &ctx, &req.updates, quarantine.as_deref()).await {
+                Ok(()) => HookResponse { ok: true, message: String::new() },
+                Err(message) => HookResponse { ok: false, message },
+            }
+        }
         Stage::Post => {
             if let Err(e) = crate::pipeline::record(core, &ctx, &req.updates).await {
                 tracing::error!(error = %e, repo = ctx.repo.0, "recording a push failed");
@@ -240,7 +272,8 @@ pub mod client {
             return 1;
         };
         let updates = parse_updates(std::io::stdin().lock());
-        let req = HookRequest { push_id, repo_id, stage: stage_kind, updates };
+        let quarantine = std::env::var("GIT_QUARANTINE_PATH").ok().filter(|q| !q.is_empty());
+        let req = HookRequest { push_id, repo_id, stage: stage_kind, updates, quarantine };
         match exchange(&socket, &req) {
             Ok(resp) => {
                 if !resp.message.is_empty() {
@@ -305,6 +338,25 @@ mod tests {
             deploy_write: None,
             server_built: false,
         }
+    }
+
+    #[test]
+    fn only_a_quarantine_inside_the_repositorys_objects_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let objects = dir.path().join("1.git/objects");
+        let q = objects.join("tmp_objdir-incoming-abc123");
+        std::fs::create_dir_all(&q).unwrap();
+        std::fs::create_dir_all(objects.join("pack")).unwrap();
+        let other = dir.path().join("2.git/objects/tmp_objdir-incoming-xyz");
+        std::fs::create_dir_all(&other).unwrap();
+        let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
+        assert_eq!(valid_quarantine(&objects, &s(&q)), Some(std::fs::canonicalize(&q).unwrap()));
+        assert_eq!(valid_quarantine(&objects, &s(&objects.join("pack"))), None, "not a quarantine");
+        assert_eq!(valid_quarantine(&objects, &s(&other)), None, "another repository's");
+        let sneaky = format!("{}/../../../2.git/objects/tmp_objdir-incoming-xyz", s(&q));
+        assert_eq!(valid_quarantine(&objects, &sneaky), None, "a path that climbs out");
+        assert_eq!(valid_quarantine(&objects, &s(&objects.join("tmp_objdir-incoming-gone"))), None, "missing");
+        assert_eq!(valid_quarantine(&objects, ""), None);
     }
 
     #[test]

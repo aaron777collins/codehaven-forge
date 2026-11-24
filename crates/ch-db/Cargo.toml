@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 ch-core.workspace = true
+rustix.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

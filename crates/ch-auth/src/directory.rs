@@ -109,6 +109,8 @@ impl Directory for DirectoryService {
 
     async fn emails(&self, actor: &Actor, user: UserId) -> Result<Vec<EmailAddress>> {
         require_self_or_admin(actor, user)?;
+        // Email addresses are account data: a token needs `user` (ch-p9j).
+        crate::core::need_user_scope(actor)?;
         let rows: Vec<(String, bool, bool)> = sqlx::query_as(
             "SELECT email::text, is_primary, verified_at IS NOT NULL FROM user_emails WHERE user_id = $1 ORDER BY is_primary DESC, id",
         )

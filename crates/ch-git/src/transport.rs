@@ -76,6 +76,12 @@ impl GitTransport for GitCore {
         if !self.store.exists(repo.id) {
             return Err(Error::internal(anyhow::anyhow!("repository {} has no files on disk", repo.id)));
         }
+        // A push may bring up to 2 GiB. It is refused, before any of it arrives, when the data
+        // disk could not take that and still keep its floor free (ch-ctk.2).
+        if writing {
+            let floor = self.cfg.storage.min_free_gib.saturating_mul(1 << 30);
+            ch_db::blobs::check_floor(&self.store.repo_path(repo.id), floor, if mode == GitMode::AdvertiseRefs { 0 } else { 1 << 30 })?;
+        }
         if mode != GitMode::Interactive && wire == GitWire::UploadArchive {
             return Err(Error::invalid("Git", "service", "upload-archive is only available over SSH"));
         }
@@ -122,22 +128,55 @@ impl GitTransport for GitCore {
         }
 
         let deadline = if stranger { self.cfg.public_access.git_timeout_secs.max(1) } else { 3600 };
-        let mut child = cmd.timeout(std::time::Duration::from_secs(deadline)).spawn()?;
+        let stall = if stranger { STRANGER_STALL_SECS } else { MEMBER_STALL_SECS };
+        // A signed-in transfer takes one of a fixed number of places. Signed-out ones were
+        // already counted by the gate's own pools (ch-ulq).
+        let permit = if stranger {
+            None
+        } else {
+            Some(
+                self.transfers
+                    .clone()
+                    .try_acquire_owned()
+                    .map_err(|_| Error::unavailable("Too many Git transfers are running right now. Try again in a minute."))?,
+            )
+        };
+        let mut child = cmd.timeout(std::time::Duration::from_secs(deadline)).own_group().spawn()?;
         let stdin = child.stdin.take().ok_or_else(|| Error::internal(anyhow::anyhow!("git has no stdin")))?;
         let stdout = child.stdout.take().ok_or_else(|| Error::internal(anyhow::anyhow!("git has no stdout")))?;
         let stderr = child.stderr.take().ok_or_else(|| Error::internal(anyhow::anyhow!("git has no stderr")))?;
         let repo_id = repo.id;
+        let clock = Clock::shared();
+        let stdin = Progress::new(stdin, clock.clone());
+        let stdout = Progress::new(stdout, clock.clone());
         let done = Box::pin(async move {
             // Holding the guard to the end keeps the push id valid until git has exited.
             let _guard = guard;
             let _ticket = ticket;
-            // `spawn` does not apply the command's timeout, so the deadline is enforced here.
-            let code = match tokio::time::timeout(std::time::Duration::from_secs(deadline), child.wait()).await {
-                Ok(status) => status.ok().and_then(|s| s.code()).unwrap_or(-1),
-                Err(_) => {
-                    tracing::warn!(repo = repo_id.0, deadline, "git transport ran past its deadline and was stopped");
-                    let _ = child.kill().await;
-                    -1
+            let _permit = permit;
+            let pid = child.id();
+            // Whatever happens to this future, git and everything it started end with it.
+            let mut group = GroupKill(pid);
+            // `spawn` does not apply the command's timeout, so the deadline is enforced here,
+            // together with a limit on how long no byte may move either way.
+            let started = std::time::Instant::now();
+            let code = loop {
+                tokio::select! {
+                    status = child.wait() => {
+                        // Reaped: its id may be reused from now on, so it is never signalled.
+                        group.0 = None;
+                        break status.ok().and_then(|s| s.code()).unwrap_or(-1);
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                        let idle = clock.idle_secs();
+                        if started.elapsed().as_secs() >= deadline || idle >= stall {
+                            tracing::warn!(repo = repo_id.0, deadline, idle, "git transport ran past its deadline or stalled and was stopped");
+                            crate::command::kill_group(pid);
+                            let _ = child.kill().await;
+                            group.0 = None;
+                            break -1;
+                        }
+                    }
                 }
             };
             tracing::debug!(repo = repo_id.0, code, "git transport finished");
@@ -147,9 +186,111 @@ impl GitTransport for GitCore {
     }
 }
 
+/// Signed-in clones, fetches and pushes that may run at once.
+pub(crate) const MAX_TRANSFERS: usize = 32;
+/// How long a transfer may go with no byte moving either way. `upload-pack` sends a keepalive
+/// every 5 seconds while it prepares a pack, so only a client that stopped reading or sending
+/// gets near these.
+const STRANGER_STALL_SECS: u64 = 60;
+const MEMBER_STALL_SECS: u64 = 600;
+
+/// Kills the process group when dropped: a dropped connection ends git's children too.
+struct GroupKill(Option<u32>);
+
+impl Drop for GroupKill {
+    fn drop(&mut self) {
+        crate::command::kill_group(self.0);
+    }
+}
+
+/// A pipe end that notes the time whenever a byte moves through it.
+struct Progress<T> {
+    inner: T,
+    clock: std::sync::Arc<Clock>,
+}
+
+struct Clock {
+    start: std::time::Instant,
+    last_ms: std::sync::atomic::AtomicU64,
+}
+
+impl Clock {
+    fn touch(&self) {
+        let ms = u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.last_ms.store(ms, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn idle_secs(&self) -> u64 {
+        let now = u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        now.saturating_sub(self.last_ms.load(std::sync::atomic::Ordering::Relaxed)) / 1000
+    }
+}
+
+impl Clock {
+    fn shared() -> std::sync::Arc<Clock> {
+        std::sync::Arc::new(Clock { start: std::time::Instant::now(), last_ms: std::sync::atomic::AtomicU64::new(0) })
+    }
+}
+
+impl<T> Progress<T> {
+    fn new(inner: T, clock: std::sync::Arc<Clock>) -> Self {
+        Self { inner, clock }
+    }
+}
+
+impl<T: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Progress<T> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let r = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+        if buf.filled().len() > before {
+            self.clock.touch();
+        }
+        r
+    }
+}
+
+impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Progress<T> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let r = std::pin::Pin::new(&mut self.inner).poll_write(cx, buf);
+        if let std::task::Poll::Ready(Ok(n)) = &r
+            && *n > 0
+        {
+            self.clock.touch();
+        }
+        r
+    }
+    fn poll_flush(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_pipe_that_moves_bytes_resets_the_stall_clock() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let clock = Clock::shared();
+        let (a, mut b) = tokio::io::duplex(64);
+        let mut reader = Progress::new(a, clock.clone());
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        assert!(clock.idle_secs() >= 1, "nothing moved yet");
+        b.write_all(b"hello").await.unwrap();
+        let mut buf = [0u8; 5];
+        reader.read_exact(&mut buf).await.unwrap();
+        assert_eq!(clock.idle_secs(), 0, "a read counts as progress");
+    }
 
     #[test]
     fn protocol_values_are_filtered() {

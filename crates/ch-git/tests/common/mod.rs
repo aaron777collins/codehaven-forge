@@ -95,8 +95,8 @@ impl Authz for FakeAuthz {
     }
 }
 
-/// Passwords are `pw-<username>`, tokens `tok-<username>` (scope `repo`) and `ro-<username>`
-/// (scope `repo:read`). SSH keys are registered by fingerprint.
+/// Passwords are `pw-<username>`, tokens `tok-<username>` (scope `repo`), `wf-<username>`
+/// (`repo` and `workflow`) and `ro-<username>` (scope `repo:read`). SSH keys are registered by fingerprint.
 pub struct FakeAuthn {
     pub pool: PgPool,
     pub keys: Mutex<HashMap<String, SshIdentity>>,
@@ -120,14 +120,16 @@ impl Authn for FakeAuthn {
         if secret == format!("pw-{username}") {
             return Ok(Actor::User { id, is_admin: false, has_2fa: false, via: AuthVia::Basic });
         }
-        let scope = if secret == format!("tok-{username}") {
-            "repo"
+        let scopes: &[&str] = if secret == format!("tok-{username}") {
+            &["repo"]
+        } else if secret == format!("wf-{username}") {
+            &["repo", "workflow"]
         } else if secret == format!("ro-{username}") {
-            "repo:read"
+            &["repo:read"]
         } else {
             return Err(Error::unauthorized());
         };
-        Ok(Actor::Token { user_id: id, token_id: TokenId(1), scopes: Scopes::new([scope]) })
+        Ok(Actor::Token { user_id: id, token_id: TokenId(1), scopes: Scopes::new(scopes.iter().copied()) })
     }
     async fn from_bearer(&self, _t: &str, _c: &ClientInfo) -> Result<Actor> {
         Err(Error::unauthorized())

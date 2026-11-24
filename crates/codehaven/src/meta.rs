@@ -49,9 +49,11 @@ async fn version() -> Json<VersionInfo> {
 }
 
 async fn meta(State(s): State<AppState>) -> Json<serde_json::Value> {
+    // A tunnel-only address is no use to whoever reads /meta, so it is left out entirely.
+    let ssh = (s.config.ssh.enabled && !s.config.ssh.tunnel_only()).then(|| s.config.ssh.external.clone());
     Json(json!({
         "installed_version": env!("CARGO_PKG_VERSION"),
-        "ssh": s.config.ssh.external,
+        "ssh": ssh,
         "external_url": s.config.server.external_url,
     }))
 }

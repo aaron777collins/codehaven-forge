@@ -595,3 +595,24 @@ async fn update_branch_cannot_write_into_a_protected_head_branch(pool: PgPool) {
     let req = &w.git.merges()[0];
     assert!(req.update_branch, "the git layer is told this is not a gated merge");
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_team_of_another_organization_is_never_a_code_owner(pool: PgPool) {
+    // ch-uph: CODEOWNERS may name `@org/team` of any organization. Only the repository owner's
+    // own organization's teams are looked up, asked or counted.
+    let w = World::new(pool).await;
+    let other = w.env.org("elsewhere").await;
+    let team: i64 = sqlx::query_scalar("INSERT INTO teams (org_id, name) VALUES ($1, 'reviewers') RETURNING id")
+        .bind(other.0)
+        .fetch_one(&w.env.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)").bind(team).bind(w.bob.0).execute(&w.env.pool).await.unwrap();
+    w.git.put_file(w.repo, ".codehaven/CODEOWNERS", "src/ @elsewhere/reviewers\n");
+    protect_full(&w, "main", 0, false, true, &[], false, false).await;
+    let n = w.pull(w.carol, "x", "").await.pull.issue.number;
+    let asked = w.core.review_requested(&w.carol_a(), w.repo, n).await.unwrap();
+    assert!(asked.teams.is_empty(), "another organization's team is not asked: {:?}", asked.teams);
+    review(&w, w.bob, n, ReviewState::Approved, "").await;
+    assert!(!gate(&w, n).await.mergeable, "membership of another organization's team does not count");
+}

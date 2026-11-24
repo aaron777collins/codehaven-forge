@@ -67,7 +67,11 @@ invite a site admin makes for an email address. Notifications are not mailed.
 Set `CODEHAVEN_TRUSTED_PROXIES` to the network your proxy reaches the server from (for `caddy`,
 `CODEHAVEN_EDGE_SUBNET`). Only a peer inside it may set `X-Forwarded-For` and
 `X-Forwarded-Proto`; with `[]` the server trusts no one and sees the proxy's address as the
-client. Your proxy must send every path to the server (including `/.well-known/`), remove any
+client. On a Docker network shared with other containers, name the proxy instead: set
+`CODEHAVEN_TRUSTED_PROXY_HOSTS` to its container name, for example `'["caddy"]'`, and
+`CODEHAVEN_TRUSTED_PROXIES` to `[]`. Then only that container's address is trusted, looked up
+again every 30 seconds, and a neighbour on the network cannot pick its own address for the rate
+limits or the audit log. Your proxy must send every path to the server (including `/.well-known/`), remove any
 `Remote-User` style header from the client, and not buffer responses, or live CI logs stall.
 
 ## Backups
@@ -157,7 +161,10 @@ now as `codehaven-server:<project>-previous`. After the deploy the server has to
 `CODEHAVEN_SMOKE_URL` (default `http://CODEHAVEN_HTTP_BIND`). If either fails, `up.sh` starts the
 server again on the previous image, without migrating, and exits with an error that says so. The
 database is never rolled back automatically: the old server runs on it as the new one left it, and
-the dump is there if the data itself needs to go back (see Restoring). The image tag
+the dump is there if the data itself needs to go back (see Restoring). Until a later `up.sh`
+succeeds, every `deploy/compose.sh` call (a restart, `ci-up.sh`) keeps running the rolled back
+images without migrating, and says so: the mark is `<CODEHAVEN_BUILD_ROOT>/run/<project>.rolled-back`.
+Deploy a fixed version with `up.sh` to clear it. The image tag
 is `CODEHAVEN_TAG` when you set it, otherwise the short id of the checked-out commit, so every
 version has its own tag and the previous images stay on the host.
 

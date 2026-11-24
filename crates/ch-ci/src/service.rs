@@ -141,8 +141,8 @@ impl Ci for CiImpl {
         inputs_in: Json,
         _client: &ClientInfo,
     ) -> Result<RunId> {
-        require_ci(actor, repo)?;
         self.ctx.authz.require(actor, repo, Permission::Write).await?;
+        require_ci(actor, repo)?;
         let info = repo_ci(&self.ctx, repo).await?;
         match info.availability() {
             CiAvailability::Enabled => {}
@@ -222,15 +222,15 @@ impl Ci for CiImpl {
     }
 
     async fn cancel(&self, actor: &Actor, repo: RepoId, run: RunId, _client: &ClientInfo) -> Result<()> {
-        require_ci(actor, repo)?;
         self.ctx.authz.require(actor, repo, Permission::Write).await?;
+        require_ci(actor, repo)?;
         self.run_in_repo(repo, run).await?;
         runs::cancel_run(&self.ctx, run.0).await
     }
 
     async fn rerun(&self, actor: &Actor, repo: RepoId, run: RunId, failed_only: bool, _client: &ClientInfo) -> Result<RunId> {
-        require_ci(actor, repo)?;
         self.ctx.authz.require(actor, repo, Permission::Write).await?;
+        require_ci(actor, repo)?;
         self.run_in_repo(repo, run).await?;
         runs::rerun(&self.ctx, run.0, failed_only, actor.author_id()).await
     }
@@ -450,14 +450,17 @@ impl Ci for CiImpl {
 }
 
 /// A connected app runs, reruns or cancels workflows only on a repository where the person gave it
-/// the workflows permission.
+/// the workflows permission, and a personal access token only with the `workflow` scope.
 fn require_ci(actor: &Actor, repo: RepoId) -> Result<()> {
-    if let Actor::App { grant, .. } = actor
-        && !grant.workflows.has(repo)
-    {
-        return Err(Error::forbidden("This connection was not given permission to run workflows on this repository"));
+    match actor {
+        Actor::App { grant, .. } if !grant.workflows.has(repo) => {
+            Err(Error::forbidden("This connection was not given permission to run workflows on this repository"))
+        }
+        // The scope the token settings page describes as "Update workflow files and trigger
+        // runs" (ch-s7r).
+        Actor::Token { scopes, .. } if !scopes.has("workflow") => Err(Error::forbidden("This token needs the workflow scope")),
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 /// Unique enough to tell two manual runs apart. Not a secret.

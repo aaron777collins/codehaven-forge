@@ -21,6 +21,7 @@ ch-db.workspace = true
 ch-api-types.workspace = true
 axum.workspace = true
 tokio.workspace = true
+rustix.workspace = true
 tokio-util.workspace = true
 futures.workspace = true
 async-trait.workspace = true

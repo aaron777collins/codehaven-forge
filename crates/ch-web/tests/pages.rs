@@ -744,6 +744,26 @@ async fn editing_a_file_commits_and_reports_protection() {
 }
 
 #[tokio::test]
+async fn an_edit_without_a_content_field_commits_nothing() {
+    let r = post("/ada/lighthouse/edit/main/src/main.rs", &[("message", "Tidy"), ("target", "direct")]).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    assert!(r.body.contains("The file contents were missing from the form. Nothing was committed."));
+    let r = post("/ada/lighthouse/new/main", &[("path", "docs/empty.md"), ("message", "Add"), ("target", "direct")]).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    // An empty field is still allowed: it empties the file.
+    let r = post("/ada/lighthouse/edit/main/src/main.rs", &[("content", ""), ("message", "Empty it"), ("target", "direct")]).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+}
+
+#[tokio::test]
+async fn ssh_behind_a_tunnel_says_so() {
+    let r = get("/ada/lighthouse").await;
+    assert!(r.body.contains("SSH, through a tunnel"), "the clone panel names the tunnel");
+    let r = get("/settings/keys").await;
+    assert!(r.body.contains("reached through a tunnel"));
+}
+
+#[tokio::test]
 async fn pull_request_actions() {
     let r = post("/ada/lighthouse/pulls/14/comment", &[("body", "Looks good.")]).await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);

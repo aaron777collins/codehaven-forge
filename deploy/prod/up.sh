@@ -29,6 +29,9 @@ if [ -z "$tag" ] && git -C "$dir" rev-parse --short=12 HEAD >/dev/null 2>&1; the
 [ -n "$tag" ] || ch_die "no tag. Set CODEHAVEN_TAG in .env, or pass one: up.sh <tag>."
 export CODEHAVEN_TAG="$tag"
 ch_need CODEHAVEN_PROJECT CODEHAVEN_HTTP_BIND CODEHAVEN_SSH_BIND CODEHAVEN_BUILD_ROOT
+# This script picks the tag itself. compose.sh otherwise keeps a rolled back deploy pinned.
+export CODEHAVEN_DEPLOYING=1
+rolled_back="$CODEHAVEN_BUILD_ROOT/run/$CODEHAVEN_PROJECT.rolled-back"
 # Set when the pre-deploy dump below is taken, so the rollback message can point at it.
 dump=""
 bash "$dir/deploy/prod/setup.sh"
@@ -42,6 +45,11 @@ rollback_tag="$CODEHAVEN_PROJECT-previous"
 if [ -n "$prev_image" ]; then
   docker tag "$prev_image" "codehaven-server:$rollback_tag"
   echo "up: the running server image is kept as codehaven-server:$rollback_tag"
+fi
+# The runner's image too, when CI runs, so a rolled back instance can start CI again on it.
+prev_runner="$(bash "$C" ps -q runner 2>/dev/null || true)"
+if [ -n "$prev_runner" ] && runner_image="$(docker inspect --format '{{.Image}}' "$prev_runner" 2>/dev/null)" && [ -n "$runner_image" ]; then
+  docker tag "$runner_image" "codehaven-runner:$rollback_tag"
 fi
 # The pre-deploy dump: nothing is changed until the database as it is now has been saved.
 if bash "$C" ps --status running --format '{{.Service}}' 2>/dev/null | grep -qx postgres; then
@@ -87,12 +95,16 @@ if [ "$deployed" = 0 ]; then
   # without migrating, because the new one may have added migrations the old one does not know.
   echo "up: rolling the server back to the previous image (the database is not touched)" >&2
   CODEHAVEN_TAG="$rollback_tag" CODEHAVEN_NO_MIGRATE=1 bash "$C" up -d server
+  # Later compose calls keep this tag and stay off migrations until a deploy succeeds.
+  mkdir -p "$CODEHAVEN_BUILD_ROOT/run"
+  printf '%s\n' "$rollback_tag" > "$rolled_back"
   if wait_healthy; then
     ch_die "the deploy of $tag failed and the server was rolled back to the previous image, which is healthy. The data was not rolled back${dump:+; the database as it was before the deploy is in $dump}. To return to normal migrations later, deploy a fixed version with up.sh."
   else
     ch_die "the deploy of $tag failed and the rolled back server is not healthy either. See: deploy/compose.sh logs server"
   fi
 fi
+rm -f "$rolled_back"
 bash "$C" ps
 echo "--- published ports ---"
 for b in "$CODEHAVEN_HTTP_BIND" "$CODEHAVEN_SSH_BIND"; do

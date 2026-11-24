@@ -46,6 +46,9 @@ services:
       # X-Forwarded-For and X-Forwarded-Proto. A JSON list, for example '["10.20.16.0/24"]'; [] when
       # nothing sits in front.
       CODEHAVEN__HTTP__TRUSTED_PROXIES: ${CODEHAVEN_TRUSTED_PROXIES:?set CODEHAVEN_TRUSTED_PROXIES in .env (a JSON list, [] is allowed)}
+      # Or name the proxy instead, so only its container is trusted and not every neighbour on a
+      # shared network: a JSON list of host names, for example '["caddy"]'. Looked up every 30 s.
+      CODEHAVEN__HTTP__TRUSTED_PROXY_HOSTS: ${CODEHAVEN_TRUSTED_PROXY_HOSTS:-[]}
       CODEHAVEN__DATABASE__URL_FILE: /run/secrets/database_url
       CODEHAVEN__STORAGE__DATA_DIR: /data
       CODEHAVEN__SSH__EXTERNAL: ${CODEHAVEN_SSH_EXTERNAL:?set CODEHAVEN_SSH_EXTERNAL in .env to the host:port people clone over ssh from}

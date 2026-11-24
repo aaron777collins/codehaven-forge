@@ -90,6 +90,11 @@ async fn a_job_token_cannot_read_variables(pool: PgPool) {
     assert_eq!(w.get("/api/v3/repos/alice/demo/actions/variables", &jt).await.0, StatusCode::FORBIDDEN);
     assert_eq!(w.get("/api/v3/repos/alice/demo/actions/variables/V", &jt).await.0, StatusCode::FORBIDDEN);
     assert_eq!(w.get("/api/v3/repos/alice/demo/actions/variables", &alice).await.0, StatusCode::OK);
+    // Values are settings: a reader is refused, as on the settings page (ch-uph).
+    w.env.collaborator(repo, w.bob, "read").await;
+    let bob = Who::User(w.bob);
+    assert_eq!(w.get("/api/v3/repos/alice/demo/actions/variables", &bob).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(w.get("/api/v3/repos/alice/demo/actions/variables/V", &bob).await.0, StatusCode::FORBIDDEN);
 }
 
 /// Item 3: reopening a pull request names nobody for its head, so a commit an app pushed

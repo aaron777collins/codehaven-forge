@@ -188,9 +188,16 @@ impl Accounts for AccountsService {
         // everywhere now, in this transaction, not when the link is used. A first password link
         // (`SetPassword`) leaves sessions alone.
         let mut signed_out = 0;
+        let mut tokens_revoked = 0;
         if purpose == LinkPurpose::ResetPassword {
             signed_out = delete_sessions_except(&mut *tx, user, None).await?;
             crate::apps::revoke_all_for_user(&mut tx, user, "password reset").await?;
+            // A token made by whoever knew the old password would outlive the reset (ch-p9j).
+            tokens_revoked = sqlx::query("UPDATE personal_access_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL")
+                .bind(user.0)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
         }
         let act = if purpose == LinkPurpose::SetPassword { action::PASSWORD_SET } else { action::PASSWORD_RESET };
         self.core
@@ -200,7 +207,7 @@ impl Accounts for AccountsService {
                 client,
                 act,
                 Some(("user", user.0)),
-                json!({"stage": "link_issued", "expires_at": expires_at, "sessions_ended": signed_out}),
+                json!({"stage": "link_issued", "expires_at": expires_at, "sessions_ended": signed_out, "tokens_revoked": tokens_revoked}),
             )
             .await?;
         tx.commit().await?;
@@ -291,6 +298,8 @@ impl Accounts for AccountsService {
             return Err(Error::unauthorized());
         }
         actor.deny_app("list SSH keys")?;
+        // Titles and last use are the account's own business: the person or a site admin (ch-uph).
+        require_self_or_admin(actor, user)?;
         let rows: Vec<(i64, i64, String, String, String, DateTime<Utc>, Option<DateTime<Utc>>)> = sqlx::query_as(
             "SELECT id, user_id, title, key_type, fingerprint, created_at, last_used_at FROM ssh_keys WHERE user_id = $1 ORDER BY id",
         )
@@ -319,10 +328,15 @@ impl Accounts for AccountsService {
                 Error::forbidden("You can only add keys to your own account.")
             });
         }
+        // A key signs in to Git over SSH as the whole account, with no scope and no expiry, so a
+        // token may add one only when it already holds that much: `user` and `repo` (ch-fwm), and
+        // `workflow`, since a push over SSH can change workflow files (ch-s7r).
         if let Actor::Token { scopes, .. } = actor
-            && !(scopes.has("user") || scopes.has("repo"))
+            && !(scopes.has("user") && scopes.has("repo") && scopes.has("workflow"))
         {
-            return Err(Error::forbidden("This token needs the user scope"));
+            return Err(Error::forbidden(
+                "An SSH key acts as your whole account in Git, so this token needs the user, repo and workflow scopes",
+            ));
         }
         let title = title.trim();
         if title.is_empty() || title.chars().count() > 100 {
@@ -390,6 +404,8 @@ impl Accounts for AccountsService {
 
     async fn list_tokens(&self, actor: &Actor, user: UserId) -> Result<Vec<AccessToken>> {
         require_self_or_admin(actor, user)?;
+        // The names and scopes of a person's tokens are account data: a token needs `user` (ch-p9j).
+        crate::core::need_user_scope(actor)?;
         #[allow(clippy::type_complexity)]
         let rows: Vec<(i64, i64, String, String, Vec<String>, DateTime<Utc>, Option<DateTime<Utc>>, DateTime<Utc>)> = sqlx::query_as(
             "SELECT id, user_id, name, prefix, scopes, expires_at, last_used_at, created_at FROM personal_access_tokens WHERE user_id = $1 AND revoked_at IS NULL ORDER BY id DESC",

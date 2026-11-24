@@ -676,9 +676,10 @@ impl Core {
         self.hydrate_one(self.issue_row(repo, number).await?).await
     }
 
-    /// The owner and everyone added to the repository directly.
+    /// The owner and everyone added to the repository directly. Who has access is for the people
+    /// who assign work, Triage and up, not every reader (ch-uph).
     pub async fn assignable(&self, actor: &Actor, repo: RepoId) -> Result<Vec<UserRef>> {
-        self.need_read(actor, repo).await?;
+        self.need(actor, repo, Permission::Triage).await?;
         let ids: Vec<UserId> = sqlx::query_scalar(
             "SELECT owner_id FROM repositories WHERE id = $1 UNION SELECT user_id FROM repo_collaborators WHERE repo_id = $1",
         )

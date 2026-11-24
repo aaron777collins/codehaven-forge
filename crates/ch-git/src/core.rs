@@ -46,6 +46,9 @@ pub struct GitCore {
     /// Caps how many git processes run at once, so a burst of page loads cannot fork-bomb
     /// the container.
     pub(crate) procs: Semaphore,
+    /// Clones, fetches and pushes by signed-in callers at once. Signed-out ones have their own
+    /// pools in the gate and never take these (ch-ulq).
+    pub(crate) transfers: Arc<Semaphore>,
     pub(crate) pushed: crate::maintenance::Pushed,
     pub(crate) diff_cache: moka::future::Cache<(i64, String, String), Arc<ch_core::model::Diff>>,
     /// Running writes per repository, so a store rebuild can wait for them and keep new ones out.

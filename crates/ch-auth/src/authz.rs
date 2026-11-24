@@ -100,6 +100,7 @@ impl AuthzService {
             org_role: Option<String>,
             collab: Option<String>,
             team_perms: Option<Vec<String>>,
+            usable: bool,
         }
         let row: Option<Row> = sqlx::query_as(
             "SELECT r.owner_id, o.kind AS owner_kind, r.access_tier, \
@@ -107,7 +108,8 @@ impl AuthzService {
                     r.archived, o.org_base_permission AS org_base,
                     (SELECT m.role FROM org_members m WHERE m.org_id = r.owner_id AND m.user_id = $2) AS org_role,
                     (SELECT c.permission FROM repo_collaborators c WHERE c.repo_id = r.id AND c.user_id = $2) AS collab,
-                    (SELECT array_agg(tr.permission) FROM team_repos tr JOIN team_members tm ON tm.team_id = tr.team_id WHERE tr.repo_id = r.id AND tm.user_id = $2) AS team_perms
+                    (SELECT array_agg(tr.permission) FROM team_repos tr JOIN team_members tm ON tm.team_id = tr.team_id WHERE tr.repo_id = r.id AND tm.user_id = $2) AS team_perms,
+                    EXISTS (SELECT 1 FROM users me WHERE me.id = $2 AND me.suspended_at IS NULL) AS usable
              FROM repositories r JOIN users o ON o.id = r.owner_id WHERE r.id = $1",
         )
         .bind(repo.0)
@@ -115,6 +117,12 @@ impl AuthzService {
         .fetch_optional(&self.core.db)
         .await?;
         let Some(r) = row else { return Ok((None, false, false)) };
+        // A suspended account, or one that is gone, has no grant anywhere, whatever is still open
+        // on its behalf: an SSH connection, an auto-merge it armed, a stream (ch-4he). Only what
+        // anyone may read stays readable.
+        if !r.usable {
+            return Ok((Some(Facts::default()), r.archived, r.open_to_all));
+        }
         let is_org = r.owner_kind == "org";
         let facts = Facts {
             site_admin,

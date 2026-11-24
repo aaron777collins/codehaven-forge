@@ -119,6 +119,19 @@ pub async fn gate(State(state): State<AppState>, mut req: Request, next: Next) -
             crate::public_gate::Admit::No => {}
         }
     }
+    // Rejections count against the signed-out budget too (ch-ulq). The guard counts what gets in.
+    if let Some(l) = state.ext.get::<ch_auth::guard::SignedOutRejections>()
+        && !path.starts_with("/static/")
+        && let Err(wait) = l.hit(client.ip)
+    {
+        let mut r = match kind {
+            RouteKind::Page => (StatusCode::TOO_MANY_REQUESTS, "Too many requests. Wait a moment and try again.\n").into_response(),
+            _ => Error::RateLimited { retry_after_secs: wait }.into_response(),
+        };
+        r.headers_mut().insert(header::RETRY_AFTER, HeaderValue::from(wait));
+        r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return r;
+    }
     let mut resp = reject(&state, kind, &method, &path, req.uri().query());
     if let Some(h) = hint
         && matches!(kind, RouteKind::GitHttp | RouteKind::Api)

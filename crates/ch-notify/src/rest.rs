@@ -49,6 +49,20 @@ async fn repo_id(pool: &PgPool, owner: &str, repo: &str) -> Res<RepoId> {
     id.map(RepoId).ok_or(Error::NotFound)
 }
 
+/// The repository a path names, only when the caller can see it. A repository the caller cannot
+/// read answers exactly like one that does not exist, before any scope check or body
+/// validation gets a chance to say otherwise (ch-hcj, ch-x0b).
+async fn visible_repo(s: &AppState, actor: &Actor, owner: &str, repo: &str) -> Res<RepoId> {
+    let id = repo_id(&s.db, owner, repo).await?;
+    match s.authz.require(actor, id, ch_core::Permission::View).await {
+        Ok(()) => Ok(id),
+        Err(Error::NotFound) => Err(Error::NotFound),
+        // A signed-out caller is the gate's to answer; nothing here may say the repository exists.
+        Err(Error::Unauthorized(_)) => Err(Error::NotFound),
+        Err(e) => Err(e),
+    }
+}
+
 async fn org_id(pool: &PgPool, org: &str) -> Res<OrgId> {
     let id: Option<i64> =
         sqlx::query_scalar("SELECT id FROM users WHERE username = $1::citext AND kind = 'org'").bind(org).fetch_optional(pool).await?;
@@ -112,7 +126,7 @@ async fn load(s: &AppState, actor: &Actor, id: i64) -> Res<HookRow> {
 /// A hook id in a repository path must belong to that repository, so a hook of another
 /// repository cannot be reached through a repository you can manage.
 async fn load_in_repo(s: &AppState, actor: &Actor, owner: &str, repo: &str, id: i64) -> Res<HookRow> {
-    let rid = repo_id(&s.db, owner, repo).await?;
+    let rid = visible_repo(s, actor, owner, repo).await?;
     let row = load(s, actor, id).await?;
     if row.repo_id != Some(rid.0) {
         return Err(Error::NotFound);
@@ -180,7 +194,7 @@ async fn list_repo_hooks(
     CurrentActor(actor): CurrentActor,
     Path((owner, repo)): Path<(String, String)>,
 ) -> Res<Json<Vec<dto::Hook>>> {
-    let rid = repo_id(&s.db, &owner, &repo).await?;
+    let rid = visible_repo(&s, &actor, &owner, &repo).await?;
     let hooks = s.webhooks.list(&actor, Some(rid), None).await?;
     let mut out = Vec::new();
     for h in hooks {
@@ -197,7 +211,7 @@ async fn create_repo_hook(
     Path((owner, repo)): Path<(String, String)>,
     Json(body): Json<HookBody>,
 ) -> Res<(StatusCode, Json<dto::Hook>)> {
-    let rid = repo_id(&s.db, &owner, &repo).await?;
+    let rid = visible_repo(&s, &actor, &owner, &repo).await?;
     create_hook(&s, &actor, &client, Some(rid), None, body).await
 }
 
@@ -482,7 +496,7 @@ async fn get_watch(
     CurrentActor(actor): CurrentActor,
     Path((owner, repo)): Path<(String, String)>,
 ) -> Res<Json<dto::RepoSubscription>> {
-    let rid = repo_id(&s.db, &owner, &repo).await?;
+    let rid = visible_repo(&s, &actor, &owner, &repo).await?;
     let level = s.notifications.watch_level(&actor, rid).await?;
     Ok(Json(watch_dto(&s, &owner, &repo, &level, Utc::now())))
 }
@@ -493,7 +507,7 @@ async fn put_watch(
     Path((owner, repo)): Path<(String, String)>,
     Json(body): Json<dto::PutRepoSubscription>,
 ) -> Res<Json<dto::RepoSubscription>> {
-    let rid = repo_id(&s.db, &owner, &repo).await?;
+    let rid = visible_repo(&s, &actor, &owner, &repo).await?;
     let level = if body.ignored == Some(true) {
         "ignore"
     } else if body.subscribed == Some(true) {
@@ -510,7 +524,7 @@ async fn delete_watch(
     CurrentActor(actor): CurrentActor,
     Path((owner, repo)): Path<(String, String)>,
 ) -> Res<StatusCode> {
-    let rid = repo_id(&s.db, &owner, &repo).await?;
+    let rid = visible_repo(&s, &actor, &owner, &repo).await?;
     s.notifications.subscribe(&actor, rid, "participating").await?;
     Ok(StatusCode::NO_CONTENT)
 }

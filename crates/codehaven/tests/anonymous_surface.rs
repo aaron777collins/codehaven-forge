@@ -224,7 +224,10 @@ async fn every_registered_route_is_private_unless_listed_public() {
             if is_public(method, &path) {
                 continue;
             }
-            let r = send(&app, method.clone(), &path, &[], None).await;
+            // Each from its own address: rejections count against the signed-out budget (ch-ulq),
+            // and this sweep is about which routes are open, not about that budget.
+            let peer = format!("198.51.{}.{}", (checked / 250) % 250, checked % 250 + 1);
+            let r = send(&app, method.clone(), &path, &[], Some(&peer)).await;
             // The discovery and token routes are machine routes: a wrong method on one is a 405,
             // never a page and never a handler.
             let machine = ch_core::access::classify(&path) == ch_core::access::RouteKind::OAuth;
@@ -653,7 +656,9 @@ async fn signed_out_workspace_requests_learn_nothing() {
         for method in METHODS {
             let path = common::path_for(pattern, "alice", "demo");
             let missing = common::path_for(pattern, "nobody-here", "missing");
-            let r = send(&app, method.clone(), &path, &[], None).await;
+            // Its own address per pair, so the signed-out rejection budget (ch-ulq) stays out of it.
+            let peer = format!("198.51.100.{}", checked % 250 + 1);
+            let r = send(&app, method.clone(), &path, &[], Some(&peer)).await;
             assert!(
                 r.status == StatusCode::SEE_OTHER || r.status == StatusCode::UNAUTHORIZED,
                 "{method} {path} answered {} to a signed-out request",
@@ -665,7 +670,7 @@ async fn signed_out_workspace_requests_learn_nothing() {
                 assert!(r.body.is_empty(), "{method} {path}: {}", r.body);
             }
             // A repository that is not there answers the same as one that is.
-            let other = send(&app, method.clone(), &missing, &[], None).await;
+            let other = send(&app, method.clone(), &missing, &[], Some(&peer)).await;
             assert_eq!((r.status, &r.body), (other.status, &other.body), "{method} {path} vs {missing}");
             checked += 1;
         }
@@ -720,4 +725,24 @@ async fn tokens_basic_jobs_and_runners_open_no_workspace_route() {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn rejected_signed_out_requests_count_against_the_address() {
+    // ch-ulq: the gate turns these away before the guard, so they used to cost nothing.
+    let app = app(config(&[]), true);
+    let mut limited = None;
+    for i in 0..400 {
+        let r = send(&app, Method::GET, "/api/v3/user", &[], Some("203.0.113.77")).await;
+        if r.status == StatusCode::TOO_MANY_REQUESTS {
+            assert!(r.headers.contains_key(header::RETRY_AFTER));
+            limited = Some(i);
+            break;
+        }
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    }
+    let at = limited.expect("rejections are rate limited");
+    assert!(at >= 100, "the budget is the signed-out burst, not less: limited after {at}");
+    // Another address still gets the ordinary answer.
+    assert_eq!(send(&app, Method::GET, "/api/v3/user", &[], Some("203.0.113.78")).await.status, StatusCode::UNAUTHORIZED);
 }
