@@ -34,6 +34,8 @@ fn rank(reason: &str) -> usize {
 pub struct Fanout {
     pool: PgPool,
     authz: Arc<dyn Authz>,
+    /// Queue an email beside each notification for people who want one (ch-0km).
+    mail_on: bool,
 }
 
 #[derive(Debug, Default)]
@@ -65,7 +67,13 @@ struct Subject<'a> {
 
 impl Fanout {
     pub fn new(pool: PgPool, authz: Arc<dyn Authz>) -> Self {
-        Self { pool, authz }
+        Self { pool, authz, mail_on: false }
+    }
+
+    /// The same, also queueing notification emails when the instance has mail.
+    pub fn with_mail(mut self, on: bool) -> Self {
+        self.mail_on = on;
+        self
     }
 
     /// Handles one event. Returns how many inbox rows were written.
@@ -335,6 +343,7 @@ impl Fanout {
             .bind(s.title)
             .execute(&self.pool)
             .await?;
+            crate::mail_queue::enqueue(&self.pool, self.mail_on, user, s.repo, reason, s.kind, s.id, s.title).await?;
             written += 1;
         }
         Ok(written)

@@ -586,7 +586,7 @@ impl Core {
         match self.d.git.merge(actor, req, client).await? {
             MergeOutcome::Merged { sha } => {
                 let mut tx = self.db().begin().await?;
-                sqlx::query("UPDATE pull_requests SET head_sha = $2, base_sha = $3 WHERE issue_id = $1")
+                sqlx::query("UPDATE pull_requests SET head_sha = $2, synced_head_sha = $2, base_sha = $3 WHERE issue_id = $1")
                     .bind(issue.id)
                     .bind(&sha)
                     .bind(&base_sha)

@@ -11,6 +11,7 @@
     <a {% if section == "tokens" %}class="current" {% endif %}href="/settings/tokens"><svg class="icon" aria-hidden="true"><use href="#i-id-card"/></svg><span>Access tokens</span></a>
     <a {% if section == "apps" %}class="current" {% endif %}href="/settings/apps"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span>Connected apps</span></a>
     <a {% if section == "appearance" %}class="current" {% endif %}href="/settings/appearance"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg><span>Appearance</span></a>
+    <a {% if section == "notifications" %}class="current" {% endif %}href="/settings/notifications"><svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg><span>Notifications</span></a>
   </nav>
   <div class="settings-body" id="main">
     {% block settings_body %}{% endblock %}

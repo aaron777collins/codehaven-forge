@@ -250,8 +250,15 @@ async fn merge(ctx: &Ctx, a: PrMergeArgs) -> Result<i32> {
         ctx.println(format!("Auto-merge is on for #{} ({applied}): it merges once the required checks and reviews pass.", a.number));
         return Ok(0);
     }
-    let req =
-        MergePull { merge_method: Some(method.to_string()), commit_title: a.subject.clone(), commit_message: a.body.clone(), sha: None };
+    // Merge exactly the head this command saw, so a push that lands in between is not merged
+    // unseen. The server needs it for a pull request from a fork.
+    let pr: PullRequest = ctx.api()?.get(&format!("/repos/{owner}/{repo}/pulls/{}", a.number)).await?;
+    let req = MergePull {
+        merge_method: Some(method.to_string()),
+        commit_title: a.subject.clone(),
+        commit_message: a.body.clone(),
+        sha: Some(pr.head.sha.clone()),
+    };
     let r: MergeResult = ctx.api()?.put(&format!("/repos/{owner}/{repo}/pulls/{}/merge", a.number), &req).await?;
     if !r.merged {
         ctx.println(format!("Not merged: {}", r.message));

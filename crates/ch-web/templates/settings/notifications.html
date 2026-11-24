@@ -1,0 +1,17 @@
+{% extends "settings/layout.html" %}
+{% import "components.html" as ui %}
+{% block settings_body %}
+<h1>Notifications</h1>
+{% if !mail_on %}
+<p class="muted">This server does not send email, so notifications stay in your inbox here.</p>
+{% else %}
+<form method="post" action="/settings/notifications" class="settings-card stack">
+  {% call ui::csrf_field(c.csrf) %}
+  <div class="field">
+    <label class="choice"><input type="checkbox" name="email"{% if on %} checked{% endif %}><span class="choice-text"><strong>Email me when something new needs my attention:</strong><span class="muted"> mentions, assignments, review requests, and repositories I watch.</span></span></label>
+    <p class="hint">Emails hold the title and a link, never the text of a comment. Each one has a link back to this page to turn them off.</p>
+  </div>
+  <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+</form>
+{% endif %}
+{% endblock %}

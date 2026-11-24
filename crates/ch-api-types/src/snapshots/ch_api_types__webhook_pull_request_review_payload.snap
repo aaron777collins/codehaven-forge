@@ -13,7 +13,7 @@ expression: json
         "href": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/9/commits"
       },
       "html": {
-        "href": "https://code.example.com/alice/codehaven/pull/9"
+        "href": "https://code.example.com/alice/codehaven/pulls/9"
       },
       "issue": {
         "href": "https://code.example.com/api/v3/repos/alice/codehaven/issues/9"
@@ -105,7 +105,7 @@ expression: json
     "commits": 1,
     "created_at": "2026-01-02T03:04:05Z",
     "deletions": 2,
-    "diff_url": "https://code.example.com/alice/codehaven/pull/9.diff",
+    "diff_url": "https://code.example.com/alice/codehaven/pulls/9/files",
     "draft": false,
     "head": {
       "label": "alice:ci",
@@ -171,7 +171,7 @@ expression: json
         "url": "https://code.example.com/api/v3/users/alice"
       }
     },
-    "html_url": "https://code.example.com/alice/codehaven/pull/9",
+    "html_url": "https://code.example.com/alice/codehaven/pulls/9",
     "id": 4001,
     "labels": [],
     "locked": false,
@@ -183,7 +183,7 @@ expression: json
     "merged_by": null,
     "milestone": null,
     "number": 9,
-    "patch_url": "https://code.example.com/alice/codehaven/pull/9.patch",
+    "patch_url": "https://code.example.com/alice/codehaven/pulls/9/files",
     "rebaseable": true,
     "requested_reviewers": [],
     "review_comments": 0,
@@ -255,7 +255,7 @@ expression: json
     "author_association": "OWNER",
     "body": "lgtm",
     "commit_id": "abc123def4567890abcdef0123456789abcdef01",
-    "html_url": "https://code.example.com/alice/codehaven/pull/9#pullrequestreview-5001",
+    "html_url": "https://code.example.com/alice/codehaven/pulls/9#review-5001",
     "id": 5001,
     "pull_request_url": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/9",
     "state": "approved",

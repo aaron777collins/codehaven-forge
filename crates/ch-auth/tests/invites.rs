@@ -319,3 +319,20 @@ async fn a_reset_link_by_email_is_limited_and_signs_out_only_when_used(pool: PgP
     assert!(c.state.accounts.request_password_reset("carol", &c1()).await.unwrap().is_none());
     let _ = bob;
 }
+
+/// ch-ev5: a request for a reset link, which anyone may make, never cancels a link an admin
+/// issued. Using either link ends the other.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn an_emailed_reset_request_leaves_an_admin_link_working(pool: PgPool) {
+    let c = ctx(pool).await;
+    let bob = make_user(&c, "bob", false).await;
+    let admin_link = c.state.accounts.issue_link(&Actor::System, bob, LinkPurpose::ResetPassword, 60 * 24, &c1()).await.unwrap();
+    // Older than the ten minute limit, as when a stranger asks the next day.
+    sqlx::query("UPDATE one_time_links SET created_at = now() - interval '1 hour'").execute(&c.state.db).await.unwrap();
+    let (_, mailed) = c.state.accounts.request_password_reset("bob", &c1()).await.unwrap().expect("a link for bob");
+    c.state.sessions.redeem_link(&admin_link.token, "a much newer passphrase 42", &c1()).await.expect("the admin link still works");
+    assert!(
+        c.state.sessions.redeem_link(&mailed.token, "another newer passphrase 77", &c1()).await.is_err(),
+        "using one link ends the other"
+    );
+}

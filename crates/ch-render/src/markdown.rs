@@ -277,11 +277,28 @@ fn sanitizer() -> Builder<'static> {
     b.add_allowed_classes("pre", ["hl-block"]);
     b.add_allowed_classes("div", ["table-wrap", "suggestion"]);
     b.add_allowed_classes("p", ["suggestion-label"]);
-    // Off-site images are never loaded: the policy blocks them anyway, and dropping the
-    // source means a stray `<img>` cannot even try.
+    // Markdown writers pick the ids, so every id gets the user-content- prefix GitHub
+    // uses and in-page links follow it: chosen names cannot clobber window.<name>
+    // lookups in the page's own scripts. Off-site images are never loaded: the policy
+    // blocks them anyway, and dropping the source means a stray `<img>` cannot even try.
     b.attribute_filter(|tag, attr, value| {
-        if tag == "img" && attr == "src" && !value.starts_with('/') {
-            return None;
+        if tag == "img" && attr == "src" {
+            // One leading slash only: "//host" and "/\host" both load from another host.
+            let ok = value.starts_with('/') && value.as_bytes().get(1).is_some_and(|&b| b != b'/' && b != b'\\');
+            if !ok {
+                return None;
+            }
+        }
+        if attr == "id" && !value.starts_with("user-content-") {
+            return Some(format!("user-content-{value}").into());
+        }
+        if tag == "a"
+            && attr == "href"
+            && let Some(rest) = value.strip_prefix('#')
+            && !rest.is_empty()
+            && !rest.starts_with("user-content-")
+        {
+            return Some(format!("#user-content-{rest}").into());
         }
         Some(value.into())
     });
@@ -536,9 +553,12 @@ mod tests {
     }
 
     #[test]
-    fn absolute_and_anchor_links_are_untouched() {
+    fn absolute_links_survive_and_anchor_links_are_prefixed() {
         let h = render("[a](/ada/other) [b](#frag) [c](https://x.test/p)", &repo());
-        assert!(h.contains("href=\"/ada/other\"") && h.contains("href=\"#frag\"") && h.contains("href=\"https://x.test/p\""), "{h}");
+        assert!(
+            h.contains("href=\"/ada/other\"") && h.contains("href=\"#user-content-frag\"") && h.contains("href=\"https://x.test/p\""),
+            "{h}"
+        );
         assert!(h.contains("rel=\"noopener noreferrer nofollow\""));
     }
 
@@ -591,10 +611,28 @@ mod tests {
     #[test]
     fn headings_get_unique_ids() {
         let h = render("# Setup\n\n## Setup\n\n## Other thing\n", &repo());
-        assert!(h.contains("id=\"setup\"") && h.contains("id=\"setup-1\"") && h.contains("id=\"other-thing\""), "{h}");
+        assert!(
+            h.contains("id=\"user-content-setup\"")
+                && h.contains("id=\"user-content-setup-1\"")
+                && h.contains("id=\"user-content-other-thing\""),
+            "{h}"
+        );
         assert!(h.contains("class=\"anchor\""));
         let off = render("# Setup\n", &MdContext { heading_ids: false, ..repo() });
         assert!(!off.contains("id="), "{off}");
+    }
+
+    #[test]
+    fn ids_are_prefixed_and_in_page_links_follow() {
+        let h = render("# Setup\n\n[go](#setup)\n\n<a id=\"config\">x</a>\n", &repo());
+        assert!(h.contains("id=\"user-content-setup\"") && h.contains("href=\"#user-content-setup\""), "{h}");
+        assert!(h.contains("id=\"user-content-config\"") && !h.contains("id=\"config\""), "{h}");
+    }
+
+    #[test]
+    fn protocol_relative_images_are_dropped() {
+        let h = render("<img src=\"//evil.example/a.png\"><img src=\"/\\evil.example/b.png\"><img src=\"/ok/c.png\">", &repo());
+        assert!(!h.contains("src=\"//") && !h.contains("src=\"/\\") && h.contains("src=\"/ok/c.png\""), "{h}");
     }
 
     #[test]

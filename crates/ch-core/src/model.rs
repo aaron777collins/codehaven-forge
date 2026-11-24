@@ -843,6 +843,16 @@ pub enum CombinedState {
     Failure,
 }
 
+/// The latest check runs and statuses of one commit as one viewer may see them, and their
+/// combined state worked out from only those (ch-4pn.12).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeenChecks {
+    pub runs: Vec<CheckRun>,
+    pub statuses: Vec<CommitStatus>,
+    /// `None` when there is nothing to combine.
+    pub state: Option<CombinedState>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowRun {
     pub id: RunId,

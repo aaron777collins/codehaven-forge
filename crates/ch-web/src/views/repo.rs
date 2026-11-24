@@ -58,10 +58,10 @@ pub fn status_from_runs(runs: &[CheckRun]) -> Option<StatusView> {
 
 pub async fn commit_rows(ctx: &Ctx, rc: &RepoCtx, commits: &[CommitInfo], with_status: bool) -> Vec<CommitRow> {
     let base = rc.base();
-    // Signed out shows no CI status: those records keep the audience they were made for.
-    let statuses: Vec<Option<StatusView>> = if with_status && !ctx.actor.is_anonymous() {
-        let futs = commits.iter().map(|c| ctx.state.checks.check_runs_for_sha(rc.id(), &c.sha));
-        futures::future::join_all(futs).await.into_iter().map(|r| r.ok().and_then(|runs| status_from_runs(&runs))).collect()
+    // Each viewer sees the CI status recorded at a tier that covers them (ch-4pn.12).
+    let statuses: Vec<Option<StatusView>> = if with_status {
+        let futs = commits.iter().map(|c| ctx.state.checks.seen_for_sha(&ctx.actor, rc.id(), &c.sha));
+        futures::future::join_all(futs).await.into_iter().map(|r| r.ok().and_then(|seen| status_from_runs(&seen.runs))).collect()
     } else {
         vec![None; commits.len()]
     };
@@ -725,10 +725,9 @@ pub async fn commit(ctx: Ctx, Path((owner, name, sha)): Path<(String, String, St
     let base = rc.base();
     let sum = code::summarize(&diff);
     let opts = DiffOptions { file_url: Some(format!("{base}/blob/{}/{{path}}", info.sha)), ..Default::default() };
-    // CI records keep the audience they were made for, and signed-out Actions is not open yet.
-    let anon = ctx.actor.is_anonymous();
-    let runs = if anon { Vec::new() } else { ctx.state.checks.check_runs_for_sha(rc.id(), &info.sha).await.unwrap_or_default() };
-    let statuses = if anon { Vec::new() } else { ctx.state.checks.statuses_for_sha(rc.id(), &info.sha).await.unwrap_or_default() };
+    // CI records keep the audience they were made for: each viewer sees what covers them (ch-4pn.12).
+    let seen = ctx.state.checks.seen_for_sha(&ctx.actor, rc.id(), &info.sha).await.ok();
+    let (runs, statuses) = seen.map(|s| (s.runs, s.statuses)).unwrap_or_default();
     let mut checks: Vec<CheckLine> = runs
         .iter()
         .map(|r| CheckLine {

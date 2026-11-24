@@ -1111,6 +1111,135 @@ pub async fn new_repo_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
     }
 }
 
+// ------------------------------------------------------------------ import a repository
+
+/// The name an address suggests for the repository: its last path segment, minus a trailing
+/// `.git`. An address with no path leaves nothing, and the empty name is reported as usual.
+fn name_from_url(url: &str) -> String {
+    let last = url.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    last.strip_suffix(".git").unwrap_or(last).to_string()
+}
+
+#[derive(Template)]
+#[template(path = "people/import_repo.html")]
+struct ImportRepoPage {
+    c: Chrome,
+    owners: Vec<OwnerChoice>,
+    url: String,
+    name: String,
+    description: String,
+    /// The chosen tier: `private` or `internal`.
+    tier: String,
+    text_private: &'static str,
+    text_internal: &'static str,
+    errors: FieldErrors,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn import_repo_page(
+    ctx: &Ctx,
+    owners: Vec<OwnerChoice>,
+    url: &str,
+    name: &str,
+    description: &str,
+    tier: Visibility,
+    errors: FieldErrors,
+    status: StatusCode,
+) -> WebResult<Response> {
+    let c = ctx.chrome("Import a repository").await;
+    ctx.page_status(
+        status,
+        &ImportRepoPage {
+            c,
+            owners,
+            url: url.into(),
+            name: name.into(),
+            description: description.into(),
+            tier: tier.as_str().into(),
+            text_private: super::visibility::TEXT_PRIVATE,
+            text_internal: super::visibility::TEXT_INTERNAL,
+            errors,
+        },
+    )
+}
+
+pub async fn import_repo_get(ctx: Ctx, Query(q): Query<Params>) -> WebResult<Response> {
+    let uid = ctx.user_id()?;
+    // An organization page's button names the owner to preselect, exactly as on /new.
+    let picked = q.get("owner").and_then(|o| o.parse::<i64>().ok()).or(Some(uid.0));
+    let owners = owner_choices(&ctx, uid, picked).await;
+    import_repo_page(&ctx, owners, "", "", "", Visibility::Private, FieldErrors::default(), StatusCode::OK).await
+}
+
+pub async fn import_repo_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
+    let uid = ctx.user_id()?;
+    let picked = form.int("owner_id");
+    let url = form.get("url").trim().to_string();
+    let mut name = form.get("name").trim().to_string();
+    let description = form.get("description").trim().to_string();
+    // Nothing is imported public either, so the choice stops at internal.
+    let tier = visibility_of(form.get("visibility")).min(Visibility::Internal);
+    let owners = owner_choices(&ctx, uid, picked).await;
+    if url.is_empty() {
+        return import_repo_page(
+            &ctx,
+            owners,
+            &url,
+            &name,
+            &description,
+            tier,
+            FieldErrors::default().with("url", "Give the address of the repository to import."),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+    // The address can name the repository when the form does not.
+    if name.is_empty() {
+        name = name_from_url(&url);
+    }
+    let Some(owner) = owners.iter().find(|o| Some(o.id) == picked) else {
+        return import_repo_page(
+            &ctx,
+            owners,
+            &url,
+            &name,
+            &description,
+            tier,
+            FieldErrors::default().with("owner_id", "Pick an owner you can create repositories for."),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    };
+    if let Some(msg) = repo_name_error(&name) {
+        return import_repo_page(
+            &ctx,
+            owners,
+            &url,
+            &name,
+            &description,
+            tier,
+            FieldErrors::default().with("name", msg),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+    let new = NewRepo {
+        owner_id: UserId(owner.id),
+        name: name.clone(),
+        description: description.clone(),
+        visibility: tier,
+        default_branch: None,
+        auto_init: false,
+    };
+    match ctx.state.repos.import(&ctx.actor, new, &url, &ctx.client).await {
+        Ok(repo) => Ok(ctx.redirect(&format!("/{}/{}", fmt::enc(&repo.owner_name), fmt::enc(&repo.name)))),
+        Err(e) => match FieldErrors::from_error(&e) {
+            Some(errors) => import_repo_page(&ctx, owners, &url, &name, &description, tier, errors, StatusCode::UNPROCESSABLE_ENTITY).await,
+            None => Err(e.into()),
+        },
+    }
+}
+
 // ------------------------------------------------------------------ new organization
 
 #[derive(Template)]
@@ -1175,6 +1304,7 @@ pub async fn new_org_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
 // GET+POST /orgs/{org}/settings -> org_settings_get, org_settings_post
 // POST /orgs/{org}/settings/delete -> org_settings_delete
 // GET+POST /new -> new_repo_get, new_repo_post
+// GET+POST /new/import -> import_repo_get, import_repo_post
 // GET+POST /new/org -> new_org_get, new_org_post
 // GET /{owner} -> profile (a catch-all: register it after every literal route)
 

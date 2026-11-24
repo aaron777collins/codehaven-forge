@@ -27,7 +27,7 @@ expression: json
   "commits": 1,
   "created_at": "2026-01-02T03:04:05Z",
   "deletions": 1,
-  "diff_url": "https://code.example.com/octo/haven/pull/1.diff",
+  "diff_url": "https://code.example.com/octo/haven/pulls/1/files",
   "draft": false,
   "head": {
     "label": "octocat:topic",
@@ -43,7 +43,7 @@ expression: json
       "url": "https://code.example.com/api/v3/users/octocat"
     }
   },
-  "html_url": "https://code.example.com/octo/haven/pull/1",
+  "html_url": "https://code.example.com/octo/haven/pulls/1",
   "id": 1001,
   "labels": [
     {
@@ -64,7 +64,7 @@ expression: json
   "merged_by": null,
   "milestone": null,
   "number": 1,
-  "patch_url": "https://code.example.com/octo/haven/pull/1.patch",
+  "patch_url": "https://code.example.com/octo/haven/pulls/1/files",
   "rebaseable": null,
   "requested_reviewers": [
     {

@@ -1,7 +1,7 @@
 //! Forks: the button, the page that makes one, and the list of a repository's forks (ch-8tj).
 //!
 //! The service decides who may fork, into which account and at which tier. A fork starts at most
-//! as visible as its parent, and a public fork is made private first and confirmed on the
+//! as visible as its parent, and a public fork starts as internal and is confirmed on the
 //! visibility page, the same as a new repository.
 
 use super::people::{OwnerChoice, owner_choices, visibility_of};

@@ -177,6 +177,10 @@ impl From<sqlx::Error> for Error {
     fn from(e: sqlx::Error) -> Self {
         match e {
             sqlx::Error::RowNotFound => Error::NotFound,
+            // 22021: a NUL byte in text the client sent. Bad input, not a crash.
+            other if other.as_database_error().and_then(|d| d.code()).as_deref() == Some("22021") => {
+                Error::Validation(vec![FieldError::custom("Request", "text", "Text cannot contain a NUL character.")])
+            }
             other => Error::Internal(other.into()),
         }
     }

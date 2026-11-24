@@ -111,7 +111,11 @@ pub fn check_policy(username: &str, email: &str, password: &str) -> Result<()> {
     }
     let lower = password.to_lowercase();
     let local = email.split('@').next().unwrap_or("").to_lowercase();
-    if (!username.is_empty() && lower.contains(&username.to_lowercase())) || (local.len() >= 4 && lower.contains(&local)) {
+    let whole_email = email.to_lowercase();
+    if (!username.is_empty() && lower.contains(&username.to_lowercase()))
+        || (local.len() >= 4 && lower.contains(&local))
+        || (!email.is_empty() && lower.contains(&whole_email))
+    {
         return fail("Do not use your username or email in your password.");
     }
     let mut inputs: Vec<&str> = Vec::new();
@@ -182,6 +186,8 @@ mod tests {
         assert!(check_policy("alice", "a@b.co", "aaaaaaaaaaaaaaaa").is_err(), "repeat");
         assert!(check_policy("alice", "a@b.co", "qwertyuiopasdf").is_err(), "keyboard");
         assert!(check_policy("alicesmith", "a@b.co", "my-alicesmith-secret-x").is_err(), "contains username");
+        assert!(check_policy("zed", "ab@example.org", "ab@example.org").is_err(), "the whole email");
+        assert!(check_policy("zed", "ab@example.org", "my ab@example.org pass").is_err(), "contains the whole email");
         assert!(check_policy("alice", "a@b.co", &"x".repeat(200)).is_err(), "too long");
         assert!(check_policy("alice", "a@b.co", "violet harbour lantern 83 teapot").is_ok());
         assert!(check_policy("alice", "a@b.co", "Tr0ub4dor&3-lighthouse-quartz").is_ok());

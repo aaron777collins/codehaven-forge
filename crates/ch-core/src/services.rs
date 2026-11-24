@@ -212,6 +212,13 @@ pub trait Repos: Send + Sync {
         let _ = (actor, id);
         Err(Error::unavailable("forks is not built yet"))
     }
+    /// A new repository filled from a git URL anyone can clone over https (ch-ejm). Signed in,
+    /// never a connected app, created private or internal like any new repository. The fetch
+    /// reaches only public addresses, pinned and without redirects.
+    async fn import(&self, actor: &Actor, new: NewRepo, url: &str, client: &ClientInfo) -> Result<Repo> {
+        let _ = (actor, new, url, client);
+        Err(Error::unavailable("importing is not built yet"))
+    }
     /// A fork at a chosen tier: private by default, never above the source, never public.
     async fn fork_as(&self, actor: &Actor, id: RepoId, into: UserId, visibility: Visibility, client: &ClientInfo) -> Result<Repo> {
         let _ = visibility;
@@ -974,6 +981,17 @@ pub trait Notifications: Send + Sync {
     async fn mark_done(&self, actor: &Actor, id: NotificationId) -> Result<()>;
     /// Unsubscribes from, or subscribes to, one issue or pull request thread.
     async fn set_thread_subscription(&self, actor: &Actor, subject_type: &str, subject_id: i64, subscribed: bool) -> Result<()>;
+    /// Whether the signed-in person gets notification emails (ch-0km). Off until they turn it on.
+    async fn email_on(&self, actor: &Actor) -> Result<bool> {
+        let _ = actor;
+        Ok(false)
+    }
+    /// Turns notification emails on or off for the signed-in person, a person only, never an app
+    /// or a token without the user scope.
+    async fn set_email_on(&self, actor: &Actor, on: bool) -> Result<()> {
+        let _ = (actor, on);
+        Err(Error::unavailable("notification emails are not built yet"))
+    }
 }
 
 #[async_trait]
@@ -1010,6 +1028,14 @@ pub trait Checks: Send + Sync {
     ) -> Result<CommitStatus>;
     /// True when every context in `contexts` has a passing check run or status on `sha`.
     async fn required_satisfied(&self, repo: RepoId, sha: &str, contexts: &[String]) -> Result<bool>;
+    /// What `actor` may see of a commit's checks (ch-4pn.12): every latest check run and status
+    /// from Read up; below Read only those recorded at a tier that covers the viewer; nothing
+    /// without View. Pages and tools that show checks to a person use this, never the unfiltered
+    /// reads above. The default shows nothing, so a service that does not implement it fails
+    /// closed.
+    async fn seen_for_sha(&self, _actor: &Actor, _repo: RepoId, _sha: &str) -> Result<crate::model::SeenChecks> {
+        Ok(crate::model::SeenChecks { runs: Vec::new(), statuses: Vec::new(), state: None })
+    }
 }
 
 #[async_trait]

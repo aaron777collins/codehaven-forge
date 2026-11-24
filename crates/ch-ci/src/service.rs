@@ -85,6 +85,23 @@ pub async fn to_job_info(ctx: &Ctx, j: &JobRow) -> Result<JobInfo> {
 }
 
 impl CiImpl {
+    /// A run of this repository that the actor may see, by the Actions history rule
+    /// (ch-4pn.12): View on the repository, and below Read a recorded tier that covers them.
+    async fn seen_run(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<RunRow> {
+        let tiers = crate::history::tiers(&self.ctx, actor, repo).await?;
+        let r = self.run_in_repo(repo, run).await?;
+        crate::history::run_visible(&self.ctx, r.id, tiers).await?;
+        Ok(r)
+    }
+
+    /// A job of this repository whose run the actor may see.
+    async fn seen_job(&self, actor: &Actor, repo: RepoId, job: JobId) -> Result<JobRow> {
+        let tiers = crate::history::tiers(&self.ctx, actor, repo).await?;
+        let j = self.job_in_repo(repo, job).await?;
+        crate::history::run_visible(&self.ctx, j.run_id, tiers).await?;
+        Ok(j)
+    }
+
     async fn run_in_repo(&self, repo: RepoId, run: RunId) -> Result<RunRow> {
         let r = fetch_run(&self.ctx, run.0).await?;
         if r.repo_id != repo.0 {
@@ -109,27 +126,29 @@ impl CiImpl {
 #[async_trait]
 impl Ci for CiImpl {
     async fn runs(&self, actor: &Actor, repo: RepoId, page: u32, per_page: u32) -> Result<Vec<ch_core::model::WorkflowRun>> {
-        self.ctx.authz.require(actor, repo, Permission::Read).await?;
+        let tiers = crate::history::tiers(&self.ctx, actor, repo).await?;
         let per = i64::from(per_page.clamp(1, 100));
         let off = i64::from(page.max(1) - 1) * per;
-        // One row per run: a re-run replaces its earlier attempts, as on GitHub (ch-zwo).
+        // One row per run: a re-run replaces its earlier attempts, as on GitHub (ch-zwo). Below
+        // Read, only attempts recorded at a tier that covers the viewer count (ch-4pn.12).
         let rows = sqlx::query_as::<_, RunRow>(&format!(
-            "SELECT {} FROM workflow_runs r WHERE repo_id = $1
-               AND NOT EXISTS (SELECT 1 FROM workflow_runs n WHERE n.repo_id = r.repo_id AND n.run_number = r.run_number AND n.attempt > r.attempt)
+            "SELECT {} FROM workflow_runs r WHERE repo_id = $1 AND ($4::text[] IS NULL OR r.recorded_tier = ANY($4))
+               AND NOT EXISTS (SELECT 1 FROM workflow_runs n WHERE n.repo_id = r.repo_id AND n.run_number = r.run_number AND n.attempt > r.attempt
+                               AND ($4::text[] IS NULL OR n.recorded_tier = ANY($4)))
              ORDER BY run_number DESC, id DESC LIMIT $2 OFFSET $3",
             runs::RUN_COLS
         ))
         .bind(repo.0)
         .bind(per)
         .bind(off)
+        .bind(crate::history::bind(tiers))
         .fetch_all(&self.ctx.db)
         .await?;
         Ok(rows.iter().map(to_run).collect())
     }
 
     async fn get_run(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<ch_core::model::WorkflowRun> {
-        self.ctx.authz.require(actor, repo, Permission::Read).await?;
-        Ok(to_run(&self.run_in_repo(repo, run).await?))
+        Ok(to_run(&self.seen_run(actor, repo, run).await?))
     }
 
     async fn dispatch(
@@ -237,14 +256,12 @@ impl Ci for CiImpl {
 
     /// `range` is in bytes of the job's log file, the same offsets the live stream reports.
     async fn log_range(&self, actor: &Actor, repo: RepoId, job: JobId, range: LogRange) -> Result<Bytes> {
-        self.ctx.authz.require(actor, repo, Permission::Read).await?;
-        let j = self.job_in_repo(repo, job).await?;
+        let j = self.seen_job(actor, repo, job).await?;
         read_range(&self.ctx, j.run_id, j.id, range.from, range.to).await
     }
 
     async fn log_size(&self, actor: &Actor, repo: RepoId, job: JobId) -> Result<u64> {
-        self.ctx.authz.require(actor, repo, Permission::Read).await?;
-        let j = self.job_in_repo(repo, job).await?;
+        let j = self.seen_job(actor, repo, job).await?;
         crate::logs::log_len(&self.ctx, j.run_id, j.id).await
     }
 
@@ -290,7 +307,9 @@ impl Ci for CiImpl {
     }
 
     async fn workflows(&self, actor: &Actor, repo: RepoId, git_ref: Option<&str>) -> Result<Vec<WorkflowFile>> {
-        self.ctx.authz.require(actor, repo, Permission::Read).await?;
+        // The files are part of the repository, so View reads them. Only Read and up refresh the
+        // table: a signed-out or no-grant read writes nothing (spec section 4, "Web and REST").
+        let reader = crate::history::tiers(&self.ctx, actor, repo).await?.is_none();
         let info = repo_ci(&self.ctx, repo).await?;
         let rev = git_ref.map(str::trim).filter(|r| !r.is_empty()).unwrap_or(&info.default_branch);
         let is_default = rev == info.default_branch || rev == format!("refs/heads/{}", info.default_branch);
@@ -302,7 +321,7 @@ impl Ci for CiImpl {
         };
         let found = discovery::discover(&self.ctx, repo, &sha, info.read_github_workflows).await?;
         // Reading must not write: a connected app only reads the rows that exist.
-        let rows = if is_default && info.availability() == CiAvailability::Enabled && !actor.is_app() {
+        let rows = if reader && is_default && info.availability() == CiAvailability::Enabled && !actor.is_app() {
             let r = discovery::sync_rows(&self.ctx, repo, &found).await?;
             discovery::sync_schedules(&self.ctx, repo, &found, &r, self.ctx.now()).await?;
             r
@@ -321,8 +340,7 @@ impl Ci for CiImpl {
     }
 
     async fn jobs(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Vec<JobInfo>> {
-        self.ctx.authz.require(actor, repo, Permission::Read).await?;
-        self.run_in_repo(repo, run).await?;
+        self.seen_run(actor, repo, run).await?;
         let jobs = runs::fetch_jobs(&self.ctx, run.0).await?;
         let mut out = Vec::with_capacity(jobs.len());
         for j in &jobs {
@@ -332,14 +350,12 @@ impl Ci for CiImpl {
     }
 
     async fn job(&self, actor: &Actor, repo: RepoId, job: JobId) -> Result<JobInfo> {
-        self.ctx.authz.require(actor, repo, Permission::Read).await?;
-        let j = self.job_in_repo(repo, job).await?;
+        let j = self.seen_job(actor, repo, job).await?;
         to_job_info(&self.ctx, &j).await
     }
 
     async fn artifacts(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Vec<ArtifactInfo>> {
-        self.ctx.authz.require(actor, repo, Permission::Read).await?;
-        self.run_in_repo(repo, run).await?;
+        self.seen_run(actor, repo, run).await?;
         let rows = crate::store::artifacts_for_run(&self.ctx, run.0).await?;
         let now = chrono::Utc::now();
         Ok(rows
@@ -357,8 +373,7 @@ impl Ci for CiImpl {
     }
 
     async fn run_hold_reason(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Option<String>> {
-        self.ctx.authz.require(actor, repo, Permission::Read).await?;
-        self.run_in_repo(repo, run).await?;
+        self.seen_run(actor, repo, run).await?;
         Ok(sqlx::query_scalar("SELECT event_payload->'meta'->>'hold_reason' FROM workflow_runs WHERE id = $1 AND status = 'waiting'")
             .bind(run.0)
             .fetch_optional(&self.ctx.db)
@@ -400,8 +415,7 @@ impl Ci for CiImpl {
     }
 
     async fn run_problem(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Option<String>> {
-        self.ctx.authz.require(actor, repo, Permission::Read).await?;
-        let r = self.run_in_repo(repo, run).await?;
+        let r = self.seen_run(actor, repo, run).await?;
         Ok(crate::spec::split_payload(&r.event_payload).1.problem)
     }
 

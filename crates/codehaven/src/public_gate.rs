@@ -175,7 +175,44 @@ async fn lookup_target(state: &AppState, m: &PublicMatch<'_>) -> Result<bool, sq
             (Some(o), Some(r)) if access::valid_owner_name(o) => repo_is_public(state, o, r).await?,
             _ => false,
         },
+        PublicTarget::Image => match m.path.strip_prefix("/v2/") {
+            Some("_catalog") => switch_on(state).await?,
+            Some(rest) => match public_pull(rest) {
+                Some((owner, image)) => image_is_public(state, &owner, &image).await?,
+                None => false,
+            },
+            None => false,
+        },
     })
+}
+
+/// The owner and image of a registry path that only reads one image: a manifest, a blob, its
+/// tag list or its referrers. Uploads and anything else are `None`, as is a name the registry
+/// would refuse, so nothing malformed reaches SQL.
+fn public_pull(rest: &str) -> Option<(String, String)> {
+    use ch_registry::names::{Op, parse, split_name};
+    let (name, op) = parse(rest)?;
+    if !matches!(op, Op::Manifest { .. } | Op::Blob { .. } | Op::TagsList | Op::Referrers { .. }) {
+        return None;
+    }
+    let (owner, image) = split_name(&name)?;
+    access::valid_owner_name(owner).then(|| (owner.to_string(), image.to_string()))
+}
+
+/// An image a stranger may pull: linked to a repository that is public now, not orphaned, with
+/// the switch on (ch-4pn.13). The registry checks the same again before it answers.
+async fn image_is_public(state: &AppState, owner: &str, image: &str) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, Option<bool>>(
+        "SELECT EXISTS (SELECT 1 FROM packages p JOIN users u ON u.id = p.owner_id JOIN repositories r ON r.id = p.repo_id \
+                        WHERE u.username = $1::citext AND p.kind = 'container' AND p.name = $2::citext \
+                          AND NOT p.orphaned AND r.access_tier = 'public') \
+                AND (SELECT allow_public_repos FROM visibility_settings)",
+    )
+    .bind(owner)
+    .bind(image)
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(false))
 }
 
 async fn switch_on(state: &AppState) -> Result<bool, sqlx::Error> {
@@ -277,6 +314,16 @@ pub fn busy(wait: u64) -> Response {
 /// The second lock, inside the router: a request the gate admitted as signed out runs only
 /// the handler of the route it was admitted for.
 pub async fn route_check(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    // A token let onto a page for a file download runs only that download's handler (ch-8ee).
+    if let Some(t) = req.extensions().get::<access::TokenFileRead>().cloned() {
+        let matched = req.extensions().get::<MatchedPath>().map(|m| m.as_str().to_owned());
+        if !matched.as_deref().is_some_and(|p| access::normalize_route(t.pattern) == access::normalize_route(p)) {
+            let path = req.uri().path().to_owned();
+            let kind = access::classify_for(&path, state.config.mcp.enabled);
+            return crate::gate::reject(&state, kind, req.method(), &path, req.uri().query());
+        }
+        return next.run(req).await;
+    }
     let Some(read) = req.extensions().get::<PublicRead>().cloned() else { return next.run(req).await };
     let matched = req.extensions().get::<MatchedPath>().map(|m| m.as_str().to_owned());
     let same = matched.as_deref().is_some_and(|p| access::normalize_route(read.pattern) == access::normalize_route(p));

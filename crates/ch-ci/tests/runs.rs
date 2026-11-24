@@ -584,3 +584,29 @@ async fn events_are_emitted_for_every_change(pool: PgPool) {
         matches!(last.event, ch_core::events::DomainEvent::WorkflowRunUpdated { ref status, ref conclusion, .. } if status == "completed" && conclusion.as_deref() == Some("success"))
     );
 }
+
+/// ch-5ke and ch-4pn.12: a re-run is recorded as started by whoever re-ran it, not by the
+/// original actor, and it keeps the tier the run was recorded at, so what strangers may see of it
+/// does not widen because the repository did.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_rerun_records_who_reran_it_and_keeps_the_recorded_tier(pool: PgPool) {
+    let w = World::new(pool).await;
+    let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, &basic_workflow())]).await;
+    let run = w.push(repo, &git, "main", None).await[0];
+    let r = w.runner("r1", &["ubuntu-latest"]).await;
+    r.drain(&w).await;
+    assert_eq!(w.run_status(run).await.0, "completed");
+    w.env.collaborator(repo, w.bob, "write").await;
+    w.set_ci_allowed(w.bob, true).await;
+    // Recorded while private; the repository has since been widened to internal.
+    sqlx::query("UPDATE workflow_runs SET recorded_tier = 'private' WHERE id = $1").bind(run).execute(w.pool()).await.unwrap();
+    sqlx::query("UPDATE repositories SET access_tier = 'internal' WHERE id = $1").bind(repo.0).execute(w.pool()).await.unwrap();
+
+    let (s, _) = w.post(&format!("/api/v3/repos/alice/demo/actions/runs/{run}/rerun"), &Who::User(w.bob), json!({})).await;
+    assert_eq!(s, 201);
+    let second = *w.run_ids().await.last().unwrap();
+    let (actor, tier): (Option<i64>, Option<String>) =
+        sqlx::query_as("SELECT actor_id, recorded_tier FROM workflow_runs WHERE id = $1").bind(second).fetch_one(w.pool()).await.unwrap();
+    assert_eq!(actor, Some(w.bob.0), "the person who re-ran it");
+    assert_eq!(tier.as_deref(), Some("private"), "the re-run keeps the old recorded tier");
+}

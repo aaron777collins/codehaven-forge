@@ -16,8 +16,9 @@ fn is_sha(s: &str) -> bool {
     (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// A path edited through the API: no empty or dot segments, and nothing that names git's own
-/// directory (`.git`, in any case, and the sneaky spellings some filesystems fold to it).
+/// A path edited through the API: no empty or dot segments, nothing that names git's own
+/// directory (`.git`, in any case, and the sneaky spellings some filesystems fold to it), and
+/// no backslash, bidi or control character.
 pub(crate) fn check_edit_path(path: &str) -> Result<String> {
     let p = check_path(path)?;
     if p.is_empty() || p.split('/').any(|s| s.is_empty()) {
@@ -28,6 +29,13 @@ pub(crate) fn check_edit_path(path: &str) -> Result<String> {
         l == ".git" || l.starts_with(".git ") || l.starts_with(".git.") && l.trim_end_matches('.') == ".git" || l == "git~1"
     }) {
         return Err(Error::invalid("File", "path", "the .git directory cannot be edited"));
+    }
+    // A backslash is a folder separator on Windows (a zip of the repository would unpack it as
+    // folders) and a bidi control makes a name look different from what it is.
+    if p.contains('\\')
+        || p.chars().any(|c| matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') || c.is_control())
+    {
+        return Err(Error::invalid("File", "path", "that file name has a character that is not allowed"));
     }
     Ok(p.to_string())
 }
@@ -235,6 +243,13 @@ impl GitCore {
         }
         if req.message.trim().is_empty() {
             return Err(Error::invalid("Commit", "message", "a commit message is required"));
+        }
+        // `refs/heads/x` would nest under `refs/heads/refs/heads/x`, and `head` in any case
+        // collides with HEAD on a case-insensitive disk.
+        if let Some(nb) = &req.new_branch
+            && (nb.starts_with("refs/") || crate::pipeline::is_head_like(nb))
+        {
+            return Err(Error::invalid("Branch", "new_branch", "not a valid branch name"));
         }
         let source_ref = format!("refs/heads/{}", req.branch);
         check_rev(&source_ref)?;

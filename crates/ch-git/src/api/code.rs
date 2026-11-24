@@ -168,16 +168,19 @@ async fn contents_at(api: Api, owner: String, name: String, path: String, q: Ref
     if size > MAX_RAW_BYTES {
         return Err(Error::forbidden("This file is too large to return here. Clone the repository or download an archive."));
     }
-    // A raw answer is read into memory, so it has a ceiling too: the same one as a raw file on
-    // the web (ch-ulq). Larger files come from a clone or an archive.
-    let blob = api.core.read_blob(repo.id, &rev, &clean, if wants_raw(&headers) { MAX_RAW_BYTES } else { MAX_INLINE_BYTES }).await?;
+    // A raw answer streams from git, never whole in memory (ch-4pn.17). It keeps the same
+    // ceiling as a raw file on the web (ch-ulq): larger files come from a clone or an archive.
+    if wants_raw(&headers) {
+        let sha = api.core.read_resolve(repo.id, &rev).await?;
+        let (size, stream) = api.core.blob_stream(repo.id, &format!("{sha}:{clean}")).await?;
+        let mut r = Response::new(Body::from_stream(stream));
+        r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+        r.headers_mut().insert(header::CONTENT_LENGTH, HeaderValue::from(size));
+        return Ok(r);
+    }
+    let blob = api.core.read_blob(repo.id, &rev, &clean, MAX_INLINE_BYTES).await?;
     if blob.truncated {
         return Err(Error::forbidden("This file is too large to return here. Clone the repository or download an archive."));
-    }
-    if wants_raw(&headers) {
-        let mut r = Response::new(Body::from(blob.content));
-        r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
-        return Ok(r);
     }
     let parent = clean.rsplit_once('/').map(|(_, n)| n).unwrap_or(&clean).to_string();
     let entry = TreeEntry {

@@ -358,7 +358,13 @@ pub async fn new_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, for
     } else {
         match own_forks(&ctx, &rc).await.into_iter().find(|f| f.owner_name.eq_ignore_ascii_case(&head_owner)) {
             Some(f) => f.id,
-            None => return again(FieldErrors::general("Pick one of your own forks of this repository.")).await,
+            // Shown on the plain form, with no comparison: the branch may exist only in a fork
+            // that is not the person's, and comparing it here would answer 404 (ch-ev5).
+            None => {
+                let errors = FieldErrors::general("Pick one of your own forks of this repository.");
+                let body = form.get("body").to_string();
+                return new_page(&ctx, &rc, &base_ref, "", "", Some(title), Some(body), errors, StatusCode::UNPROCESSABLE_ENTITY).await;
+            }
         }
     };
     let new = NewPull {
@@ -509,12 +515,9 @@ async fn head(ctx: &Ctx, l: &mut Loaded, tab: &'static str, check_count: usize) 
 }
 
 async fn check_rows(ctx: &Ctx, rc: &RepoCtx, sha: &str) -> Vec<CheckRow> {
-    // CI records keep the audience they were made for, and signed-out Actions is not open yet.
-    if ctx.actor.is_anonymous() {
-        return Vec::new();
-    }
-    let runs = ctx.state.checks.check_runs_for_sha(rc.id(), sha).await.unwrap_or_default();
-    let statuses = ctx.state.checks.statuses_for_sha(rc.id(), sha).await.unwrap_or_default();
+    // CI records keep the audience they were made for: each viewer sees what covers them (ch-4pn.12).
+    let seen = ctx.state.checks.seen_for_sha(&ctx.actor, rc.id(), sha).await.ok();
+    let (runs, statuses) = seen.map(|s| (s.runs, s.statuses)).unwrap_or_default();
     let mut out: Vec<CheckRow> = runs
         .iter()
         .map(|r| CheckRow {
@@ -894,11 +897,9 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
     } else {
         GateView { mergeable: false, reasons: Vec::new() }
     };
-    let checks_summary = if ctx.actor.is_anonymous() {
-        None
-    } else {
-        let runs = ctx.state.checks.check_runs_for_sha(l.rc.id(), &l.pr.head_sha).await.unwrap_or_default();
-        status_from_runs(&runs)
+    let checks_summary = match ctx.state.checks.seen_for_sha(&ctx.actor, l.rc.id(), &l.pr.head_sha).await {
+        Ok(seen) => status_from_runs(&seen.runs),
+        Err(_) => None,
     };
     // A run that has not created its checks yet still counts as running.
     let checks_running = gate.mergeable
@@ -1001,7 +1002,7 @@ pub async fn checks(ctx: Ctx, Path((owner, name, number)): Path<(String, String,
     let mut l = load(&ctx, &owner, &name, number).await?;
     let rows = check_rows(&ctx, &l.rc, &l.pr.head_sha).await;
     let h = head(&ctx, &mut l, "checks", rows.len()).await?;
-    let runs = ctx.state.checks.check_runs_for_sha(l.rc.id(), &l.pr.head_sha).await.unwrap_or_default();
+    let runs = ctx.state.checks.seen_for_sha(&ctx.actor, l.rc.id(), &l.pr.head_sha).await.map(|s| s.runs).unwrap_or_default();
     let fork_approval = fork_approval(&ctx, &l).await;
     let c = pr_chrome(&ctx, &l, &format!("Checks - {} (#{number})", l.pr.issue.title)).await;
     ctx.page(&ChecksPage { c, h, rows, summary: status_from_runs(&runs), sha: fmt::short_sha(&l.pr.head_sha), fork_approval })

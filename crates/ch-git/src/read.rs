@@ -551,6 +551,23 @@ impl GitCore {
     }
 }
 
+impl GitCore {
+    /// A blob's size and its bytes as a stream, read straight from `git cat-file`, so a raw
+    /// download never sits in memory whole (ch-4pn.17). `spec` is `<rev>:<path>` or a blob sha.
+    /// `NotFound` for anything that is not a blob.
+    pub(crate) async fn blob_stream(&self, repo: RepoId, spec: &str) -> Result<(u64, BoxStream<'static, std::io::Result<Bytes>>)> {
+        use futures::StreamExt;
+        use tokio_util::io::ReaderStream;
+        let (sha, kind, size) = self.object_info(repo, spec).await?;
+        if kind != "blob" {
+            return Err(Error::NotFound);
+        }
+        let child = self.git(repo).args(["cat-file", "blob", &sha]).own_group().spawn()?;
+        let reader = ChildStdout::new(child)?.with_deadline(std::time::Duration::from_secs(ARCHIVE_DEADLINE_SECS));
+        Ok((size, ReaderStream::new(reader).boxed()))
+    }
+}
+
 /// How long one archive download may take, signed in or not (ch-ulq). The gate has its own,
 /// shorter limit for signed-out downloads.
 const ARCHIVE_DEADLINE_SECS: u64 = 30 * 60;

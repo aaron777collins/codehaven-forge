@@ -3,7 +3,7 @@
 //! A pull request is an issue row too, so everything here also serves pull requests. The pull
 //! specific parts live in `pulls.rs`, which calls back into these helpers.
 
-use crate::core::{Core, IssueRow, RepoRow};
+use crate::core::{Core, IssueRow, RepoRow, ghost};
 use crate::filter::Spec;
 use crate::util::{self, as_user, writing_user};
 use ch_core::audit::{AuditEvent, Outcome, action};
@@ -11,8 +11,11 @@ use ch_core::collab::*;
 use ch_core::events::DomainEvent;
 use ch_core::model::*;
 use ch_core::services::DbTx;
-use ch_core::{Actor, Error, FieldError, IssueId, LabelId, MilestoneId, Permission, RepoId, Result, UserId};
+use ch_core::{Actor, CommentId, Error, FieldError, IssueId, LabelId, MilestoneId, Permission, RepoId, Result, UserId};
+use chrono::{DateTime, Utc};
 use serde_json::json;
+use sqlx::FromRow;
+use std::collections::{HashMap, HashSet};
 
 pub const MAX_ASSIGNEES: usize = 10;
 pub const MAX_PINNED: i64 = 3;
@@ -196,6 +199,73 @@ impl Core {
         }
         let page: Vec<IssueRow> = kept.into_iter().skip(offset as usize).take(limit as usize).collect();
         self.hydrate(page).await
+    }
+
+    // ------------------------------------------------------------ repository-wide comments
+
+    /// Issue numbers by row id, for lists that hold comments rather than issues.
+    pub async fn issue_numbers_of(&self, ids: &[IssueId]) -> Result<HashMap<IssueId, i64>> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let raw: Vec<i64> = ids.iter().map(|i| i.0).collect();
+        Ok(sqlx::query_as("SELECT id, number FROM issues WHERE id = ANY($1)").bind(&raw).fetch_all(self.db()).await?.into_iter().collect())
+    }
+
+    /// Every conversation comment in the repository, across issues and pull requests, each with
+    /// the number of the issue it sits on. The repo-wide REST list pages through this.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn repo_comment_views(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        since: Option<DateTime<Utc>>,
+        sort: &str,
+        direction: &str,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Vec<(CommentView, i64)>> {
+        self.need_view(actor, repo).await?;
+        let (offset, limit) = util::page(page, per_page);
+        // The ORDER BY is one of four fixed fragments; `sort` and `direction` only pick one.
+        let order = match (sort, direction) {
+            ("updated", "desc") => "c.updated_at DESC, c.id DESC",
+            ("updated", _) => "c.updated_at, c.id",
+            (_, "desc") => "c.created_at DESC, c.id DESC",
+            _ => "c.created_at, c.id",
+        };
+        let sql = format!(
+            "SELECT c.id, c.issue_id, c.author_id, c.body, c.created_at, c.updated_at
+             FROM issue_comments c JOIN issues i ON i.id = c.issue_id
+             WHERE i.repo_id = $1 AND ($2::timestamptz IS NULL OR c.updated_at >= $2)
+             ORDER BY {order} LIMIT $3 OFFSET $4"
+        );
+        let rows = sqlx::query_as::<_, RepoCommentRow>(&sql).bind(repo).bind(since).bind(limit).bind(offset).fetch_all(self.db()).await?;
+        let numbers = self.issue_numbers_of(&rows.iter().map(|r| r.issue_id).collect::<Vec<_>>()).await?;
+        let users: Vec<UserId> = rows.iter().map(|r| r.author_id).collect::<HashSet<_>>().into_iter().collect();
+        let refs = self.user_refs(&users).await?;
+        let ids: Vec<i64> = rows.iter().map(|r| r.id.0).collect();
+        let reactions = self.reaction_counts("issue_comment", &ids).await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    CommentView {
+                        comment: Comment {
+                            id: r.id,
+                            issue_id: r.issue_id,
+                            author_id: r.author_id,
+                            body: r.body,
+                            created_at: r.created_at,
+                            updated_at: r.updated_at,
+                        },
+                        author: refs.get(&r.author_id).cloned().unwrap_or_else(|| ghost(r.author_id)),
+                        reactions: reactions.get(&r.id.0).copied().unwrap_or_default(),
+                    },
+                    numbers.get(&r.issue_id).copied().unwrap_or_default(),
+                )
+            })
+            .collect())
     }
 
     // ------------------------------------------------------------ state
@@ -827,6 +897,17 @@ impl Core {
         tx.commit().await?;
         self.hydrate_one(self.issue_row(repo, number).await?).await
     }
+}
+
+/// A conversation comment of one repository, for `repo_comment_views`.
+#[derive(Debug, Clone, FromRow)]
+struct RepoCommentRow {
+    id: CommentId,
+    issue_id: IssueId,
+    author_id: UserId,
+    body: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 /// The text of `new` that was not in `old`, so editing an issue does not repeat old references.

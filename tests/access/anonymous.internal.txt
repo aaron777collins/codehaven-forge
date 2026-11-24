@@ -12,6 +12,7 @@ GET /password/forgot
 GET /password/{token}
 GET /robots.txt
 GET /static/{*path}
+GET /v2/token
 HEAD /.well-known/oauth-authorization-server
 HEAD /.well-known/oauth-protected-resource
 HEAD /.well-known/oauth-protected-resource/mcp
@@ -26,6 +27,7 @@ HEAD /password/forgot
 HEAD /password/{token}
 HEAD /robots.txt
 HEAD /static/{*path}
+HEAD /v2/token
 POST /api/runner/v1/register
 POST /invite/{token}
 POST /login

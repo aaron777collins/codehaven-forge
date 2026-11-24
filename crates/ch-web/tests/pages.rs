@@ -165,6 +165,7 @@ const PAGES: &[(&str, &str)] = &[
     ("/search?q=colour&type=issues", "colour"),
     ("/notifications", "Colour the signal"),
     ("/new", "Visibility"),
+    ("/new/import", "Import a repository"),
     ("/new/org", "Organization"),
     ("/settings/profile", "Display name"),
     ("/settings/password", "New password"),
@@ -1058,6 +1059,28 @@ async fn new_repo_offers_three_choices() {
 }
 
 #[tokio::test]
+async fn the_import_page_asks_for_an_address_and_offers_no_public() {
+    let r = get("/new/import").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("Import a repository"));
+    assert!(r.body.contains("name=\"url\""));
+    assert!(r.body.contains("value=\"private\""));
+    assert!(r.body.contains("value=\"internal\""));
+    assert!(!r.body.contains("value=\"public\""), "an import is never created public");
+    // The new repository page points at it.
+    let r = get("/new").await;
+    assert!(r.body.contains("href=\"/new/import\""));
+    // An empty address is refused with the form still on the page.
+    let r = post("/new/import", &[("owner_id", "1"), ("name", ""), ("description", ""), ("visibility", "private")]).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(r.body.contains("Give the address of the repository to import."));
+    // Signed out, the gate sends the page to sign in, as for every other page.
+    let r = send(&app(), Method::GET, "/new/import", None, None, None).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert!(r.location().starts_with("/login?next="));
+}
+
+#[tokio::test]
 async fn chips_name_the_tier() {
     let r = get("/ada/lighthouse").await;
     assert_eq!(r.status, StatusCode::OK);
@@ -1193,6 +1216,9 @@ async fn forking_offers_the_owner_accounts_and_caps_the_tier_at_the_parent() {
     assert!(r.body.contains("value=\"internal\">"), "{}", r.body);
     assert!(r.body.contains("value=\"public\" disabled>"), "{}", r.body);
     assert!(r.body.contains("A fork cannot be more visible than the repository it came from."));
+    // ch-ev5: the hint says what fork_post does, which is create it internal first.
+    assert!(r.body.contains("A public fork starts as internal, then you confirm it on the next page."));
+    assert!(!r.body.contains("made private first"));
     let r = post("/ada/lighthouse/fork", &[("owner_id", "999999"), ("visibility", "private")]).await;
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
     let r = get("/ada/lighthouse/forks").await;
@@ -1220,6 +1246,10 @@ async fn a_pull_request_can_come_from_your_own_fork() {
         post("/ada/lighthouse/pulls/new", &[("base", "main"), ("head", "feature/signal-colours"), ("head_owner", "bob"), ("title", "T")])
             .await;
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(r.body.contains("Pick one of your own forks of this repository."));
+    // ch-ev5: a branch that exists nowhere in the base repository gets the same message, not a 404.
+    let r = post("/ada/lighthouse/pulls/new", &[("base", "main"), ("head", "only-in-a-fork"), ("head_owner", "bob"), ("title", "T")]).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
     assert!(r.body.contains("Pick one of your own forks of this repository."));
 }
 
@@ -1301,4 +1331,32 @@ async fn small_page_defects_stay_fixed() {
     assert_eq!(r.status, StatusCode::OK);
     assert!(r.body.contains(">main</a><span class=\"sep\""), "{}", r.body);
     assert!(!r.body.contains(">root</a>"));
+}
+
+#[tokio::test]
+async fn the_sign_in_page_links_to_public_repositories_only_when_they_are_on() {
+    // The demo answers public_repos_allowed with true (ch-web/src/demo/mod.rs) and has no way to
+    // switch it off, so the line is there. A server that answers false leaves it out.
+    let app = app();
+    let r = send(&app, Method::GET, "/login", None, None, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("<a href=\"/explore\">Browse public repositories</a> without signing in."), "{}", r.body);
+}
+
+#[tokio::test]
+async fn the_notification_settings_page_says_whether_email_is_possible() {
+    // The demo has no mail transport (NotBuilt answers enabled() with false), so the page says so
+    // instead of offering the form.
+    let r = get("/settings/notifications").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body.contains("Notifications"), "{}", r.body);
+    assert!(r.body.contains("This server does not send email"), "{}", r.body);
+    // The settings navigation links the page from the other settings pages.
+    let r = get("/settings/profile").await;
+    assert!(r.body.contains("href=\"/settings/notifications\""), "{}", r.body);
+    // Signed out it bounces to the sign-in page like the other settings pages.
+    let app = app();
+    let r = send(&app, Method::GET, "/settings/notifications", None, None, None).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert!(r.location().starts_with("/login?next="), "{}", r.location());
 }

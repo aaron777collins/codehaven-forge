@@ -706,6 +706,19 @@ def step14():
     # A made-up registration token fails.
     r = Client("10.9.9.1").req("POST", "/api/runner/v1/register", js={"token": "chrt_" + "z" * 40, "name": "x", "labels": ["x"]})
     check(r.status in (400, 401, 403, 404, 422), f"a made-up registration token returned {r.status}")
+    # A real one works once and fails the second time. The label matches no workflow, so this
+    # runner never takes a job.
+    # Registration tokens are a site admin's to issue, from Site admin > Runners.
+    t = S["root"].post_form("/admin/runners/token", {}, page="/admin/runners")
+    m = re.search(r"chrt_[A-Za-z0-9]{40}", t.text)
+    check(t.status == 200 and m, f"create registration token: {t.status}")
+    tok = m.group(0)
+    r = Client("10.9.9.2").req("POST", "/api/runner/v1/register", js={"token": tok, "name": "e2e-twice", "labels": ["e2e-twice"]})
+    check(r.status in (200, 201) and r.json().get("runner_id"), f"the first use of the token returned {r.status} {r.text[:200]}")
+    runner_id = r.json()["runner_id"]
+    r = Client("10.9.9.2").req("POST", "/api/runner/v1/register", js={"token": tok, "name": "e2e-twice-2", "labels": ["e2e-twice"]})
+    check(r.status == 401, f"registering a second time with the same token returned {r.status}")
+    S["root"].post_form(f"/admin/runners/{runner_id}/revoke", {}, page="/admin/runners")
     S["run_id"] = rid
     S["job_id"] = tests[0]["id"]
 

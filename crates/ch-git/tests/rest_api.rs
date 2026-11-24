@@ -577,3 +577,24 @@ async fn raw_contents_have_a_ceiling(pool: PgPool) {
     assert_eq!(raw.status, 403, "{}", String::from_utf8_lossy(&raw.raw[..raw.raw.len().min(300)]));
     assert!(raw.body["message"].as_str().unwrap_or("").contains("too large"));
 }
+
+/// ch-4pn.17: a raw file over REST streams from git with its exact length, including one too
+/// large to return as JSON.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_large_raw_file_streams_with_its_length(pool: PgPool) {
+    let (f, h, alice) = setup(pool).await;
+    let repo = f.repo(alice, "demo", true).await;
+    let big: String = "0123456789abcdef\n".repeat(700_000);
+    f.commit(&repo, alice, "main", "big.txt", &big, "Big").await;
+    let json = h.get("alice", "/repos/alice/demo/contents/big.txt").await;
+    assert_eq!(json.status, 403, "too large for JSON");
+    let raw = h
+        .send(
+            h.c.get(format!("{}/repos/alice/demo/contents/big.txt", h.base)).header("accept", "application/vnd.github.raw+json"),
+            Some("alice"),
+        )
+        .await;
+    assert_eq!(raw.status, 200);
+    assert_eq!(raw.raw.len(), big.len());
+    assert!(raw.raw == big.as_bytes());
+}

@@ -9,13 +9,16 @@
 use crate::access::{Access, Package, authorize};
 use crate::error::{RegError, RegResult};
 use crate::names::{hex_of, is_digest};
+use crate::range::{self, RangeOutcome};
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
+use bytes::Bytes;
 use ch_core::Actor;
 use ch_core::model::ClientInfo;
 use ch_core::state::AppState;
 use futures::StreamExt;
+use futures::stream::BoxStream;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -290,8 +293,44 @@ pub async fn cancel(state: &AppState, actor: &Actor, pkg: &Package, id: &str) ->
     Ok(plain(StatusCode::NO_CONTENT))
 }
 
-/// `GET` and `HEAD /v2/<name>/blobs/<digest>`.
-pub async fn get(state: &AppState, pkg: &Package, digest: &str, head: bool) -> RegResult<Response> {
+/// Keeps `len` bytes of a stream after skipping the first `start`, and stops reading once it has
+/// them, so a range at the front of a large layer does not read the rest of the file.
+fn slice(stream: BoxStream<'static, std::io::Result<Bytes>>, start: u64, len: u64) -> BoxStream<'static, std::io::Result<Bytes>> {
+    stream
+        .scan((start, len), |(skip, left), item| {
+            if *left == 0 {
+                return std::future::ready(None);
+            }
+            let out = match item {
+                Err(e) => {
+                    *left = 0;
+                    Some(Err(e))
+                }
+                Ok(mut chunk) => {
+                    let n = chunk.len() as u64;
+                    if *skip >= n {
+                        *skip -= n;
+                        None
+                    } else {
+                        let mut piece = chunk.split_off(usize::try_from(*skip).unwrap_or(0));
+                        *skip = 0;
+                        piece.truncate(usize::try_from(*left).unwrap_or(usize::MAX));
+                        *left -= piece.len() as u64;
+                        Some(Ok(piece))
+                    }
+                }
+            };
+            std::future::ready(Some(out))
+        })
+        .filter_map(std::future::ready)
+        .boxed()
+}
+
+/// `GET` and `HEAD /v2/<name>/blobs/<digest>`. A single `Range: bytes=` header on a GET answers
+/// 206 with just those bytes, or 416 when it starts past the end; a header that is not one well
+/// formed range is ignored and the whole blob is sent. The digest header always names the whole
+/// blob, never the slice.
+pub async fn get(state: &AppState, pkg: &Package, digest: &str, head: bool, range: Option<&str>) -> RegResult<Response> {
     if !is_digest(digest) {
         return Err(RegError::digest_invalid("the digest must be sha256: and 64 lowercase hex characters"));
     }
@@ -301,20 +340,42 @@ pub async fn get(state: &AppState, pkg: &Package, digest: &str, head: bool) -> R
         .fetch_optional(&state.db)
         .await?;
     let (size,) = row.ok_or_else(RegError::blob_unknown)?;
-    let mut r = if head {
-        let mut r = plain(StatusCode::OK);
-        // HEAD carries the length a GET would, without sending a body.
-        set(&mut r, "content-length", &size.to_string());
-        r
-    } else {
-        let stream = state.blobs.get_stream(hex_of(digest)).await.map_err(|_| RegError::blob_unknown())?;
-        let mut r = Response::new(Body::from_stream(stream));
-        set(&mut r, "content-length", &size.to_string());
-        r
+    let size = u64::try_from(size).unwrap_or(0);
+    let outcome = if head { RangeOutcome::Full } else { range::resolve(range, size) };
+    let mut r = match outcome {
+        RangeOutcome::Unsatisfiable => {
+            let mut r =
+                RegError::unsupported(StatusCode::RANGE_NOT_SATISFIABLE, "the range starts past the end of the blob").into_response();
+            set(&mut r, "content-range", &format!("bytes */{size}"));
+            set(&mut r, "docker-content-digest", digest);
+            return Ok(r);
+        }
+        _ if head => {
+            let mut r = plain(StatusCode::OK);
+            // HEAD carries the length a GET would, without sending a body.
+            set(&mut r, "content-length", &size.to_string());
+            r
+        }
+        RangeOutcome::Full => {
+            let stream = state.blobs.get_stream(hex_of(digest)).await.map_err(|_| RegError::blob_unknown())?;
+            let mut r = Response::new(Body::from_stream(stream));
+            set(&mut r, "content-length", &size.to_string());
+            r
+        }
+        RangeOutcome::Partial { start, end } => {
+            let stream = state.blobs.get_stream(hex_of(digest)).await.map_err(|_| RegError::blob_unknown())?;
+            let len = end - start + 1;
+            let mut r = Response::new(Body::from_stream(slice(stream, start, len)));
+            *r.status_mut() = StatusCode::PARTIAL_CONTENT;
+            set(&mut r, "content-length", &len.to_string());
+            set(&mut r, "content-range", &format!("bytes {start}-{end}/{size}"));
+            r
+        }
     };
     set(&mut r, "docker-distribution-api-version", "registry/2.0");
     set(&mut r, "docker-content-digest", digest);
     set(&mut r, "content-type", "application/octet-stream");
+    set(&mut r, "accept-ranges", "bytes");
     set(&mut r, "etag", &format!("\"{digest}\""));
     Ok(r)
 }
@@ -334,4 +395,44 @@ pub async fn delete(state: &AppState, pkg: &Package, digest: &str) -> RegResult<
     ch_db::blobs::release(&mut tx, hex_of(digest)).await?;
     tx.commit().await?;
     Ok(plain(StatusCode::ACCEPTED))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    async fn run(chunks: &[&[u8]], start: u64, len: u64) -> Vec<u8> {
+        let items: Vec<std::io::Result<Bytes>> = chunks.iter().map(|c| Ok(Bytes::copy_from_slice(c))).collect();
+        let s = slice(futures::stream::iter(items).boxed(), start, len);
+        s.map(|c| c.unwrap().to_vec()).collect::<Vec<_>>().await.concat()
+    }
+
+    #[tokio::test]
+    async fn slice_cuts_across_chunk_boundaries() {
+        let chunks: [&[u8]; 3] = [b"0123", b"4567", b"89"];
+        assert_eq!(run(&chunks, 0, 10).await, b"0123456789");
+        assert_eq!(run(&chunks, 2, 4).await, b"2345");
+        assert_eq!(run(&chunks, 4, 2).await, b"45", "starts exactly on a chunk boundary");
+        assert_eq!(run(&chunks, 3, 1).await, b"3");
+        assert_eq!(run(&chunks, 8, 2).await, b"89");
+        assert_eq!(run(&chunks, 9, 1).await, b"9");
+        assert_eq!(run(&chunks, 5, 100).await, b"56789", "asking for more than is left stops at the end");
+        assert_eq!(run(&chunks, 0, 0).await, b"");
+    }
+
+    #[tokio::test]
+    async fn slice_stops_reading_once_it_has_enough() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let read = std::sync::Arc::new(AtomicUsize::new(0));
+        let counter = read.clone();
+        let s = futures::stream::iter((0..100).map(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, std::io::Error>(Bytes::from_static(b"abcd"))
+        }))
+        .boxed();
+        let got = slice(s, 0, 6).map(|c| c.unwrap().to_vec()).collect::<Vec<_>>().await.concat();
+        assert_eq!(got, b"abcdab");
+        assert!(read.load(Ordering::SeqCst) <= 3, "read {} chunks for 6 bytes", read.load(Ordering::SeqCst));
+    }
 }

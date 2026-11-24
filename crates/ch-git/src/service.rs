@@ -87,6 +87,9 @@ impl Repos for GitCore {
     async fn fork_as(&self, actor: &Actor, id: RepoId, into: UserId, visibility: Visibility, client: &ClientInfo) -> Result<Repo> {
         self.do_fork_as(actor, id, into, None, visibility, client).await
     }
+    async fn import(&self, actor: &Actor, new: NewRepo, url: &str, client: &ClientInfo) -> Result<Repo> {
+        self.do_import_repo(actor, new, url, client).await
+    }
     async fn set_contribution_policy(&self, actor: &Actor, id: RepoId, policy: ContributionPolicy, client: &ClientInfo) -> Result<Repo> {
         self.do_set_contribution_policy(actor, id, policy, client).await
     }

@@ -7,7 +7,8 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode};
-use ch_core::model::{ClientInfo, NewUser};
+use ch_core::collab::MilestoneDraft;
+use ch_core::model::{ClientInfo, CommitFileChange, FileChange, NewIssue, NewPull, NewRepo, NewUser, Signature, Visibility};
 use ch_core::state::AppState;
 use ch_core::{Actor, Config};
 use codehaven::app::build_router;
@@ -193,5 +194,183 @@ async fn api_errors_are_json_in_plain_words(pool: PgPool) {
     assert!(msg.starts_with("Problems parsing JSON") && msg.contains("name"), "{}", bad.body);
     for rust in ["line 1", "column", "target type", "i64", "struct "] {
         assert!(!msg.contains(rust), "{rust} in {msg}");
+    }
+}
+
+async fn with_token(h: &Harness, path: &str, token: &str) -> Reply {
+    let mut req = Request::builder().uri(path).header("authorization", format!("token {token}")).body(Body::empty()).unwrap();
+    req.extensions_mut().insert(ConnectInfo("203.0.113.9:5555".parse::<SocketAddr>().unwrap()));
+    let resp = h.app.clone().oneshot(req).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    Reply {
+        status: parts.status,
+        headers: parts.headers,
+        body: String::from_utf8_lossy(&body.collect().await.unwrap().to_bytes()).into_owned(),
+    }
+}
+
+/// ch-8ee: a personal access token downloads a private repository's raw file, archive and
+/// release file from the same links a browser uses, and opens no other page.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_token_downloads_files_from_the_web_links_and_nothing_else(pool: PgPool) {
+    let h = harness(pool).await;
+    let alice = h
+        .state
+        .accounts
+        .create_user(
+            &Actor::System,
+            NewUser { username: "alice".into(), email: "alice@example.org".into(), display_name: None, is_admin: false, can_run_ci: false },
+            &ClientInfo::local(),
+        )
+        .await
+        .unwrap();
+    let a = Actor::User { id: alice.id, is_admin: false, has_2fa: true, via: ch_core::AuthVia::Session };
+    let new = ch_core::model::NewRepo {
+        owner_id: alice.id,
+        name: "secret".into(),
+        description: String::new(),
+        visibility: ch_core::model::Visibility::Private,
+        default_branch: None,
+        auto_init: true,
+    };
+    let repo = h.state.repos.create(&a, new, &ClientInfo::local()).await.unwrap();
+    let draft = ch_core::collab::ReleaseDraft {
+        tag_name: "v1".into(),
+        target_commitish: Some("main".into()),
+        name: Some("One".into()),
+        body: None,
+        draft: false,
+        prerelease: false,
+        generate_notes: false,
+    };
+    let rel = h.state.releases.create(&a, repo.id, draft, &ClientInfo::local()).await.unwrap().release.id;
+    let body: futures::stream::BoxStream<'static, std::io::Result<bytes::Bytes>> =
+        Box::pin(futures::stream::once(async { Ok(bytes::Bytes::from_static(b"asset\n")) }));
+    h.state.releases.upload_asset(&a, repo.id, rel, "notes.txt", None, "text/plain", body, &ClientInfo::local()).await.unwrap();
+    let (_, token) = h.state.accounts.create_token(&a, alice.id, "dl", vec!["repo:read".into()], 30, &ClientInfo::local()).await.unwrap();
+    let (_, scopeless) =
+        h.state.accounts.create_token(&a, alice.id, "none", vec!["read:packages".into()], 30, &ClientInfo::local()).await.unwrap();
+
+    let raw = with_token(&h, "/alice/secret/raw/main/README.md", &token).await;
+    assert_eq!(raw.status, StatusCode::OK, "{}", raw.body);
+    assert!(raw.body.starts_with("# secret"));
+    assert_eq!(with_token(&h, "/alice/secret/archive/main.zip", &token).await.status, StatusCode::OK);
+    let asset = with_token(&h, "/alice/secret/releases/download/v1/notes.txt", &token).await;
+    assert_eq!((asset.status, asset.body.as_str()), (StatusCode::OK, "asset\n"));
+    // A token without a repository scope reads nothing private, as on the API.
+    assert_eq!(with_token(&h, "/alice/secret/raw/main/README.md", &scopeless).await.status, StatusCode::NOT_FOUND);
+    // No other page takes a token.
+    for p in ["/alice/secret", "/alice/secret/blob/main/README.md", "/settings/profile", "/alice/secret/settings"] {
+        let r = with_token(&h, p, &token).await;
+        assert_eq!(r.status, StatusCode::SEE_OTHER, "{p} must not open with a token");
+    }
+}
+
+/// Every html_url and diff_url the API hands out is a page this server really serves.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn html_urls_from_the_api_open_real_pages(pool: PgPool) {
+    let h = harness(pool).await;
+    let alice = sign_in(&h, "alice").await;
+    let u = h.state.accounts.get_by_username(&Actor::System, "alice").await.unwrap();
+    let a = Actor::User { id: u.id, is_admin: false, has_2fa: true, via: ch_core::AuthVia::Session };
+    let c = ClientInfo::local();
+    let repo = h
+        .state
+        .repos
+        .create(
+            &a,
+            NewRepo {
+                owner_id: u.id,
+                name: "links".into(),
+                description: String::new(),
+                visibility: Visibility::Private,
+                default_branch: None,
+                auto_init: true,
+            },
+            &c,
+        )
+        .await
+        .unwrap();
+    // A second branch with a commit of its own, the head of the pull request.
+    h.state
+        .git
+        .commit_file_change(
+            &a,
+            CommitFileChange {
+                repo_id: repo.id,
+                branch: "main".into(),
+                new_branch: Some("feature".into()),
+                expected_sha: None,
+                changes: vec![FileChange { path: "src/lib.rs".into(), content: Some(b"pub fn x() {}\n".to_vec()), renamed_from: None }],
+                message: "Add lib".into(),
+                author: Signature { name: "Alice".into(), email: "alice@example.org".into(), at: chrono::Utc::now() },
+            },
+            &c,
+        )
+        .await
+        .unwrap();
+    let issue = h
+        .state
+        .issues
+        .create(
+            &a,
+            NewIssue {
+                repo_id: repo.id,
+                title: "A bug".into(),
+                body: "It broke".into(),
+                labels: vec![],
+                assignees: vec![],
+                milestone_id: None,
+            },
+            &c,
+        )
+        .await
+        .unwrap();
+    h.state.issues.add_comment(&a, repo.id, issue.number, "a comment", &c).await.unwrap();
+    let milestone = h
+        .state
+        .issues
+        .create_milestone(&a, repo.id, MilestoneDraft { title: "v1".into(), description: None, due_on: None, open: Some(true) }, &c)
+        .await
+        .unwrap();
+    let pull = h
+        .state
+        .pulls
+        .create(
+            &a,
+            NewPull {
+                repo_id: repo.id,
+                title: "Add the thing".into(),
+                body: String::new(),
+                head_repo_id: repo.id,
+                head_ref: "feature".into(),
+                base_ref: "main".into(),
+                draft: false,
+            },
+            &c,
+        )
+        .await
+        .unwrap();
+
+    let api = |p: String| format!("/api/v3/repos/alice/links{p}");
+    let issue_json = send(&h, Method::GET, &api(format!("/issues/{}", issue.number)), Some(&alice), None).await;
+    assert_eq!(issue_json.status, StatusCode::OK, "{}", issue_json.body);
+    let comments = send(&h, Method::GET, &api(format!("/issues/{}/comments", issue.number)), Some(&alice), None).await;
+    assert_eq!(comments.status, StatusCode::OK, "{}", comments.body);
+    let milestone_json = send(&h, Method::GET, &api(format!("/milestones/{}", milestone.number)), Some(&alice), None).await;
+    assert_eq!(milestone_json.status, StatusCode::OK, "{}", milestone_json.body);
+    let pull_json = send(&h, Method::GET, &api(format!("/pulls/{}", pull.issue.number)), Some(&alice), None).await;
+    assert_eq!(pull_json.status, StatusCode::OK, "{}", pull_json.body);
+
+    let links = vec![
+        issue_json.json()["html_url"].as_str().unwrap().to_string(),
+        comments.json()[0]["html_url"].as_str().unwrap().to_string(),
+        milestone_json.json()["html_url"].as_str().unwrap().to_string(),
+        pull_json.json()["html_url"].as_str().unwrap().to_string(),
+        pull_json.json()["diff_url"].as_str().unwrap().to_string(),
+    ];
+    for url in &links {
+        let page = send(&h, Method::GET, path_of(url.split('#').next().unwrap()), Some(&alice), None).await;
+        assert_eq!(page.status, StatusCode::OK, "{url} opens {}", page.status);
     }
 }

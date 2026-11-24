@@ -167,12 +167,28 @@ impl Core {
                 .await?
             }
             None => {
-                sqlx::query_as(
-                    "SELECT r.id, u.username::text || '/' || r.name::text, r.default_branch FROM repositories r JOIN users u ON u.id = r.owner_id
-                     WHERE NOT r.is_empty ORDER BY r.pushed_at DESC NULLS LAST, r.id DESC LIMIT 200",
-                )
-                .fetch_all(self.db())
-                .await?
+                // Newest push first, a page at a time, until enough of them are readable: on a big
+                // server the newest 200 may all belong to other people (ch-ev5). Bounded, so a
+                // person who reads little costs at most a few pages.
+                let mut found = Vec::new();
+                let mut offset = 0i64;
+                for _ in 0..CANDIDATE_PAGES {
+                    let page: Vec<(RepoId, String, String)> = sqlx::query_as(
+                        "SELECT r.id, u.username::text || '/' || r.name::text, r.default_branch FROM repositories r JOIN users u ON u.id = r.owner_id
+                         WHERE NOT r.is_empty ORDER BY r.pushed_at DESC NULLS LAST, r.id DESC LIMIT 200 OFFSET $1",
+                    )
+                    .bind(offset)
+                    .fetch_all(self.db())
+                    .await?;
+                    let n = page.len();
+                    offset += n as i64;
+                    let ok = self.readable_at(actor, page.iter().map(|c| c.0).collect(), Permission::Read).await?;
+                    found.extend(page.into_iter().filter(|c| ok.contains(&c.0)));
+                    if found.len() >= MAX_REPOS_SEARCHED || n < 200 {
+                        break;
+                    }
+                }
+                found
             }
         };
         let ok = self.readable_at(actor, candidates.iter().map(|c| c.0).collect(), Permission::Read).await?;
@@ -208,6 +224,9 @@ impl Core {
 
 /// How many repositories one search across repositories looks in, newest push first.
 pub const MAX_REPOS_SEARCHED: usize = 30;
+
+/// How many pages of 200 repositories a search across repositories reads to find readable ones.
+const CANDIDATE_PAGES: usize = 10;
 
 /// Takes a `repo:owner/name` term out of a query.
 pub fn split_repo_term(query: &str) -> (Option<(String, String)>, String) {

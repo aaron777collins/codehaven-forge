@@ -67,7 +67,8 @@ pub fn validate_username(name: &str, resource: &str) -> Result<(), Error> {
     let ok_len = !b.is_empty() && b.len() <= 39;
     let ok_chars = b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'-');
     let ok_edges = ok_len && b[0].is_ascii_alphanumeric() && b[b.len() - 1].is_ascii_alphanumeric();
-    if !(ok_len && ok_chars && ok_edges) {
+    let ok_hyphens = !name.contains("--");
+    if !(ok_len && ok_chars && ok_edges && ok_hyphens) {
         return Err(Error::Validation(vec![FieldError::custom(
             resource,
             "username",
@@ -129,7 +130,9 @@ mod tests {
     fn usernames() {
         assert!(validate_username("alice", "User").is_ok());
         assert!(validate_username("a", "User").is_ok());
+        assert!(validate_username("a-b", "User").is_ok());
         assert!(validate_username("a-b-c", "User").is_ok());
+        assert!(validate_username("a--b", "User").is_err(), "double hyphen");
         assert!(validate_username("-a", "User").is_err());
         assert!(validate_username("a-", "User").is_err());
         assert!(validate_username("a_b", "User").is_err());

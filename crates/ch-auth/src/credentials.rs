@@ -418,6 +418,8 @@ impl Credentials for CredentialsService {
         let claimed: Option<(i64, String)> =
             sqlx::query_as("UPDATE one_time_links SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING user_id, purpose").bind(&token_hash).fetch_optional(&mut *tx).await?;
         let Some((uid, purpose)) = claimed else { return Err(Error::NotFound) };
+        // The password is set now, so every other open link for the account ends with it.
+        sqlx::query("UPDATE one_time_links SET used_at = now() WHERE user_id = $1 AND used_at IS NULL").bind(uid).execute(&mut *tx).await?;
         sqlx::query("UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1")
             .bind(uid)
             .bind(&hash)

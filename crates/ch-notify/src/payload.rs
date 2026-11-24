@@ -165,7 +165,7 @@ pub async fn issue_json(pool: &PgPool, base: &str, full_name: &str, issue: i64) 
     for a in &i.assignees {
         assignees.push(user_json(pool, base, *a).await?);
     }
-    let path = if i.is_pull { "pull" } else { "issues" };
+    let path = if i.is_pull { "pulls" } else { "issues" };
     let mut v = json!({
         "id": i.id, "number": i.number, "title": i.title, "body": i.body,
         "state": if i.open { "open" } else { "closed" },
@@ -177,7 +177,7 @@ pub async fn issue_json(pool: &PgPool, base: &str, full_name: &str, issue: i64) 
         "html_url": format!("{base}/{full_name}/{path}/{}", i.number),
     });
     if i.is_pull {
-        v["pull_request"] = json!({"url": format!("{base}/api/v3/repos/{full_name}/pulls/{}", i.number), "html_url": format!("{base}/{full_name}/pull/{}", i.number)});
+        v["pull_request"] = json!({"url": format!("{base}/api/v3/repos/{full_name}/pulls/{}", i.number), "html_url": format!("{base}/{full_name}/pulls/{}", i.number)});
     }
     Ok(v)
 }
@@ -319,7 +319,7 @@ pub async fn build(cx: &Ctx<'_>, ev: &DomainEvent) -> Result<Option<Built>> {
             let Some((text, author, created, updated)) = c else { return Ok(None) };
             let number = issue["number"].as_i64().unwrap_or(0);
             let comment = json!({"id": comment_id.0, "body": text, "user": user_json(pool, base, author).await?, "created_at": created, "updated_at": updated,
-                "html_url": format!("{}/issues/{number}#issuecomment-{}", repository.html_url, comment_id.0)});
+                "html_url": format!("{}/issues/{number}#comment-{}", repository.html_url, comment_id.0)});
             Some(Built {
                 repo_id: Some(*repo_id),
                 event: "issue_comment",
@@ -342,7 +342,7 @@ pub async fn build(cx: &Ctx<'_>, ev: &DomainEvent) -> Result<Option<Built>> {
                     .await?;
             let Some((state, text, sha, author, at)) = r else { return Ok(None) };
             let review = json!({"id": review_id.0, "state": state, "body": text, "commit_id": sha, "user": user_json(pool, base, author).await?, "submitted_at": at,
-                "html_url": format!("{}/pull/{}#pullrequestreview-{}", repository.html_url, pr["number"], review_id.0)});
+                "html_url": format!("{}/pulls/{}#review-{}", repository.html_url, pr["number"], review_id.0)});
             Some(Built {
                 repo_id: Some(*repo_id),
                 event: "pull_request_review",

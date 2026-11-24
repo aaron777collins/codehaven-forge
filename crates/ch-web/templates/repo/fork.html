@@ -20,7 +20,7 @@
     <label class="choice"><input type="radio" name="visibility" value="internal"{% if tier == "internal" %} checked{% endif %}{% if !allow_internal %} disabled{% endif %}> <strong>Internal.</strong> {{ text_internal }}{% if !allow_internal %} <span class="hint">{{ cap_text }}</span>{% endif %}</label>
     <label class="choice"><input type="radio" name="visibility" value="public"{% if tier == "public" %} checked{% endif %}{% if !allow_public %} disabled{% endif %}> <strong>Public.</strong> {{ text_public }}{% if !switch_on %} <span class="hint">Public repositories are off on this server.</span>{% else if !allow_public %} <span class="hint">{{ cap_text }}</span>{% endif %}</label>
     {% call ui::field_error(errors.get("visibility")) %}
-    <p class="hint">A public fork is made private first, then you confirm it on the next page.</p>
+    <p class="hint">A public fork starts as internal, then you confirm it on the next page.</p>
   </fieldset>
   <div class="row">
     <button class="btn btn-primary" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-git-fork"/></svg>Create fork</button>

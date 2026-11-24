@@ -17,7 +17,7 @@ expression: json
   },
   "description": "First release",
   "due_on": "2026-01-02T03:04:05Z",
-  "html_url": "https://code.example.com/octo/haven/milestone/3",
+  "html_url": "https://code.example.com/octo/haven/issues?milestone=7",
   "id": 7,
   "number": 3,
   "open_issues": 2,

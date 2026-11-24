@@ -62,7 +62,7 @@ impl GitCore {
     }
 
     /// May this actor make repositories owned by `owner`?
-    async fn may_create_under(&self, actor: &Actor, owner: UserId) -> Result<()> {
+    pub(crate) async fn may_create_under(&self, actor: &Actor, owner: UserId) -> Result<()> {
         let deny = || Error::forbidden("You cannot create repositories for that account.");
         match actor {
             Actor::System => return Ok(()),
@@ -180,7 +180,7 @@ impl GitCore {
         check_rev(name).map_err(|_| Error::invalid("Repository", "default_branch", "not a valid branch name"))?;
         let full = format!("refs/heads/{name}");
         let out = self.exec_any(self.store.bare_cmd().args(["check-ref-format", &full])).await?;
-        if out.code != 0 || name == "HEAD" || name.starts_with("refs/") {
+        if out.code != 0 || crate::pipeline::is_head_like(name) || name.starts_with("refs/") {
             return Err(Error::invalid("Repository", "default_branch", "not a valid branch name"));
         }
         Ok(())

@@ -602,9 +602,15 @@ async fn hostile_file_names_are_taken_literally_or_refused(pool: PgPool) {
     git.commit_file_change(&a, req(&repo, "main", vec![put("\"README.md\"", "quoted\n")], "quoted"), &c).await.unwrap();
     assert_eq!(git.blob(repo.id, "main", "README.md", 100).await.unwrap().content, b"# demo\n");
     assert_eq!(git.blob(repo.id, "main", "\"README.md\"", 100).await.unwrap().content, b"quoted\n");
-    // A quoted escape stays a backslash and a letter, never a newline.
-    git.commit_file_change(&a, req(&repo, "main", vec![put("\"a\\nb\"", "esc\n")], "escape"), &c).await.unwrap();
-    assert_eq!(git.blob(repo.id, "main", "\"a\\nb\"", 100).await.unwrap().content, b"esc\n");
+    // A backslash is refused outright rather than kept as a backslash and a letter: it is a
+    // folder separator on Windows.
+    assert!(
+        matches!(
+            git.commit_file_change(&a, req(&repo, "main", vec![put("\"a\\nb\"", "esc\n")], "escape"), &c).await,
+            Err(Error::Validation(_))
+        ),
+        "a quoted escape is refused"
+    );
     // Spellings that HFS+ or NTFS fold to .git are refused.
     for path in [".g\u{200c}it/config", ".GIT\u{200d}/hooks/x", "x/.git::$INDEX_ALLOCATION/y", "git~1/config"] {
         assert!(
@@ -619,6 +625,38 @@ async fn hostile_file_names_are_taken_literally_or_refused(pool: PgPool) {
     let swap = vec![FileChange { path: "thing".into(), content: None, renamed_from: None }, put("thing/inner.txt", "inside\n")];
     git.commit_file_change(&a, req(&repo, "main", swap, "file to folder"), &c).await.unwrap();
     assert_eq!(git.blob(repo.id, "main", "thing/inner.txt", 100).await.unwrap().content, b"inside\n");
+}
+
+/// `head` in any case reads as HEAD on a case-insensitive disk, `refs/heads/x` would nest under
+/// `refs/heads/refs/heads/x`, a backslash is a folder separator on Windows, and a bidi control
+/// renames a file in plain sight. None of them may be written; near-misses still work.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn names_that_look_like_something_else_are_refused(pool: PgPool) {
+    let (f, alice, repo) = setup(pool).await;
+    let git = &f.state.git;
+    let a = f.actor(alice);
+    let c = f.client();
+    let before = f.branch_sha(&repo, "main").await;
+    for nb in ["head", "HEAD", "refs/heads/x"] {
+        let mut r = req(&repo, "main", vec![put("n.txt", "n\n")], "New branch");
+        r.new_branch = Some(nb.into());
+        assert!(matches!(git.commit_file_change(&a, r, &c).await, Err(Error::Validation(_))), "{nb}");
+    }
+    for path in ["a\\b.txt", "evil\u{202e}txt.exe", "tab\there"] {
+        assert!(
+            matches!(git.commit_file_change(&a, req(&repo, "main", vec![put(path, "x")], "x"), &c).await, Err(Error::Validation(_))),
+            "{path:?}"
+        );
+    }
+    assert_eq!(f.branch_sha(&repo, "main").await, before, "main did not move");
+    assert_eq!(git.refs(repo.id, None).await.unwrap().len(), 1, "no new branch was made");
+    // Names that merely look like the refused ones still work.
+    let mut ok = req(&repo, "main", vec![put("fine.txt", "f\n")], "Heads up");
+    ok.new_branch = Some("heads-up".into());
+    let sha = git.commit_file_change(&a, ok, &c).await.unwrap();
+    assert_eq!(f.branch_sha(&repo, "heads-up").await, sha);
+    assert_eq!(f.branch_sha(&repo, "main").await, before);
+    git.commit_file_change(&a, req(&repo, "main", vec![put("ok-name.txt", "o\n")], "Ok"), &c).await.unwrap();
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]

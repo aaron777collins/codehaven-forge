@@ -336,6 +336,49 @@ impl Core {
         Ok(out)
     }
 
+    /// Every review comment in the repository's pull requests, each with its pull's number.
+    /// Comments of pending reviews never appear here: a pending review is private to its
+    /// author until submitted, in this list even for that author.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn repo_review_comment_views(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        since: Option<DateTime<Utc>>,
+        sort: &str,
+        direction: &str,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Vec<(ReviewCommentView, i64)>> {
+        self.need_view(actor, repo).await?;
+        let (offset, limit) = util::page(page, per_page);
+        // The ORDER BY is one of four fixed fragments; `sort` and `direction` only pick one.
+        let order = match (sort, direction) {
+            ("updated", "desc") => "c.updated_at DESC, c.id DESC",
+            ("updated", _) => "c.updated_at, c.id",
+            (_, "desc") => "c.created_at DESC, c.id DESC",
+            _ => "c.created_at, c.id",
+        };
+        let sql = format!(
+            "{COMMENT_SELECT} JOIN issues i ON i.id = c.pull_id
+             WHERE i.repo_id = $1 AND ($2::timestamptz IS NULL OR c.updated_at >= $2)
+               AND NOT EXISTS (SELECT 1 FROM reviews p WHERE p.id = c.review_id AND p.state = 'pending')
+             ORDER BY {order} LIMIT $3 OFFSET $4"
+        );
+        let rows = sqlx::query_as::<_, CommentRow>(&sql).bind(repo).bind(since).bind(limit).bind(offset).fetch_all(self.db()).await?;
+        let pulls: Vec<IssueId> = rows.iter().map(|r| r.pull_id).collect();
+        let numbers = self.issue_numbers_of(&pulls).await?;
+        Ok(self
+            .comment_views_for(rows)
+            .await?
+            .into_iter()
+            .map(|v| {
+                let n = numbers.get(&IssueId(v.comment.pull_id.0)).copied().unwrap_or_default();
+                (v, n)
+            })
+            .collect())
+    }
+
     // ------------------------------------------------------------ placing comments
 
     /// Checks each new comment against the diff of the pull request and builds the hunk.
@@ -902,7 +945,7 @@ impl Core {
         };
         let new_sha = self.d.git.commit_file_change(actor, req, client).await?;
         let mut tx = self.db().begin().await?;
-        sqlx::query("UPDATE pull_requests SET head_sha = $2, mergeable_state = 'unknown' WHERE issue_id = $1")
+        sqlx::query("UPDATE pull_requests SET head_sha = $2, synced_head_sha = $2, mergeable_state = 'unknown' WHERE issue_id = $1")
             .bind(issue.id)
             .bind(&new_sha)
             .execute(&mut *tx)

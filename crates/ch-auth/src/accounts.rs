@@ -128,13 +128,18 @@ impl Accounts for AccountsService {
         if recent {
             return Ok(None);
         }
-        // One live link per account and purpose. No session ends here: the request can come
-        // from anyone, and redeeming the link is what signs the account out everywhere.
-        sqlx::query("UPDATE one_time_links SET used_at = now() WHERE user_id = $1 AND purpose = 'reset_password' AND used_at IS NULL")
-            .bind(user)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("INSERT INTO one_time_links (token_hash, user_id, purpose, expires_at) VALUES ($1, $2, 'reset_password', $3)")
+        // One live emailed link per account. No session ends here: the request can come from
+        // anyone, and redeeming a link is what signs the account out everywhere. So a request
+        // replaces only links asked for the same way, never one an admin issued (ch-ev5).
+        sqlx::query(
+            "UPDATE one_time_links SET used_at = now() WHERE user_id = $1 AND purpose = 'reset_password' AND used_at IS NULL AND self_requested",
+        )
+        .bind(user)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO one_time_links (token_hash, user_id, purpose, expires_at, self_requested) VALUES ($1, $2, 'reset_password', $3, true)",
+        )
             .bind(tokens::hash_token(&token))
             .bind(user)
             .bind(expires_at)

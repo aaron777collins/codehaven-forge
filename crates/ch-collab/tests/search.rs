@@ -181,3 +181,21 @@ async fn code_search_across_repositories_only_reads_what_each_person_can(pool: P
     assert!(w.core.search_code_all(&w.carol_a(), "repo:eve/eves needle", 50).await.unwrap().is_empty());
     assert!(w.core.search_code_all(&w.carol_a(), "repo:alice/demo", 50).await.unwrap().is_empty(), "a repo term alone is no query");
 }
+
+/// ch-ev5: on a busy server the newest pushes may all be other people's private repositories.
+/// Code search still reaches the ones the person can read further back.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn code_search_looks_past_a_page_of_unreadable_repositories(pool: PgPool) {
+    let w = world(pool).await;
+    sqlx::query("UPDATE repositories SET is_empty = false, pushed_at = now() - interval '1 day'").execute(&w.pool).await.unwrap();
+    for i in 0..250 {
+        let r = w.env.repo(w.eve, &format!("noise{i}")).await;
+        sqlx::query("UPDATE repositories SET is_empty = false, pushed_at = now() WHERE id = $1").bind(r).execute(&w.pool).await.unwrap();
+    }
+    w.git.st.lock().unwrap().grep_hits =
+        vec![SearchHit { kind: "code".into(), id: 7, title: "src/lib.rs".into(), snippet: "fn needle() {}".into() }];
+    let carol = w.core.search_code_all(&w.carol_a(), "needle", 50).await.unwrap();
+    let mut repos: Vec<String> = carol.iter().map(|h| h.repo.clone()).collect();
+    repos.sort();
+    assert_eq!(repos, vec!["alice/demo", "alice/public-lib"], "found behind 250 newer private repositories");
+}

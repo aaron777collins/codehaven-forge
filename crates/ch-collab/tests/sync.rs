@@ -392,3 +392,25 @@ async fn a_commit_the_server_built_names_the_commit_under_it(pool: PgPool) {
         "{p}"
     );
 }
+
+/// ch-hyd: another refresh (here a push to the base) sees the new head first. The branch
+/// tracker still announces it once, so the push gets its CI run.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_head_seen_first_by_another_refresh_is_still_announced_once(pool: PgPool) {
+    let w = World::new(pool).await;
+    let n = w.pull(w.carol, "x", "").await.pull.issue.number;
+    sync::run_pr_sync_once(&w.core).await.unwrap();
+    let before = w.core.pull_view(&w.carol_a(), w.repo, n).await.unwrap().pull.head_sha;
+    w.git.branch(w.repo, "feature", &sha_of(20));
+    w.git.set_compare(w.repo, &sha_of(2), &sha_of(20), diff_between_heads());
+    // A push to the base is handled first, and its refresh already moves the head.
+    push(&w, "main", &sha_of(2), &sha_of(2), Some(w.bob)).await;
+    push(&w, "feature", &sha_of(2), &sha_of(20), Some(w.carol)).await;
+    sync::run_pr_sync_once(&w.core).await.unwrap();
+    assert_eq!(w.count_events("pr_synchronized").await, 1, "announced although another refresh moved the head first");
+    assert_ne!(before, sha_of(20));
+    // The same push handled again announces nothing new.
+    push(&w, "feature", &sha_of(2), &sha_of(20), Some(w.carol)).await;
+    sync::run_pr_sync_once(&w.core).await.unwrap();
+    assert_eq!(w.count_events("pr_synchronized").await, 1);
+}

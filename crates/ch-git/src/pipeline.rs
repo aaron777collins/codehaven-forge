@@ -21,6 +21,12 @@ pub(crate) fn namespace_allowed(name: &str) -> bool {
     name.starts_with("refs/heads/") || name.starts_with("refs/tags/")
 }
 
+/// True when the branch part of `name` is `HEAD` in some case: on a case-insensitive disk (macOS,
+/// Windows) `refs/heads/head` collides with the repository's own HEAD and confuses every clone.
+pub(crate) fn is_head_like(name: &str) -> bool {
+    name.strip_prefix("refs/heads/").unwrap_or(name).eq_ignore_ascii_case("HEAD")
+}
+
 pub(crate) fn kind_of(u: &RefUpdate) -> UpdateKind {
     if u.old == ZERO_SHA {
         UpdateKind::Create
@@ -79,6 +85,12 @@ async fn check(core: &GitCore, ctx: &PushCtx, repo: &Repo, updates: &[RefUpdate]
         // with a deploy key (which carries `Actor::System` but `Origin::Push`).
         if !namespace_allowed(&u.name) && ctx.origin != Origin::System {
             problems.push(format!("{} is managed by Codehaven and cannot be pushed to.", u.name));
+            continue;
+        }
+        // A new branch named `head` in any case collides with the repository's own HEAD on a
+        // case-insensitive disk (macOS, Windows), and `check-ref-format` alone allows it.
+        if u.old == ZERO_SHA && u.new != ZERO_SHA && u.name.starts_with("refs/heads/") && is_head_like(&u.name) {
+            problems.push(format!("{} is not a valid branch name.", u.name));
             continue;
         }
         if let Actor::App { grant, .. } = &ctx.actor
@@ -335,8 +347,9 @@ impl GitCore {
         }
         let check = self.exec_any(self.store.bare_cmd().args(["check-ref-format", &change.name])).await?;
         // `check-ref-format` allows a component that starts with a dash; a branch named `-x`
-        // would be an option to anything that forgets `--`, so it is refused here.
-        if check.code != 0 || change.name.split('/').any(|c| c.starts_with('-')) || change.name == "refs/heads/HEAD" {
+        // would be an option to anything that forgets `--`, so it is refused here. So is `head`
+        // in any case, which collides with HEAD on a case-insensitive disk.
+        if check.code != 0 || change.name.split('/').any(|c| c.starts_with('-')) || is_head_like(&change.name) {
             return Err(Error::invalid("Reference", "ref", "not a valid reference name"));
         }
         let old = change.old.clone().unwrap_or_else(|| ZERO_SHA.to_string());

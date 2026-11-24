@@ -80,7 +80,15 @@ pub async fn gate(State(state): State<AppState>, mut req: Request, next: Next) -
         return r;
     }
 
-    if access::actor_accepted(&actor, kind) {
+    // A personal access token may download a file a page serves (ch-8ee), nothing else there.
+    let token_file = match (&actor, kind) {
+        (Actor::Token { .. }, RouteKind::Page) => access::token_file_route(&method, &path),
+        _ => None,
+    };
+    if let Some(pattern) = token_file {
+        req.extensions_mut().insert(access::TokenFileRead { pattern });
+    }
+    if access::actor_accepted(&actor, kind) || token_file.is_some() {
         match credential_for(&state, &actor, session_hash).await {
             Ok(Some(c)) => {
                 req.extensions_mut().insert(c);
@@ -101,12 +109,17 @@ pub async fn gate(State(state): State<AppState>, mut req: Request, next: Next) -
     // Public repositories (epic ch-4pn). Only a request with no credential at all: a bad or
     // unaccepted `Authorization` header never turns into a public read. A cookie that did not
     // sign anyone in is ignored.
-    let has_auth_header = req.headers().contains_key(header::AUTHORIZATION);
+    // The registry's literal pull-only token is the one header that counts as none, and only
+    // under `/v2/` (ch-4pn.13).
+    let has_auth_header =
+        req.headers().contains_key(header::AUTHORIZATION) && !(path.starts_with("/v2/") && is_anonymous_bearer(req.headers()));
+    let mut looked_up = false;
     if actor.is_anonymous()
         && !has_auth_header
         && hint.is_none()
         && let Some(m) = access::public_repo_route(&method, &path, req.uri().query())
     {
+        looked_up = true;
         match crate::public_gate::admit(&state, &m, &access::address_key(client.ip)).await {
             crate::public_gate::Admit::Yes(read, permit) => {
                 let cost = read.cost;
@@ -120,8 +133,14 @@ pub async fn gate(State(state): State<AppState>, mut req: Request, next: Next) -
         }
     }
     // Rejections count against the signed-out budget too (ch-ulq). The guard counts what gets in.
+    // A registry challenge that looked nothing up is the first step of every `docker push` and
+    // `docker pull` (the client asks, is challenged, then signs in), so it costs nothing and is
+    // not counted: counting it made busy clients fail with 429 (ch-g7n). Bad credentials have
+    // their own limit.
+    let free_challenge = kind == RouteKind::Registry && !looked_up;
     if let Some(l) = state.ext.get::<ch_auth::guard::SignedOutRejections>()
         && !path.starts_with("/static/")
+        && !free_challenge
         && let Err(wait) = l.hit(client.ip)
     {
         let mut r = match kind {
@@ -248,12 +267,24 @@ async fn credential_for(state: &AppState, actor: &Actor, session_hash: Option<Ve
 
 /// Reads the credentials: `Authorization` first, then the session cookie. When the cookie
 /// signed someone in, `session_hash` gets its hash.
+/// `Authorization: Bearer anonymous`, the token `/v2/token` hands a signed-out registry client.
+/// It names nobody, so it is never looked up and never counts as a failed sign-in.
+fn is_anonymous_bearer(headers: &HeaderMap) -> bool {
+    headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).is_some_and(|a| {
+        let (scheme, rest) = a.split_once(' ').unwrap_or((a, ""));
+        scheme.eq_ignore_ascii_case("bearer") && rest.trim() == ch_registry::ANONYMOUS_TOKEN
+    })
+}
+
 async fn resolve_actor(
     state: &AppState,
     headers: &HeaderMap,
     client: &ClientInfo,
     session_hash: &mut Option<Vec<u8>>,
 ) -> Result<Actor, Error> {
+    if is_anonymous_bearer(headers) {
+        return Ok(Actor::Anonymous);
+    }
     if let Some(auth) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
         let (scheme, rest) = auth.split_once(' ').unwrap_or((auth, ""));
         let rest = rest.trim();

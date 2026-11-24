@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block content %}
+<main id="main" class="page">
+  <h1>Import a repository</h1>
+  <p class="muted">Copy a repository from another server into this one.</p>
+  <section class="card stack">
+    <form method="post" action="/new/import" class="stack">
+      {% call ui::csrf_field(c.csrf) %}
+      {% if !errors.general.is_empty() %}<p class="form-error">{{ errors.general }}</p>{% endif %}
+      <div class="field">
+        <label for="url">Repository address</label>
+        <input id="url" name="url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://example.org/team/tool.git" value="{{ url }}" required>
+        {% call ui::field_error(errors.get("url")) %}
+        <p class="hint">Any git repository anyone can clone over https. Branches and tags come across; issues and pull requests do not. Up to 2 GB.</p>
+      </div>
+      <div class="field">
+        <label for="owner_id">Owner</label>
+        <select id="owner_id" name="owner_id">
+          {% for o in owners %}
+          <option value="{{ o.id }}"{% if o.selected %} selected{% endif %}>{{ o.login }}</option>
+          {% endfor %}
+        </select>
+        {% call ui::field_error(errors.get("owner_id")) %}
+        <p class="hint">Organizations you own also appear here.</p>
+      </div>
+      <div class="field">
+        <label for="name">Repository name</label>
+        <input id="name" name="name" type="text" value="{{ name }}" maxlength="100">
+        {% call ui::field_error(errors.get("name")) %}
+        <p class="hint">Leave it empty to use the name in the address.</p>
+      </div>
+      <div class="field">
+        <label for="description">Description <span class="muted">(optional)</span></label>
+        <input id="description" name="description" type="text" value="{{ description }}" maxlength="200">
+        {% call ui::field_error(errors.get("description")) %}
+      </div>
+      <fieldset class="field">
+        <legend>Visibility</legend>
+        <label class="choice"><input type="radio" name="visibility" value="private"{% if tier == "private" %} checked{% endif %}> <strong>Private.</strong> {{ text_private }}</label>
+        <label class="choice"><input type="radio" name="visibility" value="internal"{% if tier == "internal" %} checked{% endif %}> <strong>Internal.</strong> {{ text_internal }}</label>
+      </fieldset>
+      <div class="inline">
+        <button class="btn btn-primary" type="submit">Import repository</button>
+      </div>
+    </form>
+  </section>
+</main>
+{% endblock %}

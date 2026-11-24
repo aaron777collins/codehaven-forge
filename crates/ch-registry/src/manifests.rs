@@ -142,13 +142,20 @@ async fn find_manifest(state: &AppState, pkg: &Package, reference: &Reference) -
     row.ok_or_else(RegError::manifest_unknown)
 }
 
+/// A reference to write under: anything that is not a tag or a sha256 digest is invalid.
 fn reference(s: &str) -> RegResult<Reference> {
     parse_reference(s).ok_or_else(|| RegError::manifest_invalid("the reference must be a tag or a sha256 digest"))
 }
 
+/// A reference to read or delete: one that could never name a manifest is simply not found,
+/// which is what clients (and the conformance suite) expect for a made-up name.
+fn existing_reference(s: &str) -> RegResult<Reference> {
+    parse_reference(s).ok_or_else(RegError::manifest_unknown)
+}
+
 /// `GET` and `HEAD /v2/<name>/manifests/<reference>`.
 pub async fn get(state: &AppState, pkg: &Package, reference_str: &str, head: bool) -> RegResult<Response> {
-    let m = find_manifest(state, pkg, &reference(reference_str)?).await?;
+    let m = find_manifest(state, pkg, &existing_reference(reference_str)?).await?;
     let len = m.content.len();
     let mut r = if head { base(StatusCode::OK) } else { Response::new(Body::from(m.content)) };
     set(&mut r, "docker-distribution-api-version", "registry/2.0");
@@ -243,7 +250,7 @@ pub async fn put(state: &AppState, pkg: &Package, reference_str: &str, content_t
 /// `DELETE /v2/<name>/manifests/<reference>`: a digest removes the manifest and its tags, a
 /// tag removes just the tag.
 pub async fn delete(state: &AppState, pkg: &Package, reference_str: &str) -> RegResult<Response> {
-    match reference(reference_str)? {
+    match existing_reference(reference_str)? {
         Reference::Digest(d) => {
             let gone = sqlx::query("DELETE FROM oci_manifests WHERE package_id = $1 AND digest = $2")
                 .bind(pkg.id)
@@ -269,6 +276,9 @@ pub async fn delete(state: &AppState, pkg: &Package, reference_str: &str) -> Reg
 pub async fn tags(state: &AppState, pkg: &Package, q: &std::collections::HashMap<String, String>) -> RegResult<Response> {
     let n: i64 = q.get("n").and_then(|v| v.parse().ok()).unwrap_or(1000).clamp(1, 1000);
     let last = q.get("last").cloned().unwrap_or_default();
+    if last.contains('\0') {
+        return Err(RegError::unsupported(StatusCode::BAD_REQUEST, "last must not contain a NUL byte"));
+    }
     // Byte order, which is what clients that page through the list expect.
     let mut names: Vec<(String,)> =
         sqlx::query_as("SELECT name FROM oci_tags WHERE package_id = $1 AND name COLLATE \"C\" > $2 ORDER BY name COLLATE \"C\" LIMIT $3")
@@ -290,8 +300,11 @@ pub async fn tags(state: &AppState, pkg: &Package, q: &std::collections::HashMap
     Ok(r)
 }
 
-/// `GET /v2/<name>/referrers/<digest>`: manifests that name this one as their subject.
-pub async fn referrers(state: &AppState, pkg: &Package, digest: &str) -> RegResult<Response> {
+/// `GET /v2/<name>/referrers/<digest>`: manifests that name this one as their subject, as an
+/// image index of descriptors. Each descriptor carries the manifest's annotations and its
+/// artifact type (the `artifactType` field, or for an image manifest without one, its config's
+/// media type). `?artifactType=` filters, and `OCI-Filters-Applied` says so.
+pub async fn referrers(state: &AppState, pkg: &Package, digest: &str, artifact_type: Option<&str>) -> RegResult<Response> {
     if !is_digest(digest) {
         return Err(RegError::digest_invalid("the digest must be sha256: and 64 lowercase hex characters"));
     }
@@ -303,18 +316,35 @@ pub async fn referrers(state: &AppState, pkg: &Package, digest: &str) -> RegResu
     let mut manifests = Vec::new();
     for (d, media_type, size, content) in rows {
         let Ok(v) = serde_json::from_slice::<Value>(&content) else { continue };
-        if v.get("subject").and_then(|s| s.get("digest")).and_then(Value::as_str) == Some(digest) {
-            let mut entry = serde_json::json!({ "mediaType": media_type, "digest": d, "size": size });
-            if let Some(a) = v.get("artifactType") {
-                entry["artifactType"] = a.clone();
-            }
-            manifests.push(entry);
+        if v.get("subject").and_then(|s| s.get("digest")).and_then(Value::as_str) != Some(digest) {
+            continue;
         }
+        let kind = v
+            .get("artifactType")
+            .and_then(Value::as_str)
+            .filter(|a| !a.is_empty())
+            .or_else(|| v.get("config").and_then(|c| c.get("mediaType")).and_then(Value::as_str));
+        if let Some(want) = artifact_type
+            && kind != Some(want)
+        {
+            continue;
+        }
+        let mut entry = serde_json::json!({ "mediaType": media_type, "digest": d, "size": size });
+        if let Some(k) = kind {
+            entry["artifactType"] = Value::String(k.to_string());
+        }
+        if let Some(a) = v.get("annotations").filter(|a| a.is_object()) {
+            entry["annotations"] = a.clone();
+        }
+        manifests.push(entry);
     }
     let body = serde_json::json!({ "schemaVersion": 2, "mediaType": OCI_INDEX, "manifests": manifests }).to_string();
     let mut r = Response::new(Body::from(body));
     set(&mut r, "content-type", OCI_INDEX);
     set(&mut r, "docker-distribution-api-version", "registry/2.0");
+    if artifact_type.is_some() {
+        set(&mut r, "oci-filters-applied", "artifactType");
+    }
     Ok(r)
 }
 

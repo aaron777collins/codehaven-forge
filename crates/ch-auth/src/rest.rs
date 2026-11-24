@@ -330,7 +330,7 @@ fn org_dto(s: &AppState, o: &ch_core::identity::Org) -> dto::Organization {
         login: o.name.clone(),
         id: o.id.0,
         url: format!("{b}/api/v3/orgs/{}", o.name),
-        html_url: format!("{b}/orgs/{}", o.name),
+        html_url: format!("{b}/{}", o.name),
         avatar_url: ch_api_types::avatar_url(&b, &o.name),
         description: Some(o.description.clone()).filter(|d| !d.is_empty()),
         name: Some(o.display_name.clone()).filter(|d| !d.is_empty()),

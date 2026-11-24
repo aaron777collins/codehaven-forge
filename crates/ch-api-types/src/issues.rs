@@ -290,7 +290,7 @@ mod tests {
             created_at: crate::t0(),
             updated_at: crate::t0(),
             url: "https://code.example.com/api/v3/repos/octo/haven/milestones/3".into(),
-            html_url: "https://code.example.com/octo/haven/milestone/3".into(),
+            html_url: "https://code.example.com/octo/haven/issues?milestone=7".into(),
             creator: Some(crate::user("octocat", 1)),
         };
         crate::roundtrip("issues_milestone", &m);
@@ -300,7 +300,7 @@ mod tests {
     fn issues_pull_request_ref() {
         let r = PullRequestRef {
             url: "https://code.example.com/api/v3/repos/octo/haven/pulls/9".into(),
-            html_url: "https://code.example.com/octo/haven/pull/9".into(),
+            html_url: "https://code.example.com/octo/haven/pulls/9".into(),
             merged_at: Some(crate::t0()),
         };
         crate::roundtrip("issues_pull_request_ref", &r);
@@ -385,7 +385,7 @@ mod tests {
             user: crate::user("octocat", 1),
             created_at: crate::t0(),
             updated_at: crate::t0(),
-            html_url: "https://code.example.com/octo/haven/issues/42#issuecomment-11".into(),
+            html_url: "https://code.example.com/octo/haven/issues/42#comment-11".into(),
             url: "https://code.example.com/api/v3/repos/octo/haven/issues/comments/11".into(),
             issue_url: "https://code.example.com/api/v3/repos/octo/haven/issues/42".into(),
             reactions: None,

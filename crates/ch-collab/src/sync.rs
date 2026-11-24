@@ -130,7 +130,11 @@ async fn head_moved(
     built_on: Option<String>,
 ) -> Result<()> {
     for (issue, pull) in core.open_pulls_by_head(repo, branch).await? {
-        let old_head = pull.head_sha.clone();
+        // What was last announced, not `head_sha`: a page view or a merge refreshes the pull
+        // request too, and must not swallow this push's `synchronize` (ch-hyd).
+        let synced: Option<String> =
+            sqlx::query_scalar("SELECT synced_head_sha FROM pull_requests WHERE issue_id = $1").bind(issue.id).fetch_one(core.db()).await?;
+        let old_head = synced.clone().unwrap_or_else(|| pull.head_sha.clone());
         core.refresh_pull(&issue, &pull).await;
         let fresh = core.pull_row(issue.id).await?;
         if fresh.head_sha == old_head {
@@ -146,6 +150,18 @@ async fn head_moved(
         // for the commit under it. CI counts them only if that commit was itself let run.
         let built_on = if origin_known { built_on.clone() } else { None };
         let mut tx = core.db().begin().await?;
+        // Claimed in the transaction, so two pushes handled at once announce one head once.
+        let claimed =
+            sqlx::query("UPDATE pull_requests SET synced_head_sha = $2 WHERE issue_id = $1 AND synced_head_sha IS NOT DISTINCT FROM $3")
+                .bind(issue.id)
+                .bind(&fresh.head_sha)
+                .bind(&synced)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+        if claimed == 0 {
+            continue;
+        }
         Core::add_event(&mut tx, issue.id, pusher, "head_ref_updated", json!({ "before": old_head, "after": fresh.head_sha })).await?;
         if pull.auto_merge_method.is_some() {
             // New code from a connected app, from nobody that can be named, or from someone

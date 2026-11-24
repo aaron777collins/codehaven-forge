@@ -76,7 +76,7 @@ impl Ctx {
             created_at: m.created_at,
             updated_at: m.closed_at.unwrap_or(m.created_at),
             url: self.api(&format!("/milestones/{}", m.number)),
-            html_url: self.html(&format!("/milestone/{}", m.number)),
+            html_url: self.html(&format!("/issues?milestone={}", m.id.0)),
             creator: None,
         }
     }
@@ -117,13 +117,13 @@ impl Ctx {
             updated_at: v.issue.updated_at,
             closed_at: v.issue.closed_at,
             closed_by: v.closed_by.as_ref().map(|u| self.user(u)),
-            html_url: self.html(&format!("/{}/{}", if v.issue.is_pull { "pull" } else { "issues" }, n)),
+            html_url: self.html(&format!("/{}/{}", if v.issue.is_pull { "pulls" } else { "issues" }, n)),
             url: self.api(&format!("/issues/{n}")),
             repository_url: self.api(""),
             comments_url: self.api(&format!("/issues/{n}/comments")),
             pull_request: v.issue.is_pull.then(|| api_i::PullRequestRef {
                 url: self.api(&format!("/pulls/{n}")),
-                html_url: self.html(&format!("/pull/{n}")),
+                html_url: self.html(&format!("/pulls/{n}")),
                 merged_at: v.merged_at,
             }),
             reactions: Some(self.reactions(&format!("/issues/{n}/reactions"), &v.reactions)),
@@ -138,7 +138,7 @@ impl Ctx {
             user: self.user(&c.author),
             created_at: c.comment.created_at,
             updated_at: c.comment.updated_at,
-            html_url: self.html(&format!("/issues/{issue_number}#issuecomment-{id}")),
+            html_url: self.html(&format!("/issues/{issue_number}#comment-{id}")),
             url: self.api(&format!("/issues/comments/{id}")),
             issue_url: self.api(&format!("/issues/{issue_number}")),
             reactions: Some(self.reactions(&format!("/issues/comments/{id}/reactions"), &c.reactions)),
@@ -230,9 +230,9 @@ impl Ctx {
             url: self.api(&format!("/pulls/{n}")),
             id: v.pull.issue.id.0,
             number: n,
-            html_url: self.html(&format!("/pull/{n}")),
-            diff_url: self.html(&format!("/pull/{n}.diff")),
-            patch_url: self.html(&format!("/pull/{n}.patch")),
+            html_url: self.html(&format!("/pulls/{n}")),
+            diff_url: self.html(&format!("/pulls/{n}/files")),
+            patch_url: self.html(&format!("/pulls/{n}/files")),
             state: if v.pull.issue.open { "open" } else { "closed" }.into(),
             locked: v.pull.issue.locked,
             title: v.pull.issue.title.clone(),
@@ -292,7 +292,7 @@ impl Ctx {
             }),
             links: Some(api_p::PullLinks {
                 self_link: api_p::Link { href: self.api(&format!("/pulls/{n}")) },
-                html: api_p::Link { href: self.html(&format!("/pull/{n}")) },
+                html: api_p::Link { href: self.html(&format!("/pulls/{n}")) },
                 issue: api_p::Link { href: self.api(&format!("/issues/{n}")) },
                 comments: api_p::Link { href: self.api(&format!("/issues/{n}/comments")) },
                 review_comments: api_p::Link { href: self.api(&format!("/pulls/{n}/comments")) },
@@ -385,7 +385,7 @@ impl Ctx {
             .into(),
             commit_id: Some(r.commit_sha.clone()),
             submitted_at: r.submitted_at,
-            html_url: self.html(&format!("/pull/{number}#pullrequestreview-{}", r.id.0)),
+            html_url: self.html(&format!("/pulls/{number}#review-{}", r.id.0)),
             pull_request_url: self.api(&format!("/pulls/{number}")),
             author_association: v.association.clone(),
         }
@@ -404,7 +404,7 @@ impl Ctx {
             body: rc.body.clone(),
             created_at: rc.created_at,
             updated_at: rc.updated_at,
-            html_url: self.html(&format!("/pull/{number}#discussion_r{}", rc.id.0)),
+            html_url: self.html(&format!("/pulls/{number}/files")),
             pull_request_url: self.api(&format!("/pulls/{number}")),
             line: if rc.outdated { None } else { rc.line },
             original_line: rc.original_line,
@@ -509,7 +509,7 @@ mod tests {
     fn urls() {
         let c = Ctx::new("https://h.example/", "octo", "haven");
         assert_eq!(c.api("/issues/1"), "https://h.example/api/v3/repos/octo/haven/issues/1");
-        assert_eq!(c.html("/pull/2"), "https://h.example/octo/haven/pull/2");
+        assert_eq!(c.html("/pulls/2"), "https://h.example/octo/haven/pulls/2");
         let c = Ctx::from_full_name("https://h", "a/b");
         assert_eq!((c.owner.as_str(), c.repo.as_str()), ("a", "b"));
     }

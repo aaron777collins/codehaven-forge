@@ -156,7 +156,7 @@ async fn an_issue_goes_through_its_life(pool: PgPool) {
     let r = api.call(&carol, "POST", &format!("{R}/issues/1/comments"), Some(json!({ "body": "me too" }))).await;
     assert_eq!(r.status, StatusCode::CREATED);
     let cid = r.json()["id"].as_i64().unwrap();
-    assert_eq!(r.json()["html_url"], format!("https://test.example/alice/demo/issues/1#issuecomment-{cid}"));
+    assert_eq!(r.json()["html_url"], format!("https://test.example/alice/demo/issues/1#comment-{cid}"));
     assert_eq!(api.get(&carol, &format!("{R}/issues/1/comments")).await.json().as_array().unwrap().len(), 1);
     assert_eq!(
         api.call(&carol, "PATCH", &format!("{R}/issues/comments/{cid}"), Some(json!({ "body": "edited" }))).await.json()["body"],
@@ -240,6 +240,15 @@ async fn lists_page_with_link_headers_and_filters(pool: PgPool) {
     let mine = api.get(&carol, "/issues?filter=assigned").await.json();
     assert_eq!(mine[0]["repository_url"], "https://test.example/api/v3/repos/alice/demo");
     assert_eq!(api.get(&carol, "/user/issues?filter=bogus").await.status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_nul_byte_in_a_query_is_a_validation_error_not_a_crash(pool: PgPool) {
+    let w = World::new(pool).await;
+    let api = Api::new(&w).await;
+    let carol = w.carol_a();
+    let r = api.get(&carol, &format!("{R}/issues?labels=%00")).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", String::from_utf8_lossy(&r.body));
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
@@ -362,7 +371,7 @@ async fn a_pull_request_goes_through_its_life(pool: PgPool) {
         (j["commits"].as_i64(), j["additions"].as_i64(), j["deletions"].as_i64(), j["changed_files"].as_i64()),
         (Some(1), Some(2), Some(1), Some(1))
     );
-    assert_eq!(j["html_url"], "https://test.example/alice/demo/pull/1");
+    assert_eq!(j["html_url"], "https://test.example/alice/demo/pulls/1");
     assert_eq!(
         api.get(&carol, &format!("{R}/issues/1")).await.json()["pull_request"]["url"],
         "https://test.example/api/v3/repos/alice/demo/pulls/1"
@@ -704,4 +713,104 @@ async fn a_read_only_token_cannot_change_anything(pool: PgPool) {
     }
     assert_eq!(api.call(&full, "POST", &format!("{R}/issues"), Some(json!({ "title": "t" }))).await.status, StatusCode::CREATED);
     assert_eq!(w.env.count("issues").await, 2, "only the full token's issue was created");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn repo_wide_issue_comments_list_every_thread_in_order(pool: PgPool) {
+    let w = World::new(pool).await;
+    let api = Api::new(&w).await;
+    let carol = w.carol_a();
+    // Two issues, then a pull request. A pull request is an issue row, so it takes conversation
+    // comments through the same per-issue endpoint.
+    for t in ["one", "two"] {
+        assert_eq!(api.call(&carol, "POST", &format!("{R}/issues"), Some(json!({ "title": t }))).await.status, StatusCode::CREATED);
+    }
+    assert_eq!(
+        api.call(&carol, "POST", &format!("{R}/pulls"), Some(json!({ "title": "pr", "head": "feature", "base": "main" }))).await.status,
+        StatusCode::CREATED
+    );
+    for (n, body) in [(1, "first"), (1, "second"), (2, "third"), (3, "on the pull")] {
+        let r = api.call(&carol, "POST", &format!("{R}/issues/{n}/comments"), Some(json!({ "body": body }))).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.message());
+    }
+
+    let bodies =
+        |r: &Reply| -> Vec<String> { r.json().as_array().unwrap().iter().map(|c| c["body"].as_str().unwrap().to_string()).collect() };
+    let issue_urls =
+        |r: &Reply| -> Vec<String> { r.json().as_array().unwrap().iter().map(|c| c["issue_url"].as_str().unwrap().to_string()).collect() };
+
+    // Oldest first, each item the same JSON as the per-issue list gives.
+    let r = api.get(&carol, &format!("{R}/issues/comments")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(bodies(&r), vec!["first", "second", "third", "on the pull"]);
+    assert_eq!(
+        issue_urls(&r),
+        vec![
+            "https://test.example/api/v3/repos/alice/demo/issues/1",
+            "https://test.example/api/v3/repos/alice/demo/issues/1",
+            "https://test.example/api/v3/repos/alice/demo/issues/2",
+            "https://test.example/api/v3/repos/alice/demo/issues/3",
+        ]
+    );
+
+    let r = api.get(&carol, &format!("{R}/issues/comments?direction=desc")).await;
+    assert_eq!(bodies(&r), vec!["on the pull", "third", "second", "first"]);
+
+    let r = api.get(&carol, &format!("{R}/issues/comments?per_page=1")).await;
+    assert_eq!(bodies(&r), vec!["first"]);
+    let link = r.headers[header::LINK].to_str().unwrap().to_string();
+    assert!(link.contains("page=2") && link.contains("rel=\"next\""), "{link}");
+
+    // `since` keeps only comments updated at or after it.
+    assert_eq!(api.get(&carol, &format!("{R}/issues/comments?since=2030-01-01T00:00:00Z")).await.json().as_array().unwrap().len(), 0);
+    assert_eq!(api.get(&carol, &format!("{R}/issues/comments?since=yesterday")).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // A repository the caller cannot see answers like one that does not exist.
+    assert_eq!(api.get(&w.eve_a(), &format!("{R}/issues/comments")).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(api.get(&carol, "/repos/alice/does-not-exist/issues/comments").await.status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn repo_wide_review_comments_skip_pending_reviews(pool: PgPool) {
+    let w = World::new(pool).await;
+    let api = Api::new(&w).await;
+    let (carol, dave) = (w.carol_a(), w.dave_a());
+    api.call(&carol, "POST", &format!("{R}/pulls"), Some(json!({ "title": "x", "head": "feature", "base": "main" }))).await;
+    // One submitted review comment and one comment inside a review still pending.
+    let r = api
+        .call(
+            &dave,
+            "POST",
+            &format!("{R}/pulls/1/reviews"),
+            Some(
+                json!({ "event": "COMMENT", "comments": [{ "path": "src/lib.rs", "line": 2, "side": "RIGHT", "body": "submitted note" }] }),
+            ),
+        )
+        .await;
+    assert_eq!((r.status, r.json()["state"].as_str()), (StatusCode::OK, Some("COMMENTED")), "{}", r.message());
+    let r = api
+        .call(
+            &dave,
+            "POST",
+            &format!("{R}/pulls/1/reviews"),
+            Some(json!({ "comments": [{ "path": "src/lib.rs", "line": 3, "side": "RIGHT", "body": "pending note" }] })),
+        )
+        .await;
+    assert_eq!((r.status, r.json()["state"].as_str()), (StatusCode::OK, Some("PENDING")), "{}", r.message());
+
+    // The per-pull list shows the author their own pending comment. The repository-wide list
+    // never does, not even to the pending review's author.
+    assert_eq!(api.get(&dave, &format!("{R}/pulls/1/comments")).await.json().as_array().unwrap().len(), 2);
+    let r = api.get(&carol, &format!("{R}/pulls/comments")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", String::from_utf8_lossy(&r.body));
+    let list = r.json();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(
+        (list[0]["body"].as_str(), list[0]["pull_request_url"].as_str()),
+        (Some("submitted note"), Some("https://test.example/api/v3/repos/alice/demo/pulls/1"))
+    );
+    let r = api.get(&dave, &format!("{R}/pulls/comments")).await;
+    assert_eq!(r.json().as_array().unwrap().len(), 1, "a pending review is private to its author until submitted");
+    assert_eq!(r.json()[0]["body"], "submitted note");
+    assert_eq!(api.get(&w.eve_a(), &format!("{R}/pulls/comments")).await.status, StatusCode::NOT_FOUND);
 }

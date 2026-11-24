@@ -8,6 +8,7 @@
 pub mod deliver;
 pub mod fanout;
 pub mod mail;
+pub mod mail_queue;
 pub mod notifications;
 pub mod payload;
 pub mod rest;
@@ -35,7 +36,7 @@ const BATCH: i64 = 100;
 pub fn workers(state: &AppState) -> Vec<Worker> {
     let mut v = Vec::new();
 
-    let fan = fanout::Fanout::new(state.db.clone(), state.authz.clone());
+    let fan = fanout::Fanout::new(state.db.clone(), state.authz.clone()).with_mail(state.mail.enabled());
     let s = state.clone();
     v.push(Worker::new("notify-fanout", move |stop| async move {
         consume(&s, "notifications", stop, |ev| {
@@ -44,6 +45,23 @@ pub fn workers(state: &AppState) -> Vec<Worker> {
         })
         .await
     }));
+
+    // Notification emails (ch-0km). Without mail settings there is nothing to send and nothing
+    // is queued.
+    if state.mail.enabled() {
+        let sender = mail_queue::Sender::new(state.db.clone(), state.authz.clone(), state.mail.clone(), &state.config.server.external_url);
+        v.push(Worker::new("notify-mail", move |stop| async move {
+            loop {
+                let did = sender.run_due(20).await.unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "notification email sweep failed");
+                    0
+                });
+                if did == 0 {
+                    tokio::select! { _ = stop.cancelled() => return, _ = tokio::time::sleep(Duration::from_secs(10)) => {} }
+                }
+            }
+        }));
+    }
 
     let s = state.clone();
     v.push(Worker::new("webhook-queue", move |stop| async move {

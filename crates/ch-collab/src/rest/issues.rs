@@ -11,6 +11,7 @@ use ch_core::collab::*;
 use ch_core::model::*;
 use ch_core::state::AppState;
 use ch_core::{Actor, CommentId, Error, FieldError, Result, UserId};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 pub fn routes() -> Router<AppState> {
@@ -22,6 +23,7 @@ pub fn routes() -> Router<AppState> {
         .route("/repos/{owner}/{repo}/issues/{number}/lock", put(lock_issue).delete(unlock_issue))
         .route("/repos/{owner}/{repo}/issues/{number}/pin", put(pin_issue).delete(unpin_issue))
         .route("/repos/{owner}/{repo}/issues/{number}/comments", get(list_comments).post(add_comment))
+        .route("/repos/{owner}/{repo}/issues/comments", get(list_repo_comments))
         .route("/repos/{owner}/{repo}/issues/comments/{id}", get(get_comment).patch(edit_comment).delete(delete_comment))
         .route("/repos/{owner}/{repo}/issues/{number}/labels", get(issue_labels).post(add_labels).put(set_labels).delete(clear_labels))
         .route("/repos/{owner}/{repo}/issues/{number}/labels/{name}", axum::routing::delete(remove_label))
@@ -334,6 +336,66 @@ async fn list_comments(
     let per = paging.per_page() as usize;
     let page: Vec<_> = all.iter().skip((paging.page() as usize - 1) * per).take(per).map(|c| ctx.comment(c, number)).collect();
     Ok(page_of(page, &uri, base(&s), paging))
+}
+
+/// `since`, `sort` and `direction`, the query both repository-wide comment lists share.
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct CommentListQuery {
+    since: Option<String>,
+    sort: Option<String>,
+    direction: Option<String>,
+}
+
+/// The parsed query, with `sort` and `direction` already defaulted.
+pub(super) struct CommentList {
+    pub since: Option<DateTime<Utc>>,
+    pub sort: &'static str,
+    pub direction: &'static str,
+}
+
+pub(super) fn comment_list_of(q: &CommentListQuery) -> Result<CommentList> {
+    let since = match &q.since {
+        None => None,
+        Some(s) => Some(
+            DateTime::parse_from_rfc3339(s)
+                .map_err(|_| Error::invalid("Comment", "since", "since must be an ISO 8601 time"))?
+                .with_timezone(&Utc),
+        ),
+    };
+    let sort = match q.sort.as_deref() {
+        None | Some("created") => "created",
+        Some("updated") => "updated",
+        Some(_) => return Err(Error::invalid("Comment", "sort", "sort must be created or updated")),
+    };
+    let direction = match q.direction.as_deref() {
+        None | Some("asc") => "asc",
+        Some("desc") => "desc",
+        Some(_) => return Err(Error::invalid("Comment", "direction", "direction must be asc or desc")),
+    };
+    Ok(CommentList { since, sort, direction })
+}
+
+/// The collab engine over the finished state, the way `workers` builds one. The repository-wide
+/// comment lists are the one pair of routes that read from it directly rather than through the
+/// service traits.
+pub(super) fn core_of(s: &AppState) -> crate::Core {
+    crate::Core::new(crate::deps::Deps::from_state(s))
+}
+
+/// Every conversation comment on the repository's issues and pull requests, oldest first.
+async fn list_repo_comments(
+    State(s): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Path((owner, name)): Path<(String, String)>,
+    Query(q): Query<CommentListQuery>,
+    Query(paging): Query<Paging>,
+    OriginalUri(uri): OriginalUri,
+) -> Result<Response> {
+    let (repo, ctx) = repo_of(&s, &actor, &owner, &name).await?;
+    let list = comment_list_of(&q)?;
+    let views =
+        core_of(&s).repo_comment_views(&actor, repo.id, list.since, list.sort, list.direction, paging.page(), paging.per_page()).await?;
+    Ok(page_of(views.iter().map(|(c, n)| ctx.comment(c, *n)).collect(), &uri, base(&s), paging))
 }
 
 async fn add_comment(

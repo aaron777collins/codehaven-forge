@@ -54,9 +54,17 @@ fn scope_allows(actor: &Actor, access: Access) -> bool {
             Access::Push => Scopes::has(scopes, "write:packages"),
         },
         Actor::User { .. } | Actor::System => true,
+        // A signed-out pull, let in by the gate only for an image linked to a public repository
+        // (ch-4pn.13). Never a push.
+        Actor::Anonymous => access == Access::Pull,
         _ => false,
     }
 }
+
+/// What pulling a linked image needs on its repository: View, the same as reading its files.
+/// So anyone who may read an internal or public repository may pull its images, and a
+/// signed-out visitor may pull those of a public one (spec section 4, "Packages and registry").
+const PULL_NEEDS: Permission = Permission::View;
 
 async fn owner_kind(state: &AppState, owner: &str) -> RegResult<Option<(i64, String, String)>> {
     let row: Option<(i64, String, String)> = sqlx::query_as("SELECT id, kind, username::text FROM users WHERE username = $1::citext")
@@ -121,6 +129,53 @@ fn as_person(actor: &Actor) -> Actor {
     }
 }
 
+/// Does the credential carry any package access at all? The catalog asks this once before it
+/// reads a single row.
+pub fn may_list(actor: &Actor) -> bool {
+    scope_allows(actor, Access::Pull)
+}
+
+/// Answers already worked out during one listing, so many images of one repository or one
+/// owner cost one permission lookup, not one each. Only ever lives for one request.
+#[derive(Default)]
+pub struct PullMemo {
+    repo: std::collections::HashMap<i64, bool>,
+    owner: std::collections::HashMap<(i64, bool), bool>,
+}
+
+/// May the actor pull an image that exists? The same rule `authorize` applies to a found image,
+/// asked without side effects and answering "no" where `authorize` would answer 403 or 404.
+/// The catalog uses it to list only what the caller could pull. The answer for a repository
+/// (or for an owner, when the image has no repository) is the same for every image behind it,
+/// so `memo` keeps it for the rest of the listing; the rule itself is not restated anywhere.
+pub async fn can_pull(state: &AppState, actor: &Actor, pkg: &Package, owner_is_org: bool, memo: &mut PullMemo) -> RegResult<bool> {
+    if !scope_allows(actor, Access::Pull) {
+        return Ok(false);
+    }
+    match pkg.repo_id {
+        Some(repo) => {
+            if let Some(&known) = memo.repo.get(&repo) {
+                return Ok(known);
+            }
+            let allowed = match state.authz.require(&as_person(actor), RepoId(repo), PULL_NEEDS).await {
+                Ok(()) => true,
+                Err(ch_core::Error::NotFound | ch_core::Error::Forbidden(_)) => false,
+                Err(e) => return Err(e.into()),
+            };
+            memo.repo.insert(repo, allowed);
+            Ok(allowed)
+        }
+        None => {
+            if let Some(&known) = memo.owner.get(&(pkg.owner_id, pkg.orphaned)) {
+                return Ok(known);
+            }
+            let allowed = owner_allows(state, actor, pkg.owner_id, owner_is_org, Access::Pull, pkg.orphaned).await?;
+            memo.owner.insert((pkg.owner_id, pkg.orphaned), allowed);
+            Ok(allowed)
+        }
+    }
+}
+
 /// Finds the image and checks the access. `create` lets a push make the image on first use.
 /// An image the caller may not read looks the same as one that does not exist.
 pub async fn authorize(
@@ -146,7 +201,7 @@ pub async fn authorize(
     if let Some(pkg) = find(state, owner, image).await? {
         let allowed = match pkg.repo_id {
             Some(repo) => {
-                let needed = if access == Access::Push { Permission::Write } else { Permission::Read };
+                let needed = if access == Access::Push { Permission::Write } else { PULL_NEEDS };
                 match state.authz.require(&person, RepoId(repo), needed).await {
                     Ok(()) => true,
                     Err(ch_core::Error::NotFound) => return Err(RegError::name_unknown()),
@@ -181,12 +236,14 @@ pub async fn authorize(
         });
     }
     // A repository with the same name as the image is linked, so its permissions apply, but
-    // only when the pusher can write to it.
-    let linked: Option<(i64,)> = sqlx::query_as("SELECT id FROM repositories WHERE owner_id = $1 AND name = $2::citext")
-        .bind(owner_id)
-        .bind(image)
-        .fetch_optional(&state.db)
-        .await?;
+    // only when the pusher can write to it, and never when it is public: a first push must not
+    // publish an image by itself (ch-4pn.13). Such an image starts as its owner's alone.
+    let linked: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM repositories WHERE owner_id = $1 AND name = $2::citext AND access_tier <> 'public'")
+            .bind(owner_id)
+            .bind(image)
+            .fetch_optional(&state.db)
+            .await?;
     let repo_id = match linked {
         Some((id,)) if state.authz.require(&person, RepoId(id), Permission::Write).await.is_ok() => Some(id),
         _ => None,
@@ -217,7 +274,8 @@ mod tests {
         assert!(scope_allows(&tok(&["write:packages"]), Access::Pull));
         assert!(!scope_allows(&tok(&["repo"]), Access::Pull), "repo access is not package access");
         assert!(!scope_allows(&tok(&[]), Access::Pull));
-        assert!(!scope_allows(&Actor::Anonymous, Access::Pull));
+        assert!(scope_allows(&Actor::Anonymous, Access::Pull), "the gate decides which images");
+        assert!(!scope_allows(&Actor::Anonymous, Access::Push));
         assert!(scope_allows(&Actor::User { id: UserId(1), is_admin: false, has_2fa: false, via: ch_core::AuthVia::Basic }, Access::Push));
     }
 }

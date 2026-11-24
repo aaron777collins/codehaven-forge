@@ -9,6 +9,7 @@
 # `deploy/compose.sh exec server codehaven admin runner-token`), passed in the environment so it
 # stays out of `ps`. The name is the argument, else CODEHAVEN_RUNNER_NAME:
 #   HAVEN_RUNNER_TOKEN=<token> sudo -E bash deploy/prod/ci-up.sh register [name]
+#   HAVEN_RUNNER_TOKEN=<token> sudo -E bash deploy/prod/ci-up.sh register [name] --replace   (after a restore: replaces the saved .runner)
 #
 # Then: sudo bash deploy/prod/ci-up.sh
 set -euo pipefail
@@ -24,10 +25,22 @@ C=(bash "$dir/deploy/compose.sh" --profile ci)
 bash "$dir/deploy/dev/diskcheck.sh"
 
 if [ "${1:-}" = register ]; then
-  name="${2:-${CODEHAVEN_RUNNER_NAME:-}}"
+  # --replace may be the second or third argument, and is never taken as the name.
+  name="" replace=""
+  for arg in "${2:-}" "${3:-}"; do
+    [ -n "$arg" ] || continue
+    if [ "$arg" = --replace ]; then replace=--replace
+    elif [ -z "$name" ]; then name="$arg"
+    else ch_die "register takes one name and --replace, not: $arg"
+    fi
+  done
+  name="${name:-${CODEHAVEN_RUNNER_NAME:-}}"
   [ -n "$name" ] || ch_die "give the runner a name: ci-up.sh register <name>, or set CODEHAVEN_RUNNER_NAME in .env"
   [ -n "${HAVEN_RUNNER_TOKEN:-}" ] || ch_die "set HAVEN_RUNNER_TOKEN to the registration token"
-  "${C[@]}" run --rm -e HAVEN_RUNNER_URL=http://server:3200 -e HAVEN_RUNNER_TOKEN runner haven-runner register --name "$name"
+  R=(haven-runner register)
+  if [ -n "$replace" ]; then R+=(--replace); fi
+  R+=(--name "$name")
+  "${C[@]}" run --rm -e HAVEN_RUNNER_URL=http://server:3200 -e HAVEN_RUNNER_TOKEN runner "${R[@]}"
   exit 0
 fi
 

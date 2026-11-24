@@ -7,7 +7,7 @@ expression: json
   "comment": {
     "body": "fixed by #9",
     "created_at": "2026-01-02T03:04:05Z",
-    "html_url": "https://code.example.com/alice/codehaven/issues/7#issuecomment-7001",
+    "html_url": "https://code.example.com/alice/codehaven/issues/7#comment-7001",
     "id": 7001,
     "issue_url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/7",
     "updated_at": "2026-01-02T03:04:05Z",

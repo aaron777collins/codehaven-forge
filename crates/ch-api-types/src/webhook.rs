@@ -422,7 +422,7 @@ mod tests {
     fn issue_comment() -> IssueComment {
         serde_json::from_value(serde_json::json!({
             "url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/comments/7001",
-            "html_url": "https://code.example.com/alice/codehaven/issues/7#issuecomment-7001",
+            "html_url": "https://code.example.com/alice/codehaven/issues/7#comment-7001",
             "issue_url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/7",
             "id": 7001,
             "node_id": "IC",
@@ -461,7 +461,7 @@ mod tests {
             "url": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/9",
             "id": 4001,
             "node_id": "PR",
-            "html_url": "https://code.example.com/alice/codehaven/pull/9",
+            "html_url": "https://code.example.com/alice/codehaven/pulls/9",
             "number": 9,
             "state": "open",
             "locked": false,
@@ -658,7 +658,7 @@ mod tests {
             },
             "_links": {
                 "self": { "href": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/9" },
-                "html": { "href": "https://code.example.com/alice/codehaven/pull/9" },
+                "html": { "href": "https://code.example.com/alice/codehaven/pulls/9" },
                 "issue": { "href": "https://code.example.com/api/v3/repos/alice/codehaven/issues/9" },
                 "comments": { "href": "https://code.example.com/api/v3/repos/alice/codehaven/issues/9/comments" },
                 "review_comments": { "href": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/9/comments" },
@@ -687,8 +687,8 @@ mod tests {
             "issue_url": "https://code.example.com/api/v3/repos/alice/codehaven/issues/9",
             "commits_url": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/9/commits",
             "statuses_url": "https://code.example.com/api/v3/repos/alice/codehaven/statuses/abc123def4567890abcdef0123456789abcdef01",
-            "diff_url": "https://code.example.com/alice/codehaven/pull/9.diff",
-            "patch_url": "https://code.example.com/alice/codehaven/pull/9.patch"
+            "diff_url": "https://code.example.com/alice/codehaven/pulls/9/files",
+            "patch_url": "https://code.example.com/alice/codehaven/pulls/9/files"
         }))
         .unwrap()
     }
@@ -708,13 +708,13 @@ mod tests {
             },
             "body": "lgtm",
             "state": "approved",
-            "html_url": "https://code.example.com/alice/codehaven/pull/9#pullrequestreview-5001",
+            "html_url": "https://code.example.com/alice/codehaven/pulls/9#review-5001",
             "pull_request_url": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/9",
             "submitted_at": "2026-01-02T03:04:05Z",
             "commit_id": "abc123def4567890abcdef0123456789abcdef01",
             "author_association": "OWNER",
             "_links": {
-                "html": { "href": "https://code.example.com/alice/codehaven/pull/9#pullrequestreview-5001" },
+                "html": { "href": "https://code.example.com/alice/codehaven/pulls/9#review-5001" },
                 "pull_request": { "href": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/9" }
             }
         }))
@@ -745,12 +745,12 @@ mod tests {
             "body": "typo in doc comment",
             "created_at": "2026-01-02T03:04:05Z",
             "updated_at": "2026-01-02T03:04:05Z",
-            "html_url": "https://code.example.com/alice/codehaven/pull/9#discussion_r6001",
+            "html_url": "https://code.example.com/alice/codehaven/pulls/9/files",
             "pull_request_url": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/9",
             "author_association": "OWNER",
             "_links": {
                 "self": { "href": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/comments/6001" },
-                "html": { "href": "https://code.example.com/alice/codehaven/pull/9#discussion_r6001" },
+                "html": { "href": "https://code.example.com/alice/codehaven/pulls/9/files" },
                 "pull_request": { "href": "https://code.example.com/api/v3/repos/alice/codehaven/pulls/9" }
             },
             "start_line": null,

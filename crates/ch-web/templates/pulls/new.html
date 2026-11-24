@@ -28,6 +28,7 @@
   <div class="diffs">{{ diff_html|safe }}</div>
   {% endif %}
 {% else %}
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
   <p class="muted">Pick the branch with your changes to compare it with the base.{% if !forks.is_empty() %} To use a branch of your fork, choose the fork, then Compare to see its branches.{% endif %}</p>
 {% endif %}
 {% endblock %}

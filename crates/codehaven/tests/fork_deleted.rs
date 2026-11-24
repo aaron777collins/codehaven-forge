@@ -273,3 +273,56 @@ async fn a_deleted_fork_never_stands_for_the_base_branch_of_the_same_name(pool: 
     assert!(v["head"]["repo"].is_null(), "head.repo is null for a deleted fork: {}", v["head"]);
     assert_eq!(v["head"]["label"], "staging2");
 }
+
+async fn api_put(h: &H, token: &str, path: &str, body: Value) -> (StatusCode, Value) {
+    let mut req = Request::builder()
+        .method(Method::PUT)
+        .uri(path)
+        .header("authorization", format!("Bearer {token}"))
+        .header("accept", "application/vnd.github+json")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    req.extensions_mut().insert(ConnectInfo("203.0.113.9:5555".parse::<SocketAddr>().unwrap()));
+    let resp = h.app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+/// ch-4pn.15: over REST a pull request from a fork merges only with the head sha the caller
+/// reviewed, since the fork's branch can move under them. A same-repository one still merges
+/// without it.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn rest_merges_a_fork_pull_request_only_with_the_reviewed_sha(pool: PgPool) {
+    let h = harness(pool).await;
+    let alice = user(&h, "alice").await;
+    let frank = user(&h, "frank").await;
+    let new = NewRepo {
+        owner_id: alice.id,
+        name: "intern".into(),
+        description: String::new(),
+        visibility: Visibility::Internal,
+        default_branch: None,
+        auto_init: true,
+    };
+    let intern = h.s.repos.create(&alice.actor, new, &c()).await.unwrap().id;
+    let main = tip(&h, intern, "main").await.unwrap();
+    h.s.git.create_ref(&alice.actor, intern, "own", &main, &c()).await.unwrap();
+    commit(&h, &alice.actor, intern, "own", "own.txt", "alice").await;
+    let fork = h.s.repos.fork(&frank.actor, intern, frank.id, &c()).await.unwrap().id;
+    h.s.git.create_ref(&frank.actor, fork, "idea", &main, &c()).await.unwrap();
+    let head = commit(&h, &frank.actor, fork, "idea", "idea.txt", "frank").await;
+    let from_fork = open_pull(&h, &frank, intern, fork, "idea").await;
+    let own = open_pull(&h, &alice, intern, intern, "own").await;
+    let (_, token) = h.s.accounts.create_token(&alice.actor, alice.id, "t", vec!["repo".into()], 30, &c()).await.unwrap();
+
+    let (st, v) = api_put(&h, &token, &format!("/api/v3/repos/alice/intern/pulls/{from_fork}/merge"), serde_json::json!({})).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(v.to_string().contains("sha is required"), "{v}");
+    let (st, v) =
+        api_put(&h, &token, &format!("/api/v3/repos/alice/intern/pulls/{from_fork}/merge"), serde_json::json!({ "sha": head })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let (st, v) = api_put(&h, &token, &format!("/api/v3/repos/alice/intern/pulls/{own}/merge"), serde_json::json!({})).await;
+    assert_eq!(st, StatusCode::OK, "a branch of the same repository needs no sha: {v}");
+}

@@ -38,7 +38,19 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tower::ServiceExt;
 
-const PLANTED: &[&str] = &["alice-planted@example.org", "PLANTED-SECRET-ISSUE", "hidden-proj", "bobplanted", "PLANTED-PRIVATE-BODY"];
+const PLANTED: &[&str] = &[
+    "alice-planted@example.org",
+    "PLANTED-SECRET-ISSUE",
+    "hidden-proj",
+    "bobplanted",
+    "PLANTED-PRIVATE-BODY",
+    // Actions history recorded while the repository was private (ch-4pn.12).
+    "PLANTED-PRIVATE-RUN",
+    "PLANTED-PRIVATE-JOB",
+    "PLANTED-PRIVATE-CHECK",
+    "PLANTED-PRIVATE-STATUS",
+    "PLANTED-PRIVATE-ARTIFACT",
+];
 
 struct World {
     app: Router,
@@ -50,6 +62,16 @@ struct World {
     comment: i64,
     release: i64,
     asset: i64,
+    /// Actions history recorded at the public tier: a workflow, a run, its job, check run and
+    /// artifact. The private run sits beside it and must never show.
+    workflow: i64,
+    run: i64,
+    job: i64,
+    check: i64,
+    artifact: i64,
+    /// The private run and its job.
+    hidden_run: i64,
+    hidden_job: i64,
 }
 
 fn alice_actor(id: UserId) -> Actor {
@@ -182,7 +204,106 @@ async fn seed(pool: PgPool) -> World {
     let tools = state.repos.create(&a, tools, &c()).await.unwrap();
     sqlx::query("UPDATE repositories SET access_tier = 'internal' WHERE id = $1").bind(tools.id.0).execute(&pool).await.unwrap();
 
-    World { app, state, _dir: dir, proj: proj.id, sha, blob, comment, release: release.0, asset }
+    let (workflow, ids) = seed_actions(&pool, proj.id, &sha).await;
+    // A container image linked to the repository, and one with no repository, which stays its
+    // owner's alone whatever the repository's tier (ch-4pn.13).
+    sqlx::query(
+        "INSERT INTO packages (owner_id, repo_id, kind, name) VALUES ($1, $2, 'container', 'proj'), ($1, NULL, 'container', 'hidden-proj')",
+    )
+    .bind(alice.0)
+    .bind(proj.id.0)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let ((run, job, check, artifact), (hidden_run, hidden_job, _, _)) = (ids[0], ids[1]);
+
+    World {
+        app,
+        state,
+        _dir: dir,
+        proj: proj.id,
+        sha,
+        blob,
+        comment,
+        release: release.0,
+        asset,
+        workflow,
+        run,
+        job,
+        check,
+        artifact,
+        hidden_run,
+        hidden_job,
+    }
+}
+
+/// One run of each recorded tier on the same commit: public (with a job, a check run, a status
+/// and an artifact) and private (the same, with planted names). Rows are written directly with
+/// their recorded tier, as if each had run while the repository was at that tier.
+async fn seed_actions(pool: &PgPool, repo: RepoId, sha: &str) -> (i64, Vec<(i64, i64, i64, i64)>) {
+    let workflow: i64 =
+        sqlx::query_scalar("INSERT INTO workflows (repo_id, path, name) VALUES ($1, '.codehaven/workflows/ci.yml', 'ci') RETURNING id")
+            .bind(repo.0)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let mut ids = Vec::new();
+    for (n, tier, label) in [(1_i64, "public", "public"), (2, "private", "PLANTED-PRIVATE")] {
+        let run: i64 = sqlx::query_scalar(
+            "INSERT INTO workflow_runs (repo_id, workflow_id, run_number, event, head_sha, head_branch, title, status, conclusion, recorded_tier)
+             VALUES ($1, $2, $3, 'push', $4, 'main', $5, 'completed', 'success', $6) RETURNING id",
+        )
+        .bind(repo.0)
+        .bind(workflow)
+        .bind(n)
+        .bind(sha)
+        .bind(format!("{label}-RUN title"))
+        .bind(tier)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let job: i64 = sqlx::query_scalar(
+            "INSERT INTO workflow_jobs (run_id, repo_id, job_key, name, status, conclusion) VALUES ($1, $2, 'build', $3, 'completed', 'success') RETURNING id",
+        )
+        .bind(run)
+        .bind(repo.0)
+        .bind(format!("{label}-JOB build"))
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let check: i64 = sqlx::query_scalar(
+            "INSERT INTO check_runs (repo_id, head_sha, name, status, conclusion, job_id, recorded_tier)
+             VALUES ($1, $2, $3, 'completed', 'success', $4, $5) RETURNING id",
+        )
+        .bind(repo.0)
+        .bind(sha)
+        .bind(format!("{label}-CHECK ci"))
+        .bind(job)
+        .bind(tier)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO commit_statuses (repo_id, sha, context, state, recorded_tier) VALUES ($1, $2, $3, 'success', $4)")
+            .bind(repo.0)
+            .bind(sha)
+            .bind(format!("{label}-STATUS lint"))
+            .bind(tier)
+            .execute(pool)
+            .await
+            .unwrap();
+        let artifact: i64 = sqlx::query_scalar(
+            "INSERT INTO artifacts (run_id, job_id, name, blob_sha256, size, expires_at) VALUES ($1, $2, $3, $4, 1, now() + interval '1 day') RETURNING id",
+        )
+        .bind(run)
+        .bind(job)
+        .bind(format!("{label}-ARTIFACT out"))
+        .bind("0".repeat(64))
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        ids.push((run, job, check, artifact));
+    }
+    (workflow, ids)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -243,7 +364,10 @@ fn concrete(pattern: &str, w: &World, owner: &str, repo: &str) -> String {
                 "{org}" => org.into(),
                 "{repo}" => repo.into(),
                 "{*rest}" => {
-                    if p.contains("/archive/") {
+                    if p.starts_with("/v2/") {
+                        // A pull of the image linked to the repository the world names.
+                        format!("{owner}/{repo}/tags/list")
+                    } else if p.contains("/archive/") {
                         "main.zip".into()
                     } else if p.contains("/commits/") || p.contains("/find/") || p.contains("/tree/") || p.contains("/branches/") {
                         "main".into()
@@ -278,7 +402,15 @@ fn concrete(pattern: &str, w: &World, owner: &str, repo: &str) -> String {
                     }
                 }
                 "{id}" => {
-                    if p.contains("/issues/comments/") {
+                    if p.contains("/actions/runs/") {
+                        w.run.to_string()
+                    } else if p.contains("/actions/jobs/") {
+                        w.job.to_string()
+                    } else if p.contains("/check-runs/") {
+                        w.check.to_string()
+                    } else if p.contains("/actions/artifacts/") {
+                        w.artifact.to_string()
+                    } else if p.contains("/issues/comments/") {
                         w.comment.to_string()
                     } else if p.contains("/releases/assets/") {
                         w.asset.to_string()
@@ -299,9 +431,12 @@ fn concrete(pattern: &str, w: &World, owner: &str, repo: &str) -> String {
                         "x".into()
                     }
                 }
-                "{run}" | "{job}" | "{rid}" | "{delivery}" | "{thread}" | "{workflow}" | "{token}" | "{provider}" | "{user_id}"
-                | "{repo_id}" | "{slug}" | "{team}" | "{key}" | "{run_id}" | "{jid}" | "{wid}" | "{did}" | "{digest}" | "{kind}"
-                | "{n}" | "{layer}" | "{issue_number}" | "{build}" => "1".into(),
+                "{run}" => w.run.to_string(),
+                "{job}" => w.job.to_string(),
+                "{workflow}" => w.workflow.to_string(),
+                "{rid}" | "{delivery}" | "{thread}" | "{token}" | "{provider}" | "{user_id}" | "{repo_id}" | "{slug}" | "{team}"
+                | "{key}" | "{run_id}" | "{jid}" | "{wid}" | "{did}" | "{digest}" | "{kind}" | "{n}" | "{layer}" | "{issue_number}"
+                | "{build}" => "1".into(),
                 other if other.starts_with('{') => panic!("route {pattern}: no fixture for parameter {other}"),
                 other => other.into(),
             }
@@ -474,7 +609,7 @@ async fn the_signed_out_surface_per_tier_is_exactly_the_table(pool: PgPool) {
     // The table's own expansion.
     let discovery = expansion(&paths, &[PublicTarget::Discovery]);
     let owners = expansion(&paths, &[PublicTarget::Owner]);
-    let repos = expansion(&paths, &[PublicTarget::Repo]);
+    let repos = expansion(&paths, &[PublicTarget::Repo, PublicTarget::Image]);
     let leaked: Vec<&String> =
         off.admitted.iter().filter(|k| discovery.contains(*k) || repos.contains(*k) || owners.contains(*k)).collect();
     assert!(leaked.is_empty(), "nothing public while the switch is off: {leaked:?}");
@@ -543,6 +678,17 @@ async fn the_signed_out_surface_per_tier_is_exactly_the_table(pool: PgPool) {
         "GET /api/v3/repos/{owner}/{repo}/issues",
         "GET /explore",
         "GET /{owner}",
+        "GET /{owner}/{repo}/actions",
+        "GET /{owner}/{repo}/actions/runs/{run}",
+        "GET /{owner}/{repo}/actions/runs/{run}/jobs/{job}",
+        "GET /{owner}/{repo}/pulls/{number}/checks",
+        "GET /api/v3/repos/{owner}/{repo}/actions/runs",
+        "GET /api/v3/repos/{owner}/{repo}/actions/runs/{id}",
+        "GET /api/v3/repos/{owner}/{repo}/actions/runs/{id}/jobs",
+        "GET /api/v3/repos/{owner}/{repo}/commits/{reference}/check-runs",
+        "GET /api/v3/repos/{owner}/{repo}/commits/{reference}/status",
+        "GET /api/v3/repos/{owner}/{repo}/check-runs/{id}",
+        "GET /api/v3/repos/{owner}/{repo}/actions/artifacts",
     ] {
         let (status, body) = public.answers.get(k).unwrap_or_else(|| panic!("{k} was not admitted"));
         let text = String::from_utf8_lossy(body);
@@ -620,4 +766,215 @@ async fn predicates_and_credentials_keep_the_door_shut(pool: PgPool) {
     let old = send(&w.app, &Method::GET, "/api/v3/repos/alice/secret-old-name").await;
     let missing = send(&w.app, &Method::GET, "/api/v3/repos/alice/never-existed").await;
     assert_eq!((old.status, old.body), (missing.status, missing.body), "an old private name is the same as no name");
+}
+
+/// ch-4pn.12: signed out, a public repository's Actions history shows what was recorded public
+/// and nothing recorded while it was private. A hidden run, job or log answers exactly as a run
+/// that never existed, and the combined state counts only what shows.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn signed_out_actions_history_shows_only_what_was_recorded_public(pool: PgPool) {
+    let w = seed(pool).await;
+    enter(&w, Kind::Public).await;
+    let json = |r: &Reply| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap();
+
+    let runs = send(&w.app, &Method::GET, "/api/v3/repos/alice/proj/actions/runs").await;
+    assert_eq!(runs.status, StatusCode::OK);
+    let v = json(&runs);
+    assert_eq!(v["total_count"], 1, "{v}");
+    assert_eq!(v["workflow_runs"][0]["id"], w.run);
+
+    let missing = send(&w.app, &Method::GET, "/api/v3/repos/alice/proj/actions/runs/987654321").await;
+    for p in [
+        format!("/api/v3/repos/alice/proj/actions/runs/{}", w.hidden_run),
+        format!("/api/v3/repos/alice/proj/actions/runs/{}/jobs", w.hidden_run),
+        format!("/api/v3/repos/alice/proj/actions/runs/{}/artifacts", w.hidden_run),
+    ] {
+        let r = send(&w.app, &Method::GET, &p).await;
+        assert_eq!((r.status, &r.body), (missing.status, &missing.body), "{p} differs from a run that never existed");
+    }
+    let missing_job = send(&w.app, &Method::GET, "/api/v3/repos/alice/proj/actions/jobs/987654321").await;
+    for p in [
+        format!("/api/v3/repos/alice/proj/actions/jobs/{}", w.hidden_job),
+        format!("/api/v3/repos/alice/proj/actions/jobs/{}/logs", w.hidden_job),
+    ] {
+        let r = send(&w.app, &Method::GET, &p).await;
+        assert_eq!(r.status, missing_job.status, "{p}");
+    }
+    for p in [
+        format!("/alice/proj/actions/runs/{}", w.hidden_run),
+        format!("/alice/proj/actions/runs/{}/jobs/{}", w.hidden_run, w.hidden_job),
+        format!("/alice/proj/actions/runs/{}/jobs/{}/log.txt", w.hidden_run, w.hidden_job),
+    ] {
+        let r = send(&w.app, &Method::GET, &p).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{p}");
+        assert!(!String::from_utf8_lossy(&r.body).contains("PLANTED"), "{p}");
+    }
+
+    let checks = json(&send(&w.app, &Method::GET, "/api/v3/repos/alice/proj/commits/main/check-runs").await);
+    assert_eq!(checks["total_count"], 1, "{checks}");
+    assert_eq!(checks["check_runs"][0]["id"], w.check);
+    let status = json(&send(&w.app, &Method::GET, "/api/v3/repos/alice/proj/commits/main/status").await);
+    assert_eq!(status["statuses"].as_array().unwrap().len(), 1, "{status}");
+    let statuses = json(&send(&w.app, &Method::GET, "/api/v3/repos/alice/proj/commits/main/statuses").await);
+    assert_eq!(statuses.as_array().unwrap().len(), 1, "{statuses}");
+    let arts = json(&send(&w.app, &Method::GET, "/api/v3/repos/alice/proj/actions/artifacts").await);
+    assert_eq!(arts["total_count"], 1, "{arts}");
+
+    let page = send(&w.app, &Method::GET, "/alice/proj/actions").await;
+    let text = String::from_utf8_lossy(&page.body);
+    assert!(text.contains("public-RUN title"), "the public run is listed");
+    assert!(!text.contains("PLANTED"), "the private run is not");
+
+    // Listing workflows signed out writes nothing.
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM workflows").fetch_one(&w.state.db).await.unwrap();
+    assert_eq!(send(&w.app, &Method::GET, "/api/v3/repos/alice/proj/actions/workflows").await.status, StatusCode::OK);
+    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM workflows").fetch_one(&w.state.db).await.unwrap();
+    assert_eq!(before, after);
+
+    // The closed routes stay closed: the run log zip, artifact downloads, variables, caches.
+    for p in [
+        format!("/api/v3/repos/alice/proj/actions/runs/{}/logs", w.run),
+        format!("/api/v3/repos/alice/proj/actions/artifacts/{}/zip", w.artifact),
+        "/api/v3/repos/alice/proj/actions/variables".to_string(),
+        "/api/v3/repos/alice/proj/actions/caches".to_string(),
+        "/api/v3/repos/alice/proj/actions/secrets".to_string(),
+        "/api/v3/repos/alice/proj/actions/runners".to_string(),
+    ] {
+        assert_eq!(send(&w.app, &Method::GET, &p).await.status, StatusCode::UNAUTHORIZED, "{p}");
+    }
+}
+
+async fn send_auth(app: &Router, method: &Method, uri: &str, auth: Option<&str>) -> Reply {
+    let mut b = Request::builder().method(method.clone()).uri(uri);
+    if let Some(a) = auth {
+        b = b.header(header::AUTHORIZATION, a);
+    }
+    let mut req = b.body(Body::empty()).unwrap();
+    req.extensions_mut().insert(ConnectInfo("198.51.100.77:4000".parse::<SocketAddr>().unwrap()));
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    Reply { status: parts.status, headers: parts.headers, body: body.collect().await.unwrap().to_bytes().to_vec() }
+}
+
+/// ch-4pn.13: a signed-out `docker pull` of an image linked to a public repository works with
+/// the literal token `anonymous`; an image with no repository, a private one and a missing one
+/// all get the same challenge; the catalog lists only what a stranger may pull; nothing writes.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn anonymous_registry_pulls_follow_the_repository(pool: PgPool) {
+    let w = seed(pool).await;
+    enter(&w, Kind::Public).await;
+    let anon = Some("Bearer anonymous");
+
+    // `/v2/` still challenges, so `docker login` works, and the token is the literal one.
+    let root = send_auth(&w.app, &Method::GET, "/v2/", None).await;
+    assert_eq!(root.status, StatusCode::UNAUTHORIZED);
+    assert!(root.headers[header::WWW_AUTHENTICATE].to_str().unwrap().contains("/v2/token"));
+    let t = send_auth(&w.app, &Method::GET, "/v2/token?service=x&scope=repository:alice/hidden-proj:pull,push", None).await;
+    assert_eq!(t.status, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&t.body).unwrap();
+    assert_eq!(v["token"], "anonymous");
+
+    let tags = send_auth(&w.app, &Method::GET, "/v2/alice/proj/tags/list", anon).await;
+    assert_eq!(tags.status, StatusCode::OK, "{}", String::from_utf8_lossy(&tags.body));
+    let unlinked = send_auth(&w.app, &Method::GET, "/v2/alice/hidden-proj/tags/list", anon).await;
+    let missing = send_auth(&w.app, &Method::GET, "/v2/nobody/nothing/tags/list", anon).await;
+    assert_eq!(unlinked.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        (unlinked.status, &unlinked.body, unlinked.headers.get(header::WWW_AUTHENTICATE)),
+        (missing.status, &missing.body, missing.headers.get(header::WWW_AUTHENTICATE))
+    );
+
+    let cat = send_auth(&w.app, &Method::GET, "/v2/_catalog", anon).await;
+    assert_eq!(cat.status, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&cat.body).unwrap();
+    assert_eq!(v["repositories"], serde_json::json!(["alice/proj"]), "only the linked public image");
+
+    // Never a push, whatever the method.
+    for (m, p) in [
+        (Method::POST, "/v2/alice/proj/blobs/uploads/"),
+        (Method::PUT, "/v2/alice/proj/manifests/latest"),
+        (Method::DELETE, "/v2/alice/proj/manifests/latest"),
+    ] {
+        assert_eq!(send_auth(&w.app, &m, p, anon).await.status, StatusCode::UNAUTHORIZED, "{m} {p}");
+    }
+    // The literal token means nothing anywhere else.
+    assert_eq!(send_auth(&w.app, &Method::GET, "/api/v3/repos/alice/proj", anon).await.status, StatusCode::UNAUTHORIZED);
+
+    // Private looks exactly like missing.
+    enter(&w, Kind::Private).await;
+    let private = send_auth(&w.app, &Method::GET, "/v2/alice/proj/tags/list", anon).await;
+    assert_eq!((private.status, &private.body), (missing.status, &missing.body));
+    let cat = send_auth(&w.app, &Method::GET, "/v2/_catalog", anon).await;
+    let v: serde_json::Value = serde_json::from_slice(&cat.body).unwrap();
+    assert_eq!(v["repositories"], serde_json::json!([]));
+    // With the switch off the token route is closed too.
+    enter(&w, Kind::Off).await;
+    assert_eq!(send_auth(&w.app, &Method::GET, "/v2/token", None).await.status, StatusCode::UNAUTHORIZED);
+}
+
+/// A client-chosen `skip` used to be an offset over rows the caller cannot see, so two values of
+/// `last` around a hidden name answered differently and the difference said how many hidden names
+/// sit between them. Signed out, `skip` is refused unless the server issued it, and hidden rows
+/// are never read at all.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn the_signed_out_catalog_cannot_count_hidden_names(pool: PgPool) {
+    let w = seed(pool).await;
+    enter(&w, Kind::Public).await;
+    let anon = Some("Bearer anonymous");
+
+    // The hidden name sorts between "alice/h" and "alice/i", so a skip that reaches past it makes
+    // the two `last` values disagree about what is on the page.
+    for skip in ["1", "2"] {
+        let before = send_auth(&w.app, &Method::GET, &format!("/v2/_catalog?n=1&last=alice/h&skip={skip}"), anon).await;
+        let after = send_auth(&w.app, &Method::GET, &format!("/v2/_catalog?n=1&last=alice/i&skip={skip}"), anon).await;
+        assert_eq!((before.status, &before.body), (after.status, &after.body), "last values that bracket a hidden name must answer alike");
+        assert_eq!(before.status, StatusCode::BAD_REQUEST, "a signed-out caller may not choose a skip");
+    }
+
+    // Without skip both sides of the hidden name show the same one readable image, with no next
+    // page to follow.
+    for last in ["alice/h", "alice/i"] {
+        let p = send_auth(&w.app, &Method::GET, &format!("/v2/_catalog?n=1&last={last}"), anon).await;
+        assert_eq!(p.status, StatusCode::OK, "{}", String::from_utf8_lossy(&p.body));
+        let v: serde_json::Value = serde_json::from_slice(&p.body).unwrap();
+        assert_eq!(v["repositories"], serde_json::json!(["alice/proj"]));
+        assert!(!p.headers.contains_key(header::LINK));
+    }
+
+    // Hidden rows are never even read signed out, so they cannot cost the scan budget either. With
+    // a budget of two rows, reading alice/hidden-proj first would spend it and stop at alice/proj
+    // with a next link; reading only alice/proj leaves room to see that nothing follows.
+    let (names, next) = ch_registry::catalog::page(
+        &w.state,
+        &Actor::Anonymous,
+        10,
+        &ch_registry::catalog::Cursor::default(),
+        ch_registry::catalog::Limits { batch: 1, max_scan: 2 },
+    )
+    .await
+    .unwrap();
+    assert_eq!((names, next), (vec!["alice/proj".to_string()], None));
+}
+
+/// ch-g7n: every `docker push` and `docker pull` starts with requests that are challenged
+/// before the client signs in. Those challenges look nothing up, so they never use up the
+/// signed-out budget; a page that is refused still does.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn registry_challenges_do_not_use_up_the_signed_out_budget(pool: PgPool) {
+    let w = seed(pool).await;
+    enter(&w, Kind::Private).await;
+    for _ in 0..400 {
+        let r = send_auth(&w.app, &Method::POST, "/v2/alice/proj/blobs/uploads/", None).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "a challenge, never a 429");
+    }
+    let mut limited = false;
+    for _ in 0..400 {
+        let mut req = Request::builder().uri("/alice/proj").body(Body::empty()).unwrap();
+        req.extensions_mut().insert(ConnectInfo("198.51.100.78:4000".parse::<SocketAddr>().unwrap()));
+        if w.app.clone().oneshot(req).await.unwrap().status() == StatusCode::TOO_MANY_REQUESTS {
+            limited = true;
+            break;
+        }
+    }
+    assert!(limited, "refused pages still count against the budget");
 }

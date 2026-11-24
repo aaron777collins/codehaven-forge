@@ -6,6 +6,7 @@
 //! service uses.
 
 use crate::ctx::Ctx;
+use crate::history::{self, Tiers};
 use crate::runs::{self, JobRow, RunRow};
 use crate::secrets::{self, Scope};
 use crate::service::{runner_summaries, steps_for};
@@ -93,6 +94,14 @@ async fn repo_for(state: &AppState, actor: &Actor, owner: &str, name: &str, need
     let repo = state.repos.get_by_name(actor, owner, name).await?;
     state.authz.require(actor, repo.id, need).await?;
     Ok(repo)
+}
+
+/// A repository for reading Actions history, and which recorded tiers the actor may see there
+/// (ch-4pn.12). View is enough; below Read a hidden row is answered as missing.
+async fn history_for(state: &AppState, actor: &Actor, owner: &str, name: &str) -> Result<(Repo, Tiers)> {
+    let repo = state.repos.get_by_name(actor, owner, name).await?;
+    let tiers = history::tiers(&Ctx::from_state(state), actor, repo.id).await?;
+    Ok((repo, tiers))
 }
 
 #[derive(Deserialize, Default)]
@@ -209,16 +218,18 @@ async fn list_statuses(
     Path((owner, name, reference)): Path<(String, String, String)>,
     Query(p): Query<Page>,
 ) -> Result<Json<Vec<dto::CommitStatus>>> {
-    let repo = repo_for(&state, &actor, &owner, &name, Permission::Read).await?;
+    let (repo, tiers) = history_for(&state, &actor, &owner, &name).await?;
     let ctx = Ctx::from_state(&state);
     let sha = resolve_ref(&ctx, repo.id, &reference).await;
     let rows: Vec<StatusRow> = sqlx::query_as(&format!(
-        "SELECT {STATUS_COLS} FROM commit_statuses WHERE repo_id = $1 AND sha = $2 ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4"
+        "SELECT {STATUS_COLS} FROM commit_statuses WHERE repo_id = $1 AND sha = $2 AND ($5::text[] IS NULL OR recorded_tier = ANY($5))
+         ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4"
     ))
     .bind(repo.id.0)
     .bind(&sha)
     .bind(p.limit())
     .bind(p.offset())
+    .bind(history::bind(tiers))
     .fetch_all(&ctx.db)
     .await?;
     let urls = Urls::new(&ctx, &repo);
@@ -237,15 +248,19 @@ async fn combined_status(
     CurrentActor(actor): CurrentActor,
     Path((owner, name, reference)): Path<(String, String, String)>,
 ) -> Result<Json<dto::CombinedStatus>> {
-    let repo = repo_for(&state, &actor, &owner, &name, Permission::Read).await?;
+    let (repo, tiers) = history_for(&state, &actor, &owner, &name).await?;
     let ctx = Ctx::from_state(&state);
     let sha = resolve_ref(&ctx, repo.id, &reference).await;
-    let combined = state.checks.combined(repo.id, &sha).await?;
+    // Worked out from only what this viewer may see, so a hidden failure does not show either.
+    let seen = state.checks.seen_for_sha(&actor, repo.id, &sha).await?;
+    let combined = crate::checks::combine(&seen.runs, &seen.statuses);
     let rows: Vec<StatusRow> = sqlx::query_as(&format!(
-        "SELECT DISTINCT ON (context) {STATUS_COLS} FROM commit_statuses WHERE repo_id = $1 AND sha = $2 ORDER BY context, created_at DESC, id DESC"
+        "SELECT DISTINCT ON (context) {STATUS_COLS} FROM commit_statuses WHERE repo_id = $1 AND sha = $2
+           AND ($3::text[] IS NULL OR recorded_tier = ANY($3)) ORDER BY context, created_at DESC, id DESC"
     ))
     .bind(repo.id.0)
     .bind(&sha)
+    .bind(history::bind(tiers))
     .fetch_all(&ctx.db)
     .await?;
     let urls = Urls::new(&ctx, &repo);
@@ -324,12 +339,13 @@ async fn list_check_runs(
     Path((owner, name, reference)): Path<(String, String, String)>,
     Query(q): Query<CheckQuery>,
 ) -> Result<Json<dto::CheckRunsResponse>> {
-    let repo = repo_for(&state, &actor, &owner, &name, Permission::Read).await?;
+    let (repo, tiers) = history_for(&state, &actor, &owner, &name).await?;
     let ctx = Ctx::from_state(&state);
     let sha = resolve_ref(&ctx, repo.id, &reference).await;
-    // Latest attempt of each check name, like the combined state.
+    // Latest attempt of each check name that this viewer may see, like the combined state.
     let rows: Vec<CheckRow> = sqlx::query_as(&format!(
-        "SELECT {CHECK_COLS} FROM (SELECT DISTINCT ON (name) {CHECK_COLS} FROM check_runs WHERE repo_id = $1 AND head_sha = $2 ORDER BY name, id DESC) c
+        "SELECT {CHECK_COLS} FROM (SELECT DISTINCT ON (name) {CHECK_COLS} FROM check_runs WHERE repo_id = $1 AND head_sha = $2
+           AND ($7::text[] IS NULL OR recorded_tier = ANY($7)) ORDER BY name, id DESC) c
          WHERE ($3::text IS NULL OR name = $3) AND ($4::text IS NULL OR status = $4) ORDER BY name LIMIT $5 OFFSET $6"
     ))
     .bind(repo.id.0)
@@ -338,16 +354,19 @@ async fn list_check_runs(
     .bind(&q.status)
     .bind(q.page().limit())
     .bind(q.page().offset())
+    .bind(history::bind(tiers))
     .fetch_all(&ctx.db)
     .await?;
     let total: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM (SELECT DISTINCT ON (name) name, status FROM check_runs WHERE repo_id = $1 AND head_sha = $2 ORDER BY name, id DESC) c
+        "SELECT count(*) FROM (SELECT DISTINCT ON (name) name, status FROM check_runs WHERE repo_id = $1 AND head_sha = $2
+           AND ($5::text[] IS NULL OR recorded_tier = ANY($5)) ORDER BY name, id DESC) c
          WHERE ($3::text IS NULL OR name = $3) AND ($4::text IS NULL OR status = $4)",
     )
     .bind(repo.id.0)
     .bind(&sha)
     .bind(&q.check_name)
     .bind(&q.status)
+    .bind(history::bind(tiers))
     .fetch_one(&ctx.db)
     .await?;
     let urls = Urls::new(&ctx, &repo);
@@ -359,13 +378,16 @@ async fn get_check_run(
     CurrentActor(actor): CurrentActor,
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<dto::CheckRun>> {
-    let repo = repo_for(&state, &actor, &owner, &name, Permission::Read).await?;
+    let (repo, tiers) = history_for(&state, &actor, &owner, &name).await?;
     let ctx = Ctx::from_state(&state);
-    let row: Option<CheckRow> = sqlx::query_as(&format!("SELECT {CHECK_COLS} FROM check_runs WHERE id = $1 AND repo_id = $2"))
-        .bind(id)
-        .bind(repo.id.0)
-        .fetch_optional(&ctx.db)
-        .await?;
+    let row: Option<CheckRow> = sqlx::query_as(&format!(
+        "SELECT {CHECK_COLS} FROM check_runs WHERE id = $1 AND repo_id = $2 AND ($3::text[] IS NULL OR recorded_tier = ANY($3))"
+    ))
+    .bind(id)
+    .bind(repo.id.0)
+    .bind(history::bind(tiers))
+    .fetch_optional(&ctx.db)
+    .await?;
     Ok(Json(check_dto(&Urls::new(&ctx, &repo), row.ok_or(Error::NotFound)?)))
 }
 
@@ -407,9 +429,9 @@ async fn list_workflows(
     Path((owner, name)): Path<(String, String)>,
     Query(p): Query<Page>,
 ) -> Result<Json<dto::WorkflowsResponse>> {
-    let repo = repo_for(&state, &actor, &owner, &name, Permission::Read).await?;
+    let (repo, _) = history_for(&state, &actor, &owner, &name).await?;
     let ctx = Ctx::from_state(&state);
-    // Listing reads the default branch, which also refreshes the table.
+    // Listing reads the default branch, which also refreshes the table for readers.
     state.ci.workflows(&actor, repo.id, None).await?;
     let rows: Vec<WfRow> =
         sqlx::query_as("SELECT id, name, path, state, created_at FROM workflows WHERE repo_id = $1 ORDER BY path LIMIT $2 OFFSET $3")
@@ -431,7 +453,7 @@ async fn get_workflow(
     CurrentActor(actor): CurrentActor,
     Path((owner, name, which)): Path<(String, String, String)>,
 ) -> Result<Json<dto::Workflow>> {
-    let repo = repo_for(&state, &actor, &owner, &name, Permission::Read).await?;
+    let (repo, _) = history_for(&state, &actor, &owner, &name).await?;
     let ctx = Ctx::from_state(&state);
     let (id, n, p, s, c) = workflow_row(&ctx, repo.id, &which).await?;
     Ok(Json(workflow_dto(&Urls::new(&ctx, &repo), id, n, p, s, c)))
@@ -572,7 +594,7 @@ async fn runs_page(
     workflow: Option<&str>,
     q: RunQuery,
 ) -> Result<Json<dto::WorkflowRunsResponse>> {
-    let repo = repo_for(state, actor, owner, name, Permission::Read).await?;
+    let (repo, tiers) = history_for(state, actor, owner, name).await?;
     let ctx = Ctx::from_state(state);
     let wf_id: Option<i64> = match workflow {
         Some(w) => Some(workflow_row(&ctx, repo.id, w).await?.0),
@@ -580,9 +602,10 @@ async fn runs_page(
     };
     // `status` filters on either the status or the conclusion, as GitHub's does.
     let filter = "repo_id = $1 AND ($2::bigint IS NULL OR workflow_id = $2) AND ($3::text IS NULL OR status = $3 OR conclusion = $3)
-                  AND ($4::text IS NULL OR head_branch = $4) AND ($5::text IS NULL OR event = $5) AND ($6::text IS NULL OR head_sha = $6)";
+                  AND ($4::text IS NULL OR head_branch = $4) AND ($5::text IS NULL OR event = $5) AND ($6::text IS NULL OR head_sha = $6)
+                  AND ($7::text[] IS NULL OR recorded_tier = ANY($7))";
     let rows = sqlx::query_as::<_, RunRow>(&format!(
-        "SELECT {} FROM workflow_runs WHERE {filter} ORDER BY id DESC LIMIT $7 OFFSET $8",
+        "SELECT {} FROM workflow_runs WHERE {filter} ORDER BY id DESC LIMIT $8 OFFSET $9",
         runs::RUN_COLS
     ))
     .bind(repo.id.0)
@@ -591,6 +614,7 @@ async fn runs_page(
     .bind(&q.branch)
     .bind(&q.event)
     .bind(&q.head_sha)
+    .bind(history::bind(tiers))
     .bind(q.page().limit())
     .bind(q.page().offset())
     .fetch_all(&ctx.db)
@@ -602,6 +626,7 @@ async fn runs_page(
         .bind(&q.branch)
         .bind(&q.event)
         .bind(&q.head_sha)
+        .bind(history::bind(tiers))
         .fetch_one(&ctx.db)
         .await?;
     let urls = Urls::new(&ctx, &repo);
@@ -644,9 +669,10 @@ async fn get_run(
     CurrentActor(actor): CurrentActor,
     Path((o, n, id)): Path<(String, String, i64)>,
 ) -> Result<Json<dto::WorkflowRun>> {
-    let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
+    let (repo, tiers) = history_for(&state, &actor, &o, &n).await?;
     let ctx = Ctx::from_state(&state);
     let r = run_in(&state, &repo, id).await?;
+    history::run_visible(&ctx, r.id, tiers).await?;
     Ok(Json(run_dto(&ctx, &Urls::new(&ctx, &repo), &r).await?))
 }
 
@@ -767,9 +793,10 @@ async fn list_run_jobs(
     CurrentActor(actor): CurrentActor,
     Path((o, n, id)): Path<(String, String, i64)>,
 ) -> Result<Json<dto::WorkflowJobsResponse>> {
-    let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
+    let (repo, tiers) = history_for(&state, &actor, &o, &n).await?;
     let ctx = Ctx::from_state(&state);
     let run = run_in(&state, &repo, id).await?;
+    history::run_visible(&ctx, run.id, tiers).await?;
     let urls = Urls::new(&ctx, &repo);
     let jobs = runs::fetch_jobs(&ctx, id).await?;
     let mut out = Vec::new();
@@ -797,9 +824,10 @@ async fn get_job(
     CurrentActor(actor): CurrentActor,
     Path((o, n, id)): Path<(String, String, i64)>,
 ) -> Result<Json<dto::WorkflowJob>> {
-    let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
+    let (repo, tiers) = history_for(&state, &actor, &o, &n).await?;
     let ctx = Ctx::from_state(&state);
     let (j, r) = job_in(&ctx, &repo, id).await?;
+    history::run_visible(&ctx, r.id, tiers).await?;
     Ok(Json(job_dto(&ctx, &Urls::new(&ctx, &repo), &j, r.attempt as u32).await?))
 }
 
@@ -808,7 +836,8 @@ async fn job_logs(
     CurrentActor(actor): CurrentActor,
     Path((o, n, id)): Path<(String, String, i64)>,
 ) -> Result<Response> {
-    let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
+    // The service checks the history rule for the job's run.
+    let (repo, _) = history_for(&state, &actor, &o, &n).await?;
     let bytes = state.ci.log_range(&actor, repo.id, JobId(id), LogRange { from: 0, to: None }).await?;
     Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8"), (header::X_CONTENT_TYPE_OPTIONS, "nosniff")], bytes).into_response())
 }
@@ -898,9 +927,10 @@ async fn list_run_artifacts(
     CurrentActor(actor): CurrentActor,
     Path((o, n, id)): Path<(String, String, i64)>,
 ) -> Result<Json<dto::ArtifactsResponse>> {
-    let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
+    let (repo, tiers) = history_for(&state, &actor, &o, &n).await?;
     let ctx = Ctx::from_state(&state);
     run_in(&state, &repo, id).await?;
+    history::run_visible(&ctx, id, tiers).await?;
     let urls = Urls::new(&ctx, &repo);
     let rows = store::artifacts_for_run(&ctx, id).await?;
     Ok(Json(dto::ArtifactsResponse { total_count: rows.len() as u32, artifacts: rows.iter().map(|a| artifact_dto(&urls, a)).collect() }))
@@ -912,21 +942,24 @@ async fn list_artifacts(
     Path((o, n)): Path<(String, String)>,
     Query(p): Query<Page>,
 ) -> Result<Json<dto::ArtifactsResponse>> {
-    let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
+    let (repo, tiers) = history_for(&state, &actor, &o, &n).await?;
     let ctx = Ctx::from_state(&state);
     let rows: Vec<store::ArtifactRow> = sqlx::query_as(
         "SELECT a.id, a.run_id, a.job_id, a.name, a.blob_sha256, a.size, a.expires_at, a.created_at FROM artifacts a JOIN workflow_runs r ON r.id = a.run_id
-         WHERE r.repo_id = $1 AND a.expires_at > now() ORDER BY a.id DESC LIMIT $2 OFFSET $3",
+         WHERE r.repo_id = $1 AND a.expires_at > now() AND ($4::text[] IS NULL OR r.recorded_tier = ANY($4)) ORDER BY a.id DESC LIMIT $2 OFFSET $3",
     )
     .bind(repo.id.0)
     .bind(p.limit())
     .bind(p.offset())
+    .bind(history::bind(tiers))
     .fetch_all(&ctx.db)
     .await?;
     let total: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM artifacts a JOIN workflow_runs r ON r.id = a.run_id WHERE r.repo_id = $1 AND a.expires_at > now()",
+        "SELECT count(*) FROM artifacts a JOIN workflow_runs r ON r.id = a.run_id WHERE r.repo_id = $1 AND a.expires_at > now()
+           AND ($2::text[] IS NULL OR r.recorded_tier = ANY($2))",
     )
     .bind(repo.id.0)
+    .bind(history::bind(tiers))
     .fetch_one(&ctx.db)
     .await?;
     let urls = Urls::new(&ctx, &repo);
@@ -946,9 +979,10 @@ async fn get_artifact(
     CurrentActor(actor): CurrentActor,
     Path((o, n, id)): Path<(String, String, i64)>,
 ) -> Result<Json<dto::Artifact>> {
-    let repo = repo_for(&state, &actor, &o, &n, Permission::Read).await?;
+    let (repo, tiers) = history_for(&state, &actor, &o, &n).await?;
     let ctx = Ctx::from_state(&state);
     let a = artifact_in(&ctx, &repo, id).await?;
+    history::run_visible(&ctx, a.run_id, tiers).await?;
     Ok(Json(artifact_dto(&Urls::new(&ctx, &repo), &a)))
 }
 

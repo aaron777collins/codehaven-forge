@@ -23,6 +23,7 @@ axum.workspace = true
 tokio.workspace = true
 rustix.workspace = true
 tokio-util.workspace = true
+url.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 bytes.workspace = true

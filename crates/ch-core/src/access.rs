@@ -121,6 +121,9 @@ pub enum PublicTarget {
     Owner,
     /// `{owner}/{repo}` must be a public repository.
     Repo,
+    /// A registry path (`/v2/{*rest}`): a pull of an image linked to a public repository, or
+    /// the catalog (ch-4pn.13). Never an upload.
+    Image,
 }
 
 /// How much a request may cost the shared server, for the signed-out caps.
@@ -154,7 +157,7 @@ const fn r(pattern: &'static str, target: PublicTarget, cost: Cost) -> PublicRep
 }
 
 use Cost::{Archive, Git, Heavy, Light, Raw};
-use PublicTarget::{Discovery, Owner, Repo as RepoT};
+use PublicTarget::{Discovery, Image, Owner, Repo as RepoT};
 
 /// The complete list of what a signed-out visitor may read while the instance allows public
 /// repositories. HEAD follows GET, except on git and archive routes. Everything else stays
@@ -196,6 +199,13 @@ pub const PUBLIC_REPO_ROUTES: &[PublicRepoRoute] = &[
     r("/{owner}/{repo}/releases", RepoT, Light),
     r("/{owner}/{repo}/releases/tag/{tag}", RepoT, Light),
     r("/{owner}/{repo}/releases/download/{tag}/{name}", RepoT, Raw),
+    // Actions history recorded at the public tier (ch-4pn.12). The handlers show only rows whose
+    // recorded tier covers the viewer, see `history_tiers`.
+    r("/{owner}/{repo}/actions", RepoT, Light),
+    r("/{owner}/{repo}/actions/runs/{run}", RepoT, Light),
+    r("/{owner}/{repo}/actions/runs/{run}/jobs/{job}", RepoT, Light),
+    r("/{owner}/{repo}/actions/runs/{run}/jobs/{job}/log.txt", RepoT, Raw),
+    r("/{owner}/{repo}/pulls/{number}/checks", RepoT, Light),
     // Repository API
     r("/api/v3/repos/{owner}/{repo}", RepoT, Light),
     r("/api/v3/repos/{owner}/{repo}/topics", RepoT, Light),
@@ -252,10 +262,59 @@ pub const PUBLIC_REPO_ROUTES: &[PublicRepoRoute] = &[
     r("/api/v3/repos/{owner}/{repo}/releases/{id}", RepoT, Light),
     r("/api/v3/repos/{owner}/{repo}/releases/{id}/assets", RepoT, Light),
     r("/api/v3/repos/{owner}/{repo}/releases/assets/{id}", RepoT, Raw),
+    // Actions history, statuses and checks recorded at the public tier (ch-4pn.12). Variables,
+    // secrets, caches, runners, the run log zip, artifact downloads and live streams stay closed.
+    r("/api/v3/repos/{owner}/{repo}/commits/{reference}/statuses", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/commits/{reference}/status", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/commits/{reference}/check-runs", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/check-runs/{id}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/actions/workflows", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/actions/workflows/{workflow}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/actions/workflows/{workflow}/runs", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/actions/runs", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/actions/runs/{id}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/actions/runs/{id}/jobs", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/actions/runs/{id}/artifacts", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/actions/jobs/{id}", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/actions/jobs/{id}/logs", RepoT, Raw),
+    r("/api/v3/repos/{owner}/{repo}/actions/artifacts", RepoT, Light),
+    r("/api/v3/repos/{owner}/{repo}/actions/artifacts/{id}", RepoT, Light),
+    // The registry (ch-4pn.13): `/v2/token` hands a signed-out client the literal pull-only token
+    // `anonymous`, and a pull of an image linked to a public repository, or the catalog, gets
+    // in. `/v2/` itself still challenges, so `docker login` works. Uploads never match: their
+    // paths end in `/`, `uploads` or an upload id, which the gate's lookup refuses.
+    r("/v2/token", Discovery, Light),
+    r("/v2/{*rest}", Image, Raw),
     // Git over HTTPS: clone and fetch only. Push always challenges.
     PublicRepoRoute { methods: &["GET"], pattern: "/{owner}/{repo}/info/refs", target: RepoT, cost: Git },
     PublicRepoRoute { methods: &["POST"], pattern: "/{owner}/{repo}/git-upload-pack", target: RepoT, cost: Git },
 ];
+
+/// Which recorded tiers of Actions history a viewer may see (spec section 4, "Actions"). Below
+/// Read, a run, its jobs, logs, artifacts, checks and statuses show only when
+/// `min(recorded_tier, access_tier)` covers the viewer. The caller has already required View, so
+/// the repository's tier covers them; what is left is the tier recorded on the row. `None` means
+/// all of it (Read and up), and an empty list means none.
+///
+/// A signed-out visitor sees rows recorded public. An account (a session, an app, or a token
+/// that may read repositories) sees rows recorded internal or public. A token without a repo
+/// scope reads only what anyone may read.
+pub fn history_tiers(actor: &Actor, perm: crate::Permission) -> Option<&'static [&'static str]> {
+    const PUBLIC: &[&str] = &["public"];
+    const SIGNED_IN: &[&str] = &["internal", "public"];
+    const NONE: &[&str] = &[];
+    if perm >= crate::Permission::Read {
+        return None;
+    }
+    if perm < crate::Permission::View {
+        return Some(NONE);
+    }
+    Some(match actor {
+        Actor::User { .. } | Actor::App { .. } => SIGNED_IN,
+        Actor::Token { scopes, .. } if scopes.repo_cap() >= crate::Permission::Read => SIGNED_IN,
+        _ => PUBLIC,
+    })
+}
 
 /// The target a public route names: the owner segment and, for a repository route, the repo
 /// segment, as written in the path.
@@ -264,6 +323,8 @@ pub struct PublicMatch<'a> {
     pub rule: &'static PublicRepoRoute,
     pub owner: Option<&'a str>,
     pub repo: Option<&'a str>,
+    /// The path as sent, for targets the segments alone do not name (a registry path).
+    pub path: &'a str,
 }
 
 /// How specific a pattern segment is, the way the router ranks them: a literal beats a
@@ -317,7 +378,7 @@ pub fn public_repo_route<'a>(method: &Method, path: &'a str, query: Option<&str>
             _ => {}
         }
     }
-    Some(PublicMatch { rule, owner, repo })
+    Some(PublicMatch { rule, owner, repo, path })
 }
 
 /// An account name as the users table allows it: 1 to 39 letters, digits and inner dashes.
@@ -579,6 +640,29 @@ pub fn actor_accepted(actor: &Actor, kind: RouteKind) -> bool {
         (Actor::App { .. }, RouteKind::Mcp) => true,
         _ => false,
     }
+}
+
+/// Web file downloads a personal access token also opens (ch-8ee): a raw file, an archive and a
+/// release file, GET or HEAD only, so a script can fetch with a token what a person downloads in
+/// a browser. No other page accepts a token. The pattern is written as the router registers it,
+/// and the layer inside the router checks the request really reached that route.
+pub const TOKEN_FILE_ROUTES: &[&str] =
+    &["/{owner}/{repo}/raw/{*rest}", "/{owner}/{repo}/archive/{*rest}", "/{owner}/{repo}/releases/download/{tag}/{name}"];
+
+/// The token file route this request is shaped like, if any.
+pub fn token_file_route(method: &Method, path: &str) -> Option<&'static str> {
+    if *method != Method::GET && *method != Method::HEAD {
+        return None;
+    }
+    let segs = safe_segments(path)?;
+    TOKEN_FILE_ROUTES.iter().copied().find(|p| pattern_matches(p, &segs))
+}
+
+/// Set by the gate when a token was let onto a page route for a file download. The layer inside
+/// the router lets the request run only on that route.
+#[derive(Debug, Clone)]
+pub struct TokenFileRead {
+    pub pattern: &'static str,
 }
 
 /// The caller's API quota once this request is counted. The guard puts it on the request so

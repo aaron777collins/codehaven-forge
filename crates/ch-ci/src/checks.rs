@@ -2,9 +2,10 @@
 //! rule's "required checks" looks at.
 
 use crate::ctx::Ctx;
+use crate::history::{self, Tiers};
 use async_trait::async_trait;
 use ch_core::events::DomainEvent;
-use ch_core::model::{CheckRun, CombinedState, CommitStatus};
+use ch_core::model::{CheckRun, CombinedState, CommitStatus, SeenChecks};
 use ch_core::services::Checks;
 use ch_core::{Actor, Error, Permission, RepoId, Result};
 
@@ -44,13 +45,17 @@ pub fn combine(checks: &[CheckRun], statuses: &[CommitStatus]) -> CombinedState 
 }
 
 impl ChecksImpl {
-    async fn latest_checks(&self, repo: RepoId, sha: &str) -> Result<Vec<CheckRun>> {
+    /// The latest attempt of each check name. With tiers, only attempts recorded at one of them
+    /// count, so a viewer below Read sees the newest attempt they may see (ch-4pn.12).
+    async fn latest_checks(&self, repo: RepoId, sha: &str, tiers: Tiers) -> Result<Vec<CheckRun>> {
         let rows: Vec<CheckTuple> = sqlx::query_as(
             "SELECT DISTINCT ON (name) id, repo_id, head_sha, name, status, conclusion, details_url
-             FROM check_runs WHERE repo_id = $1 AND head_sha = $2 ORDER BY name, id DESC",
+             FROM check_runs WHERE repo_id = $1 AND head_sha = $2 AND ($3::text[] IS NULL OR recorded_tier = ANY($3))
+             ORDER BY name, id DESC",
         )
         .bind(repo.0)
         .bind(sha)
+        .bind(history::bind(tiers))
         .fetch_all(&self.ctx.db)
         .await?;
         Ok(rows
@@ -67,13 +72,15 @@ impl ChecksImpl {
             .collect())
     }
 
-    async fn latest_statuses(&self, repo: RepoId, sha: &str) -> Result<Vec<CommitStatus>> {
+    async fn latest_statuses(&self, repo: RepoId, sha: &str, tiers: Tiers) -> Result<Vec<CommitStatus>> {
         let rows: Vec<StatusTuple> = sqlx::query_as(
             "SELECT DISTINCT ON (context) id, repo_id, sha, context, state, description, target_url
-             FROM commit_statuses WHERE repo_id = $1 AND sha = $2 ORDER BY context, created_at DESC, id DESC",
+             FROM commit_statuses WHERE repo_id = $1 AND sha = $2 AND ($3::text[] IS NULL OR recorded_tier = ANY($3))
+             ORDER BY context, created_at DESC, id DESC",
         )
         .bind(repo.0)
         .bind(sha)
+        .bind(history::bind(tiers))
         .fetch_all(&self.ctx.db)
         .await?;
         Ok(rows
@@ -115,17 +122,26 @@ impl ChecksImpl {
 impl Checks for ChecksImpl {
     async fn check_runs_for_sha(&self, repo: RepoId, sha: &str) -> Result<Vec<CheckRun>> {
         let sha = self.full_sha(repo, sha).await?;
-        self.latest_checks(repo, &sha).await
+        self.latest_checks(repo, &sha, None).await
     }
 
     async fn statuses_for_sha(&self, repo: RepoId, sha: &str) -> Result<Vec<CommitStatus>> {
         let sha = self.full_sha(repo, sha).await?;
-        self.latest_statuses(repo, &sha).await
+        self.latest_statuses(repo, &sha, None).await
     }
 
     async fn combined(&self, repo: RepoId, sha: &str) -> Result<CombinedState> {
         let sha = self.full_sha(repo, sha).await?;
-        Ok(combine(&self.latest_checks(repo, &sha).await?, &self.latest_statuses(repo, &sha).await?))
+        Ok(combine(&self.latest_checks(repo, &sha, None).await?, &self.latest_statuses(repo, &sha, None).await?))
+    }
+
+    async fn seen_for_sha(&self, actor: &Actor, repo: RepoId, sha: &str) -> Result<SeenChecks> {
+        let tiers = history::tiers(&self.ctx, actor, repo).await?;
+        let sha = self.full_sha(repo, sha).await?;
+        let runs = self.latest_checks(repo, &sha, tiers).await?;
+        let statuses = self.latest_statuses(repo, &sha, tiers).await?;
+        let state = (!runs.is_empty() || !statuses.is_empty()).then(|| combine(&runs, &statuses));
+        Ok(SeenChecks { runs, statuses, state })
     }
 
     async fn create_status(
@@ -205,8 +221,8 @@ impl Checks for ChecksImpl {
             return Ok(true);
         }
         let sha = self.full_sha(repo, sha).await?;
-        let checks = self.latest_checks(repo, &sha).await?;
-        let statuses = self.latest_statuses(repo, &sha).await?;
+        let checks = self.latest_checks(repo, &sha, None).await?;
+        let statuses = self.latest_statuses(repo, &sha, None).await?;
         for want in contexts {
             let mut seen = false;
             for c in checks.iter().filter(|c| &c.name == want) {

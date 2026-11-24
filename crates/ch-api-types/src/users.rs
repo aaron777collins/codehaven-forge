@@ -209,7 +209,7 @@ mod tests {
             login: "haven".into(),
             id: 20,
             url: "https://code.example.com/api/v3/orgs/haven".into(),
-            html_url: "https://code.example.com/orgs/haven".into(),
+            html_url: "https://code.example.com/haven".into(),
             avatar_url: "https://code.example.com/avatar/haven.svg".into(),
             description: Some("the forge collective".into()),
             name: Some("Haven".into()),

@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 struct FakeAuthz {
     pool: PgPool,
+    org_role_calls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[async_trait]
@@ -50,6 +51,7 @@ impl Authz for FakeAuthz {
         Ok(perm.min(cap))
     }
     async fn org_role(&self, actor: &Actor, org: OrgId) -> Result<Option<OrgRole>> {
+        self.org_role_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let Some(u) = actor.user_id() else { return Ok(None) };
         let r: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
             .bind(org.0)
@@ -148,6 +150,7 @@ struct Reg {
     base: String,
     c: reqwest::Client,
     cancel: CancellationToken,
+    org_role_calls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Drop for Reg {
@@ -178,7 +181,8 @@ impl Reg {
     async fn new(pool: PgPool) -> Reg {
         let env = TestEnv::new(pool.clone()).await;
         let mut b = env.builder().await;
-        b.authz = Arc::new(FakeAuthz { pool: pool.clone() });
+        let org_role_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        b.authz = Arc::new(FakeAuthz { pool: pool.clone(), org_role_calls: org_role_calls.clone() });
         let authn = Arc::new(FakeAuthn { pool: pool.clone() });
         b.authn = authn.clone();
         let state = b.build();
@@ -196,6 +200,7 @@ impl Reg {
             base: format!("http://{addr}"),
             c: reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap(),
             cancel,
+            org_role_calls,
         }
     }
 
@@ -782,4 +787,369 @@ async fn a_push_to_someone_elses_account_answers_like_a_hidden_image(pool: PgPoo
     assert_eq!((hidden.status, hidden.code()), (404, "NAME_UNKNOWN".to_string()));
     assert_eq!((missing.status, missing.body.clone()), (hidden.status, hidden.body.clone()));
     assert_eq!((no_owner.status, no_owner.body), (hidden.status, hidden.body));
+}
+
+// ---- Range requests on blobs -------------------------------------------------------------
+
+async fn ranged(r: &Reg, path: &str, range: &str) -> Resp {
+    r.send(r.c.get(format!("{}{path}", r.base)).header("range", range), "pw-alice").await
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_single_range_returns_206_with_just_those_bytes(pool: PgPool) {
+    let (r, _alice) = world(pool).await;
+    // Large enough to arrive in several chunks, with bytes that tell their position apart.
+    let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+    let (_, _) = r.push_image("alice/demo", "latest", "pw-alice", &[&data]).await;
+    let d = sha(&data);
+    let path = format!("/v2/alice/demo/blobs/{d}");
+
+    let whole = r.get(&path, "pw-alice").await;
+    assert_eq!((whole.status, whole.h("accept-ranges")), (200, "bytes".to_string()));
+
+    let mid = ranged(&r, &path, "bytes=100000-100099").await;
+    assert_eq!(mid.status, 206);
+    assert_eq!(mid.body, &data[100_000..100_100]);
+    assert_eq!(mid.h("content-range"), "bytes 100000-100099/300000");
+    assert_eq!(mid.h("content-length"), "100");
+    assert_eq!(mid.h("docker-content-digest"), d, "the digest header names the whole blob");
+
+    let open_end = ranged(&r, &path, "bytes=299990-").await;
+    assert_eq!((open_end.status, open_end.body.as_slice()), (206, &data[299_990..]));
+    assert_eq!(open_end.h("content-range"), "bytes 299990-299999/300000");
+
+    let suffix = ranged(&r, &path, "bytes=-5").await;
+    assert_eq!((suffix.status, suffix.body.as_slice()), (206, &data[299_995..]));
+
+    let clamped = ranged(&r, &path, "bytes=299998-999999").await;
+    assert_eq!((clamped.status, clamped.h("content-range")), (206, "bytes 299998-299999/300000".to_string()));
+
+    let first = ranged(&r, &path, "bytes=0-0").await;
+    assert_eq!((first.status, first.body.as_slice()), (206, &data[..1]));
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_range_past_the_end_is_416_and_bad_syntax_is_ignored(pool: PgPool) {
+    let (r, _alice) = world(pool).await;
+    let data = vec![9u8; 1000];
+    r.push_image("alice/demo", "latest", "pw-alice", &[&data]).await;
+    let d = sha(&data);
+    let path = format!("/v2/alice/demo/blobs/{d}");
+
+    for h in ["bytes=1000-", "bytes=5000-6000", "bytes=-0"] {
+        let t = ranged(&r, &path, h).await;
+        assert_eq!(t.status, 416, "{h}");
+        assert_eq!(t.h("content-range"), "bytes */1000", "{h}");
+        assert_eq!(t.h("docker-content-digest"), d);
+    }
+    // Not one well formed range: ignored, the whole blob comes back with 200.
+    for h in ["bytes=5-2", "bytes=0-9,20-29", "items=0-9", "bytes=a-b", "garbage", "bytes=-"] {
+        let t = ranged(&r, &path, h).await;
+        assert_eq!((t.status, t.body.len()), (200, 1000), "{h}");
+        assert!(t.h("content-range").is_empty(), "{h}");
+    }
+    // HEAD ignores Range and reports the whole size.
+    let head = r.send(r.c.head(format!("{}{path}", r.base)).header("range", "bytes=0-9"), "pw-alice").await;
+    assert_eq!((head.status, head.h("content-length")), (200, "1000".to_string()));
+    // A range does not get around access: a stranger still sees nothing.
+    r.env.user("bob").await;
+    let hidden = r.send(r.c.get(format!("{}{path}", r.base)).header("range", "bytes=0-9"), "pw-bob").await;
+    assert_eq!(hidden.status, 404);
+}
+
+// ---- Catalog -----------------------------------------------------------------------------
+
+async fn catalog(r: &Reg, query: &str, secret: &str) -> Resp {
+    r.get(&format!("/v2/_catalog{query}"), secret).await
+}
+
+fn repos(resp: &Resp) -> Vec<String> {
+    resp.json()["repositories"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect()
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn the_catalog_lists_only_what_the_caller_can_read(pool: PgPool) {
+    let (r, alice) = world(pool).await;
+    let bob = r.env.user("bob").await;
+    r.env.user("carol").await;
+    // Alice: one private image, one linked to a public repository, one linked to a private
+    // repository Bob collaborates on.
+    r.push_image("alice/private", "latest", "pw-alice", &[b"p"]).await;
+    r.env.public_repo(alice, "open").await;
+    r.push_image("alice/open", "latest", "pw-alice", &[b"o"]).await;
+    let team = r.env.repo(alice, "team").await;
+    r.push_image("alice/team", "latest", "pw-alice", &[b"t"]).await;
+    r.env.collaborator(team, bob, "read").await;
+    r.push_image("bob/mine", "latest", "pw-bob", &[b"b"]).await;
+    // An organization: alice owns, bob is a member, carol is outside.
+    let acme = r.env.org("acme").await;
+    for (who, role) in [(alice, "owner"), (bob, "member")] {
+        sqlx::query("INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, $3)")
+            .bind(acme.0)
+            .bind(who.0)
+            .bind(role)
+            .execute(&r.env.pool)
+            .await
+            .unwrap();
+    }
+    r.push_image("acme/tool", "latest", "pw-alice", &[b"a"]).await;
+
+    let a = catalog(&r, "", "pw-alice").await;
+    assert_eq!(a.status, 200);
+    assert_eq!(a.h("content-type"), "application/json");
+    assert_eq!(repos(&a), ["acme/tool", "alice/open", "alice/private", "alice/team"]);
+    assert_eq!(repos(&catalog(&r, "", "pw-bob").await), ["acme/tool", "alice/open", "alice/team", "bob/mine"]);
+    assert_eq!(repos(&catalog(&r, "", "pw-carol").await), ["alice/open"], "only the public repository's image");
+    // A read-only package token sees what the account sees.
+    assert_eq!(repos(&catalog(&r, "", "pull-bob").await), ["acme/tool", "alice/open", "alice/team", "bob/mine"]);
+    // A token without a packages scope lists nothing and is told why.
+    let no_scope = catalog(&r, "", "repo-alice").await;
+    assert_eq!((no_scope.status, no_scope.code()), (403, "DENIED".to_string()));
+    // Signed out: the gate answers 401 before the handler runs.
+    let anon = r.c.get(format!("{}/v2/_catalog", r.base)).send().await.unwrap();
+    assert_eq!(anon.status(), 401);
+    assert!(anon.headers().contains_key(header::WWW_AUTHENTICATE));
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn the_catalog_agrees_with_what_a_pull_allows(pool: PgPool) {
+    let (r, alice) = world(pool).await;
+    let bob = r.env.user("bob").await;
+    r.push_image("alice/a-private", "latest", "pw-alice", &[b"1"]).await;
+    r.env.public_repo(alice, "b-open").await;
+    r.push_image("alice/b-open", "latest", "pw-alice", &[b"2"]).await;
+    let c = r.env.repo(alice, "c-shared").await;
+    r.push_image("alice/c-shared", "latest", "pw-alice", &[b"3"]).await;
+    r.env.collaborator(c, bob, "write").await;
+    // A repository that was linked and then made private again: Bob must not see it listed.
+    let d = r.env.public_repo(alice, "d-flipped").await;
+    r.push_image("alice/d-flipped", "latest", "pw-alice", &[b"4"]).await;
+    sqlx::query("UPDATE repositories SET visibility = 'private' WHERE id = $1").bind(d.0).execute(&r.env.pool).await.unwrap();
+
+    let listed = repos(&catalog(&r, "", "pw-bob").await);
+    for name in ["alice/a-private", "alice/b-open", "alice/c-shared", "alice/d-flipped"] {
+        let pull = r.get(&format!("/v2/{name}/tags/list"), "pw-bob").await.status == 200;
+        assert_eq!(listed.contains(&name.to_string()), pull, "{name}: catalog and pull disagree");
+    }
+    assert_eq!(listed, ["alice/b-open", "alice/c-shared"]);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn the_catalog_pages_with_n_and_last(pool: PgPool) {
+    let (r, _alice) = world(pool).await;
+    for name in ["alice/e", "alice/b", "alice/d", "alice/a", "alice/c"] {
+        r.push_image(name, "latest", "pw-alice", &[name.as_bytes()]).await;
+    }
+    let p1 = catalog(&r, "?n=2", "pw-alice").await;
+    assert_eq!(repos(&p1), ["alice/a", "alice/b"]);
+    assert_eq!(p1.h("link"), "</v2/_catalog?n=2&last=alice/b>; rel=\"next\"");
+    let p2 = catalog(&r, "?n=2&last=alice/b", "pw-alice").await;
+    assert_eq!(repos(&p2), ["alice/c", "alice/d"]);
+    let p3 = catalog(&r, "?n=2&last=alice/d", "pw-alice").await;
+    assert_eq!(repos(&p3), ["alice/e"]);
+    assert_eq!(p3.h("link"), "", "the last page has no next link");
+    // A page that fits exactly has no next link either.
+    assert_eq!(catalog(&r, "?n=5", "pw-alice").await.h("link"), "");
+    // n=0 is an empty list; a bad n is a 400, not a silent default.
+    let zero = catalog(&r, "?n=0", "pw-alice").await;
+    assert_eq!((zero.status, repos(&zero).len(), zero.h("link")), (200, 0, String::new()));
+    assert_eq!(catalog(&r, "?n=x", "pw-alice").await.status, 400);
+    assert_eq!(catalog(&r, "?n=-1", "pw-alice").await.status, 400);
+    // After the last name: empty.
+    assert!(repos(&catalog(&r, "?last=alice/z", "pw-alice").await).is_empty());
+    // Only GET and HEAD.
+    let post = r.req(reqwest::Method::POST, "/v2/_catalog", "pw-alice", vec![], None).await;
+    assert_eq!(post.status, 405);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_caller_who_sees_little_gets_a_short_page_and_a_cursor_that_names_nothing_hidden(pool: PgPool) {
+    use ch_registry::catalog::{Cursor, Limits, page};
+    let (r, _alice) = world(pool).await;
+    let bob = r.env.user("bob").await;
+    for name in ["alice/a", "alice/b", "alice/c", "alice/d"] {
+        r.push_image(name, "latest", "pw-alice", &[name.as_bytes()]).await;
+    }
+    r.push_image("bob/z", "latest", "pw-bob", &[b"z"]).await;
+    let actor = Actor::User { id: bob, is_admin: false, has_2fa: false, via: AuthVia::Basic };
+    let start = Cursor::default();
+    // Reading two rows at a time and giving up after three: Bob can read none of Alice's four.
+    let tight = Limits { batch: 2, max_scan: 3 };
+    let (names, next) = page(&r.state, &actor, 10, &start, tight).await.unwrap();
+    assert!(names.is_empty());
+    let next = next.expect("more to read");
+    // The cursor says how far to skip, never the name of a row Bob cannot pull.
+    assert_eq!(next, Cursor { last: String::new(), skip: 3 });
+    assert!(!next.last.contains("alice"), "a cursor must not carry a hidden name");
+    let (names, next) = page(&r.state, &actor, 10, &Cursor { last: String::new(), skip: 3 }, tight).await.unwrap();
+    assert_eq!((names, next), (vec!["bob/z".to_string()], None));
+    // With room to read, the same call finds it in one go across several batches.
+    let roomy = Limits { batch: 2, max_scan: 100 };
+    let (names, next) = page(&r.state, &actor, 10, &start, roomy).await.unwrap();
+    assert_eq!((names, next), (vec!["bob/z".to_string()], None));
+    // Budget spent after a readable name: the cursor is that readable name plus what was skipped since.
+    r.push_image("bob/zz", "latest", "pw-bob", &[b"zz"]).await;
+    let (names, next) = page(&r.state, &actor, 10, &start, Limits { batch: 2, max_scan: 5 }).await.unwrap();
+    assert_eq!(names, ["bob/z"]);
+    assert_eq!(next, Some(Cursor { last: "bob/z".into(), skip: 0 }));
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn the_next_link_never_carries_a_hidden_name(pool: PgPool) {
+    use ch_registry::catalog::{Cursor, link};
+    let (r, _alice) = world(pool).await;
+    let _ = r;
+    assert_eq!(link(2, &Cursor { last: "alice/b".into(), skip: 0 }, "ignored"), "</v2/_catalog?n=2&last=alice/b>; rel=\"next\"");
+    assert_eq!(link(2, &Cursor { last: String::new(), skip: 5000 }, "5000.abc"), "</v2/_catalog?n=2&last=&skip=5000.abc>; rel=\"next\"");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn bad_catalog_and_tag_cursors_are_400_not_500(pool: PgPool) {
+    let (r, _alice) = world(pool).await;
+    r.push_image("alice/demo", "latest", "pw-alice", &[b"l"]).await;
+    for q in [
+        "?last=%00",
+        "?last=a%00b",
+        "?skip=-1",
+        "?skip=x",
+        "?skip=99999999999",
+        "?skip=%00",
+        "?skip=1",
+        "?skip=3.",
+        "?skip=3.00",
+        "?skip=3.0000000000000000000000000000000000000000000000000000000000000000",
+    ] {
+        assert_eq!(catalog(&r, q, "pw-alice").await.status, 400, "{q}");
+    }
+    assert_eq!(r.get("/v2/alice/demo/tags/list?last=%00", "pw-alice").await.status, 400);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_skip_the_server_issued_works_and_only_for_that_caller(pool: PgPool) {
+    let (r, alice) = world(pool).await;
+    r.env.user("bob").await;
+    r.env.user("carol").await;
+    // Pushing 1100 images is too slow; the rows carry no repository, so bob can read none of
+    // alice's and the catalog hides every one of them from him.
+    for i in 0..1100 {
+        sqlx::query("INSERT INTO packages (owner_id, kind, name) VALUES ($1, 'container', $2)")
+            .bind(alice.0)
+            .bind(format!("a{i:04}"))
+            .execute(&r.env.pool)
+            .await
+            .unwrap();
+    }
+    r.push_image("bob/z", "latest", "pw-bob", &[b"z"]).await;
+
+    // The default scan budget runs out on alice's rows first: an empty page, but more to read.
+    let c = catalog(&r, "", "pw-bob").await;
+    assert_eq!(c.status, 200);
+    assert!(repos(&c).is_empty(), "the scan budget runs out on alice's rows first");
+    let l = c.h("link");
+    assert!(!l.is_empty(), "a page that stopped early has a next link");
+    // The server's link is the only place a skip comes from, and it is signed.
+    assert!(l.starts_with("</v2/_catalog?n=1000&last=&skip=1000."), "{l}");
+    assert!(l.ends_with(">; rel=\"next\""), "{l}");
+    let url = l.strip_prefix('<').unwrap().split_once('>').unwrap().0;
+
+    // The server's own link works, for the caller it was issued to.
+    let next = r.get(url, "pw-bob").await;
+    assert_eq!(next.status, 200);
+    assert_eq!(repos(&next), ["bob/z"]);
+    assert_eq!(next.h("link"), "", "bob has seen everything he can");
+    // Issued for bob does not mean usable by carol.
+    assert_eq!(r.get(url, "pw-carol").await.status, 400);
+    // The signature covers the whole cursor: a changed last or a changed count refuses.
+    assert_eq!(r.get(&url.replace("last=&", "last=a0005&"), "pw-bob").await.status, 400);
+    assert_eq!(r.get(&url.replace("skip=1000.", "skip=999."), "pw-bob").await.status, 400);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn hidden_rows_of_one_organization_cost_one_permission_lookup_not_one_each(pool: PgPool) {
+    let (r, _alice) = world(pool).await;
+    r.env.user("bob").await;
+    let acme = r.env.org("acme").await;
+    for i in 0..30 {
+        sqlx::query("INSERT INTO packages (owner_id, kind, name) VALUES ($1, 'container', $2)")
+            .bind(acme.0)
+            .bind(format!("app{i:02}"))
+            .execute(&r.env.pool)
+            .await
+            .unwrap();
+    }
+    let before = r.org_role_calls.load(std::sync::atomic::Ordering::SeqCst);
+    let c = catalog(&r, "", "pw-bob").await;
+    assert!(repos(&c).is_empty(), "Bob is not a member of acme");
+    let calls = r.org_role_calls.load(std::sync::atomic::Ordering::SeqCst) - before;
+    assert!(calls <= 1, "{calls} organization lookups for 30 rows of one organization");
+}
+
+// ---- Found by the OCI conformance suite --------------------------------------------------
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_reference_that_cannot_exist_is_not_found_on_read_and_delete_but_invalid_on_write(pool: PgPool) {
+    let (r, _alice) = world(pool).await;
+    r.push_image("alice/demo", "latest", "pw-alice", &[b"l"]).await;
+    // The conformance suite asks for ".INVALID_MANIFEST_NAME", which is not a legal tag.
+    for method in [reqwest::Method::GET, reqwest::Method::HEAD, reqwest::Method::DELETE] {
+        let t = r.req(method.clone(), "/v2/alice/demo/manifests/.INVALID_MANIFEST_NAME", "pw-alice", vec![], None).await;
+        assert_eq!(t.status, 404, "{method}");
+        if method != reqwest::Method::HEAD {
+            assert_eq!(t.code(), "MANIFEST_UNKNOWN", "{method}");
+        }
+    }
+    // Writing under it is still refused as invalid.
+    let put = r
+        .req(
+            reqwest::Method::PUT,
+            "/v2/alice/demo/manifests/.INVALID_MANIFEST_NAME",
+            "pw-alice",
+            b"{}".to_vec(),
+            Some("application/vnd.oci.image.manifest.v1+json"),
+        )
+        .await;
+    assert_eq!((put.status, put.code()), (400, "MANIFEST_INVALID".to_string()));
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn referrers_carry_annotations_and_an_artifact_type_and_can_be_filtered(pool: PgPool) {
+    let (r, _alice) = world(pool).await;
+    let (subject, _) = r.push_image("alice/demo", "latest", "pw-alice", &[b"l"]).await;
+    let cfg = r.push_blob("alice/demo", "pw-alice", b"{\"sig\":1}").await;
+    let subj = json!({"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": subject, "size": 1});
+    // One names its type with artifactType; the other only through its config media type.
+    let by_field = json!({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json", "artifactType": "application/example.sig",
+        "config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": cfg, "size": 9}, "layers": [], "subject": subj,
+        "annotations": {"note": "by field"}});
+    let by_config = json!({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"mediaType": "application/example.sbom", "digest": cfg, "size": 9}, "layers": [], "subject": subj,
+        "annotations": {"note": "by config"}});
+    for (tag, m) in [("a", &by_field), ("b", &by_config)] {
+        let put = r
+            .req(
+                reqwest::Method::PUT,
+                &format!("/v2/alice/demo/manifests/{tag}"),
+                "pw-alice",
+                serde_json::to_vec(m).unwrap(),
+                Some("application/vnd.oci.image.manifest.v1+json"),
+            )
+            .await;
+        assert_eq!(put.status, 201, "{}", String::from_utf8_lossy(&put.body));
+    }
+    let all = r.get(&format!("/v2/alice/demo/referrers/{subject}"), "pw-alice").await;
+    assert_eq!(all.h("content-type"), "application/vnd.oci.image.index.v1+json");
+    assert_eq!(all.h("oci-filters-applied"), "");
+    let list = all.json()["manifests"].as_array().unwrap().clone();
+    assert_eq!(list.len(), 2);
+    let find = |note: &str| list.iter().find(|m| m["annotations"]["note"] == note).unwrap().clone();
+    assert_eq!(find("by field")["artifactType"], "application/example.sig");
+    assert_eq!(find("by config")["artifactType"], "application/example.sbom", "falls back to the config media type");
+
+    let only = r.get(&format!("/v2/alice/demo/referrers/{subject}?artifactType=application/example.sbom"), "pw-alice").await;
+    assert_eq!(only.h("oci-filters-applied"), "artifactType");
+    let filtered = only.json()["manifests"].as_array().unwrap().clone();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0]["annotations"]["note"], "by config");
+    let none = r.get(&format!("/v2/alice/demo/referrers/{subject}?artifactType=application/nothing"), "pw-alice").await;
+    assert_eq!((none.h("oci-filters-applied"), none.json()["manifests"].as_array().unwrap().len()), ("artifactType".to_string(), 0));
 }

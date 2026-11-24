@@ -1050,6 +1050,12 @@ impl Notifications for Demo {
     async fn set_thread_subscription(&self, _a: &Actor, _t: &str, _id: i64, _s: bool) -> Result<()> {
         Ok(())
     }
+    async fn email_on(&self, _a: &Actor) -> Result<bool> {
+        Ok(false)
+    }
+    async fn set_email_on(&self, _a: &Actor, _on: bool) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -1140,6 +1146,13 @@ impl Checks for Demo {
     }
     async fn required_satisfied(&self, _r: RepoId, _s: &str, _c: &[String]) -> Result<bool> {
         Ok(true)
+    }
+    /// The demo has no tiers: everyone sees its made-up checks.
+    async fn seen_for_sha(&self, _a: &Actor, repo: RepoId, s: &str) -> Result<ch_core::model::SeenChecks> {
+        let runs = self.check_runs_for_sha(repo, s).await?;
+        let statuses = self.statuses_for_sha(repo, s).await?;
+        let state = if runs.is_empty() && statuses.is_empty() { None } else { Some(self.combined(repo, s).await?) };
+        Ok(ch_core::model::SeenChecks { runs, statuses, state })
     }
 }
 

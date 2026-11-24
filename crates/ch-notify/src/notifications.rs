@@ -202,6 +202,31 @@ impl Notifications for NotificationsService {
         Ok(())
     }
 
+    async fn email_on(&self, actor: &Actor) -> Result<bool> {
+        let user = Self::owner(actor)?;
+        Ok(sqlx::query_scalar("SELECT notify_email FROM users WHERE id = $1")
+            .bind(user.0)
+            .fetch_optional(&self.pool)
+            .await?
+            .unwrap_or(false))
+    }
+
+    async fn set_email_on(&self, actor: &Actor, on: bool) -> Result<()> {
+        // Where email goes is the person's own choice, made in the browser.
+        let Actor::User { id, .. } = actor else { return Err(Error::forbidden("Only you can change where your notifications go.")) };
+        sqlx::query("UPDATE users SET notify_email = $2 WHERE id = $1").bind(id.0).bind(on).execute(&self.pool).await?;
+        if !on {
+            // Nothing already queued goes out after it is turned off.
+            sqlx::query(
+                "UPDATE notification_mail_queue SET done_at = now(), outcome = 'turned off' WHERE user_id = $1 AND done_at IS NULL",
+            )
+            .bind(id.0)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
     async fn set_thread_subscription(&self, actor: &Actor, subject_type: &str, subject_id: i64, subscribed: bool) -> Result<()> {
         let user = Self::owner(actor)?;
         if subject_type != "issue" && subject_type != "pull" {

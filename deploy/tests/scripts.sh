@@ -640,6 +640,65 @@ else
   skip 'F: python3 is missing'
 fi
 
+# --- section G: ci-up.sh register -----------------------------------------------------------
+# register takes --replace as its second or third argument, never as the name, and passes it to
+# haven-runner. compose.sh and diskcheck.sh are stubbed in the scratch tree so nothing needs
+# Docker or a look at a real disk; the originals are copied aside first and restored after.
+
+cp "$TREE/deploy/compose.sh" "$T/g-compose.sh"
+cp "$TREE/deploy/dev/diskcheck.sh" "$T/g-diskcheck.sh"
+cat > "$TREE/deploy/compose.sh" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$T/compose.log"
+exit 0
+STUB
+cat > "$TREE/deploy/dev/diskcheck.sh" <<STUB
+#!/usr/bin/env bash
+exit 0
+STUB
+# The env file ch_env_load finds on its own, the way section C leaves it.
+cp "$TREE/.env.example" "$TREE/.env"
+
+# g_ci_up <KEY=value...> <argument...>: ci-up.sh register on the scratch tree, clean environment
+# plus what the script needs (the first arguments are extra assignments). Each call empties the
+# compose log first, so a failed call cannot pass on the line before it.
+g_ci_up() {
+  local kv extra="$1"; shift
+  : > "$T/compose.log"
+  (
+    unset_test_env
+    CODEHAVEN_TAG=test-tag
+    HAVEN_RUNNER_TOKEN=x
+    export CODEHAVEN_TAG HAVEN_RUNNER_TOKEN
+    for kv in $extra; do export "$kv"; done
+    bash "$TREE/deploy/prod/ci-up.sh" register "$@"
+  ) > "$T/g.out" 2>&1
+}
+
+# g_line <ending> [<absent>...]: the last compose call ends with <ending> and holds none of the
+# further strings.
+g_line() {
+  local want="$1" not line
+  shift
+  line=$(tail -1 "$T/compose.log")
+  case "$line" in *"$want") ;; *) return 1 ;; esac
+  for not in "$@"; do
+    case "$line" in *"$not"*) return 1 ;; esac
+  done
+}
+
+g_ci_up '' r1
+check 'G: ci-up register passes the name and no --replace' g_line 'haven-runner register --name r1' --replace
+
+g_ci_up '' r1 --replace
+check 'G: ci-up register passes --replace after the name' g_line 'haven-runner register --replace --name r1'
+
+g_ci_up 'CODEHAVEN_RUNNER_NAME=r2' --replace
+check 'G: ci-up register --replace takes the name from the env' g_line 'haven-runner register --replace --name r2'
+
+cp "$T/g-compose.sh" "$TREE/deploy/compose.sh"
+cp "$T/g-diskcheck.sh" "$TREE/deploy/dev/diskcheck.sh"
+
 # --- the count -----------------------------------------------------------------------------
 
 printf '\n# %d passed, %d failed, %d skipped\n' "$passed" "$failed" "$skipped"

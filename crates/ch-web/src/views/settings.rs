@@ -692,6 +692,30 @@ pub async fn appearance_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
     Ok(r)
 }
 
+// ---------------------------------------------------------------- notifications
+
+#[derive(Template)]
+#[template(path = "settings/notifications.html")]
+struct NotificationsPage {
+    c: Chrome,
+    section: String,
+    on: bool,
+    mail_on: bool,
+}
+
+pub async fn notifications_get(ctx: Ctx) -> WebResult<Response> {
+    ctx.user_id()?;
+    let on = ctx.state.notifications.email_on(&ctx.actor).await?;
+    let c = ctx.chrome("Notifications").await.nav("settings");
+    ctx.page(&NotificationsPage { c, section: "notifications".into(), on, mail_on: ctx.state.mail.enabled() })
+}
+
+pub async fn notifications_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
+    ctx.user_id()?;
+    ctx.state.notifications.set_email_on(&ctx.actor, form.flag("email")).await?;
+    Ok(ctx.redirect_flash("/settings/notifications", "ok", "Saved."))
+}
+
 // ---------------------------------------------------------------- tests
 
 #[cfg(test)]
@@ -797,3 +821,4 @@ mod tests {
 // GET+POST /settings/tokens -> tokens_get, tokens_post
 // POST /settings/tokens/{id}/delete -> token_delete
 // GET+POST /settings/appearance -> appearance_get, appearance_post
+// GET+POST /settings/notifications -> notifications_get, notifications_post

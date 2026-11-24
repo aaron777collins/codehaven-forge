@@ -1,6 +1,7 @@
 //! Pull requests, reviews, review comments, requested reviewers and the merge gate.
 
 use super::dto::Ctx;
+use super::issues::{CommentListQuery, comment_list_of, core_of};
 use super::{
     ApiJson, Client, CurrentActor, OptionalJson, Paging, created, no_content, ok, open_of, page_of, repo_of, repository_dto, sort_of,
 };
@@ -36,6 +37,7 @@ pub fn routes() -> Router<AppState> {
         .route("/repos/{owner}/{repo}/pulls/{number}/reviews/{id}/dismissals", put(dismiss_review))
         .route("/repos/{owner}/{repo}/pulls/{number}/reviews/{id}/comments", get(review_comments_of))
         .route("/repos/{owner}/{repo}/pulls/{number}/comments", get(list_review_comments).post(create_review_comment))
+        .route("/repos/{owner}/{repo}/pulls/comments", get(list_repo_review_comments))
         .route("/repos/{owner}/{repo}/pulls/{number}/threads", get(list_threads))
         .route("/repos/{owner}/{repo}/pulls/{number}/threads/{thread}/resolve", put(resolve_thread).delete(unresolve_thread))
         .route(
@@ -297,6 +299,18 @@ async fn merge_pull(
 ) -> Result<Response> {
     let (repo, _) = repo_of(&s, &actor, &owner, &name).await?;
     let method = body.merge_method.as_deref().map(parse_method).transpose()?;
+    // A pull request from a fork merges only the head the caller looked at: its branch can move
+    // under them, pushed by someone without access to the base (spec section 4, "Merging").
+    if body.sha.is_none() {
+        let v = s.pulls.view(&actor, repo.id, number).await?;
+        if v.pull.from_fork || v.pull.head_repo_id.is_some_and(|h| h != repo.id) {
+            return Err(Error::invalid(
+                "PullRequest",
+                "sha",
+                "sha is required to merge a pull request from a fork: send the head sha you reviewed",
+            ));
+        }
+    }
     let opts = MergeOptions {
         method,
         title: body.commit_title,
@@ -523,6 +537,24 @@ async fn list_review_comments(
     let per = paging.per_page() as usize;
     let page: Vec<_> = all.into_iter().skip((paging.page() as usize - 1) * per).take(per).map(|c| ctx.review_comment(c, number)).collect();
     Ok(page_of(page, &uri, base(&s), paging))
+}
+
+/// Every review comment on the repository's pull requests. Comments of reviews still pending
+/// never appear here, not even to the pending review's author.
+async fn list_repo_review_comments(
+    State(s): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Path((owner, name)): Path<(String, String)>,
+    Query(q): Query<CommentListQuery>,
+    Query(paging): Query<Paging>,
+    OriginalUri(uri): OriginalUri,
+) -> Result<Response> {
+    let (repo, ctx) = repo_of(&s, &actor, &owner, &name).await?;
+    let list = comment_list_of(&q)?;
+    let views = core_of(&s)
+        .repo_review_comment_views(&actor, repo.id, list.since, list.sort, list.direction, paging.page(), paging.per_page())
+        .await?;
+    Ok(page_of(views.iter().map(|(c, n)| ctx.review_comment(c, *n)).collect(), &uri, base(&s), paging))
 }
 
 async fn create_review_comment(

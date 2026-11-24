@@ -18,6 +18,7 @@ pub struct Config {
     pub invites: InvitesConfig,
     pub mail: MailConfig,
     pub webhooks: WebhooksConfig,
+    pub imports: ImportsConfig,
     pub ci: CiConfig,
     pub mcp: McpConfig,
     pub public_access: PublicAccessConfig,
@@ -117,6 +118,16 @@ pub struct WebhooksConfig {
     /// Addresses webhooks may never reach although they are public: the host's own public
     /// addresses, where services the firewall hides from the internet still listen.
     pub blocked_ips: Vec<std::net::IpAddr>,
+}
+
+/// Importing a repository from a URL (ch-ejm). The server fetches it, so like a webhook it must
+/// not reach the inside of the network.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ImportsConfig {
+    /// Allow imports from private and loopback addresses, over http too. Off by default; for an
+    /// instance that imports from its own network, and for tests.
+    pub allow_private: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

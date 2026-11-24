@@ -591,9 +591,10 @@ impl Ctx {
     }
 
     async fn checks_for(&self, repo: &Repo, sha: &str) -> TR {
-        let combined = self.svc.checks.combined(repo.id, sha).await.map_err(|e| self.err(e))?;
-        let statuses = self.svc.checks.statuses_for_sha(repo.id, sha).await.map_err(|e| self.err(e))?;
-        let runs = self.svc.checks.check_runs_for_sha(repo.id, sha).await.map_err(|e| self.err(e))?;
+        // Only what this person may see of the commit's checks (ch-4pn.12).
+        let seen = self.svc.checks.seen_for_sha(&self.actor, repo.id, sha).await.map_err(|e| self.err(e))?;
+        let combined = seen.state.unwrap_or(ch_core::model::CombinedState::Pending);
+        let (statuses, runs) = (seen.statuses, seen.runs);
         let st: Vec<Value> =
             statuses.iter().map(|s| json!({"context": s.context, "state": s.state, "description": s.description})).collect();
         let cr: Vec<Value> = runs.iter().map(|r| json!({"name": r.name, "status": r.status, "conclusion": r.conclusion})).collect();

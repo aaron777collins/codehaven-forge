@@ -1050,9 +1050,11 @@ pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool, by: Option<UserId>
             .fetch_one(&mut *tx)
             .await?;
     let new_id: i64 = sqlx::query_scalar(
-        "INSERT INTO workflow_runs (repo_id, workflow_id, run_number, attempt, event, head_sha, head_branch, git_ref, title, actor_id, status, concurrency_group, event_payload)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'queued', $11, $12) RETURNING id",
+        "INSERT INTO workflow_runs (repo_id, workflow_id, run_number, attempt, event, head_sha, head_branch, git_ref, title, actor_id, status, concurrency_group, event_payload, recorded_tier)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'queued', $11, $12, (SELECT recorded_tier FROM workflow_runs WHERE id = $13)) RETURNING id",
     )
+    // A re-run keeps the tier the run was recorded at: what it shows below Read must not widen
+    // because the repository did (ch-4pn.12).
     .bind(old.repo_id)
     .bind(old.workflow_id)
     .bind(old.run_number)
@@ -1065,6 +1067,7 @@ pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool, by: Option<UserId>
     .bind(by.map(|u| u.0).or(old.actor_id))
     .bind(&old.concurrency_group)
     .bind(join_payload(&event, &meta))
+    .bind(old.id)
     .fetch_one(&mut *tx)
     .await?;
     let mut fx = Effects::default();

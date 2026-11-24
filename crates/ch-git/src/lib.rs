@@ -13,6 +13,7 @@ pub mod core;
 pub mod diff;
 pub mod hooks;
 pub mod http;
+pub mod import;
 pub mod maintenance;
 pub mod pipeline;
 pub mod protect;

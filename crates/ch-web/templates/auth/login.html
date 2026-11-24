@@ -23,6 +23,7 @@
       <button class="btn btn-primary btn-block" type="submit">Sign in</button>
     </form>
     <p class="small"><a href="/password/forgot">Forgot your password?</a></p>
+    {% if public_on %}<p class="muted"><a href="/explore">Browse public repositories</a> without signing in.</p>{% endif %}
     <p class="muted small">This server is invite only. If you were sent an invite link, open it to make your account.</p>
     {% endif %}
   </section>

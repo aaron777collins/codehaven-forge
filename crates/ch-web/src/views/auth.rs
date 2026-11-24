@@ -52,15 +52,25 @@ struct LoginPage {
     error: String,
     notice: String,
     no_accounts: bool,
+    public_on: bool,
 }
 
 async fn login_page(ctx: &Ctx, username: &str, next: &str, error: &str, notice: &str) -> WebResult<Response> {
     let no_accounts = ctx.state.accounts.count_users().await.map(|n| n == 0).unwrap_or(false);
+    let public_on = ctx.state.repos.public_repos_allowed().await.unwrap_or(false);
     let (token, cookie) = ctx.anon_csrf();
     let mut c = ctx.chrome("Sign in").await;
     c.csrf = token.clone();
-    let page =
-        LoginPage { c, csrf: token, username: username.into(), next: next.into(), error: error.into(), notice: notice.into(), no_accounts };
+    let page = LoginPage {
+        c,
+        csrf: token,
+        username: username.into(),
+        next: next.into(),
+        error: error.into(),
+        notice: notice.into(),
+        no_accounts,
+        public_on,
+    };
     let mut r = ctx.page(&page)?;
     if let Some(cookie) = cookie {
         add_cookie(&mut r, &cookie);

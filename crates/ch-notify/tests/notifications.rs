@@ -541,3 +541,57 @@ async fn a_weaker_reason_does_not_replace_a_stronger_unread_one(pool: PgPool) {
     w.fan.process(&assigned).await.unwrap();
     assert_eq!(reasons(&w.inbox(w.bob).await), vec!["assigned"]);
 }
+
+/// A mail service that keeps what it was asked to send.
+#[derive(Default)]
+struct KeptMail(std::sync::Mutex<Vec<(String, String, String)>>);
+
+#[async_trait::async_trait]
+impl ch_core::services::Mail for KeptMail {
+    fn enabled(&self) -> bool {
+        true
+    }
+    async fn send(&self, to: &str, subject: &str, body: &str) -> ch_core::Result<()> {
+        self.0.lock().unwrap().push((to.into(), subject.into(), body.into()));
+        Ok(())
+    }
+}
+
+/// ch-0km: a notification email goes only to someone who turned email on, and only while they
+/// can still see the repository when it is sent. Turning it off stops what is queued.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn notification_emails_are_chosen_and_rechecked_at_send(pool: PgPool) {
+    let w = world(pool).await;
+    let fan = Fanout::new(w.c.pool.clone(), w.c.state.authz.clone()).with_mail(true);
+    let mail = std::sync::Arc::new(KeptMail::default());
+    let sender = ch_notify::mail_queue::Sender::new(w.c.pool.clone(), w.c.state.authz.clone(), mail.clone(), "https://code.example.com");
+    w.c.state.notifications.set_email_on(&user(w.bob), true).await.unwrap();
+    assert!(w.c.state.notifications.email_on(&user(w.bob)).await.unwrap());
+    assert!(!w.c.state.notifications.email_on(&user(w.carol)).await.unwrap(), "off until chosen");
+
+    let (_, ev) = w.opened(1, w.alice, "Crash on start", "cc @bob @carol").await;
+    fan.process(&ev).await.unwrap();
+    assert_eq!(sender.run_due(10).await.unwrap(), 1, "only bob asked for email");
+    let sent = mail.0.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].1, "[alice/demo] Crash on start");
+    assert!(sent[0].2.contains("https://code.example.com/alice/demo/issues/1"), "{}", sent[0].2);
+
+    // Queued, then bob loses access before it goes: nothing is sent.
+    let (_, ev) = w.opened(2, w.alice, "Second", "cc @bob").await;
+    fan.process(&ev).await.unwrap();
+    sqlx::query("DELETE FROM repo_collaborators WHERE user_id = $1").bind(w.bob.0).execute(&w.c.pool).await.unwrap();
+    sender.run_due(10).await.unwrap();
+    assert_eq!(mail.0.lock().unwrap().len(), 1, "no email for a repository bob can no longer see");
+
+    // Turned off, nothing queued goes either.
+    w.c.env.collaborator(w.repo, w.bob, "write").await;
+    let (_, ev) = w.opened(3, w.alice, "Third", "cc @bob").await;
+    fan.process(&ev).await.unwrap();
+    w.c.state.notifications.set_email_on(&user(w.bob), false).await.unwrap();
+    sender.run_due(10).await.unwrap();
+    assert_eq!(mail.0.lock().unwrap().len(), 1);
+    // A token cannot change it.
+    let tok = ch_core::Actor::Token { user_id: w.bob, token_id: ch_core::TokenId(1), scopes: ch_core::Scopes::new(["repo"]) };
+    assert!(w.c.state.notifications.set_email_on(&tok, true).await.is_err());
+}
