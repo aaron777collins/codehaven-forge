@@ -248,7 +248,7 @@ export class Session {
     const d = {
       v: 1, branch: this.branch, path: to, op: base ? "rename" : "put", from: base ? baseFrom : undefined, text: cur.text,
       info: { bom: cur.info.bom, eol: cur.info.eol === "none" ? "lf" : cur.info.eol },
-      base: { head: this.head, sha: base ? base.sha : null, b64: base ? toB64(base.bytes) : null }, fromTerminal: false, updated: Date.now(),
+      base: { head: this.head, sha: base ? base.sha : null, b64: base ? toB64(base.bytes) : null }, fromTerminal: !!(old && old.fromTerminal), updated: Date.now(),
     };
     if (old) { await this.store.remove(old.id); this.drafts.delete(from); }
     this.drafts.set(to, d);

@@ -610,3 +610,28 @@ async fn a_rerun_records_who_reran_it_and_keeps_the_recorded_tier(pool: PgPool) 
     assert_eq!(actor, Some(w.bob.0), "the person who re-ran it");
     assert_eq!(tier.as_deref(), Some("private"), "the re-run keeps the old recorded tier");
 }
+
+/// ch-6j4: a signed-in account with no grant reads an internal repository's Actions history
+/// only where it was recorded internal or public. A run recorded while the repository was
+/// private stays hidden from it, exactly like a missing run, while a person with a grant sees it.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn history_recorded_private_stays_hidden_from_accounts_without_a_grant(pool: PgPool) {
+    let w = World::new(pool).await;
+    let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, &basic_workflow())]).await;
+    let run = w.push(repo, &git, "main", None).await[0];
+    let r = w.runner("r1", &["ubuntu-latest"]).await;
+    r.drain(&w).await;
+    sqlx::query("UPDATE workflow_runs SET recorded_tier = 'private' WHERE id = $1").bind(run).execute(w.pool()).await.unwrap();
+    sqlx::query("UPDATE repositories SET access_tier = 'internal' WHERE id = $1").bind(repo.0).execute(w.pool()).await.unwrap();
+    let url = format!("/api/v3/repos/alice/demo/actions/runs/{run}");
+    // Bob has an account and no grant on alice/demo.
+    let (s, _) = w.get(&url, &Who::User(w.bob)).await;
+    assert_eq!(s, 404, "a run recorded while private is not shown to an account without a grant");
+    let (s, v) = w.get("/api/v3/repos/alice/demo/actions/runs", &Who::User(w.bob)).await;
+    assert_eq!(s, 200);
+    assert_eq!(v["total_count"], 0, "{v}");
+    // With a grant it shows.
+    w.env.collaborator(repo, w.bob, "read").await;
+    let (s, _) = w.get(&url, &Who::User(w.bob)).await;
+    assert_eq!(s, 200);
+}

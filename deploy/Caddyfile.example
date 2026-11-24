@@ -13,3 +13,26 @@
 		flush_interval -1
 	}
 }
+
+# Codehaven Pages (docs/design/pages.md). Only when CODEHAVEN_PAGES_HOST is set: Caddy then needs
+# that name too. No cookie or credential goes in or out, so the single sign-on cookie of a parent
+# domain, or anything a page tries to set, never passes. The server strips them as well.
+#{$CODEHAVEN_PAGES_HOST} {
+#	request_header -Cookie
+#	request_header -Authorization
+#	request_header -Proxy-Authorization
+#	request_header -Remote-User
+#	request_header -Remote-Groups
+#	request_header -Remote-Email
+#	request_header -Remote-Name
+#	header -Set-Cookie
+#	reverse_proxy server:3200
+#}
+#
+# Full mode (a site admin's switch at /admin/pages) also serves *.<pages host>. That needs a
+# wildcard certificate, which needs a DNS challenge: a Caddy build with your DNS provider's module
+# and its API token. Add the wildcard to the site address above, for example
+#   {$CODEHAVEN_PAGES_HOST}, *.{$CODEHAVEN_PAGES_HOST} {
+#   	tls { dns <provider> {env.DNS_API_TOKEN} }
+#   	...
+#   }

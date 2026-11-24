@@ -290,20 +290,22 @@ pub const PUBLIC_REPO_ROUTES: &[PublicRepoRoute] = &[
     PublicRepoRoute { methods: &["POST"], pattern: "/{owner}/{repo}/git-upload-pack", target: RepoT, cost: Git },
 ];
 
-/// Which recorded tiers of Actions history a viewer may see (spec section 4, "Actions"). Below
-/// Read, a run, its jobs, logs, artifacts, checks and statuses show only when
-/// `min(recorded_tier, access_tier)` covers the viewer. The caller has already required View, so
-/// the repository's tier covers them; what is left is the tier recorded on the row. `None` means
-/// all of it (Read and up), and an empty list means none.
+/// Which recorded tiers of Actions history a viewer may see (spec section 4, "Actions"). A run,
+/// its jobs, logs, artifacts, checks and statuses show only when `min(recorded_tier,
+/// access_tier)` covers the viewer. The caller has already required View, so the repository's
+/// tier covers them; what is left is the tier recorded on the row. `None` means all of it, and
+/// an empty list means none.
 ///
-/// A signed-out visitor sees rows recorded public. An account (a session, an app, or a token
-/// that may read repositories) sees rows recorded internal or public. A token without a repo
-/// scope reads only what anyone may read.
-pub fn history_tiers(actor: &Actor, perm: crate::Permission) -> Option<&'static [&'static str]> {
+/// All of it needs Read that comes from a grant (`grant`), or a job of the repository itself.
+/// Read that comes only from the tier (any account on an internal or public repository) is not
+/// enough (ch-6j4). Without a grant, a signed-out visitor sees rows recorded public, and an
+/// account (a session, an app, or a token that may read repositories) sees rows recorded
+/// internal or public. A token without a repo scope reads only what anyone may read.
+pub fn history_tiers(actor: &Actor, perm: crate::Permission, grant: bool) -> Option<&'static [&'static str]> {
     const PUBLIC: &[&str] = &["public"];
     const SIGNED_IN: &[&str] = &["internal", "public"];
     const NONE: &[&str] = &[];
-    if perm >= crate::Permission::Read {
+    if perm >= crate::Permission::Read && (grant || matches!(actor, Actor::Job { .. } | Actor::System)) {
         return None;
     }
     if perm < crate::Permission::View {
@@ -712,6 +714,20 @@ mod tests {
             grant_id: GrantId(1),
             grant: AppGrant { read: RepoSet::All, write: RepoSet::none(), workflows: RepoSet::none() },
         }
+    }
+
+    #[test]
+    fn all_history_needs_a_grant_not_just_read_from_the_tier() {
+        use crate::{AuthVia, JobId, JobPerms, Permission, RepoId, UserId};
+        let user = Actor::User { id: UserId(1), is_admin: false, has_2fa: false, via: AuthVia::Session };
+        // Read that comes only from an internal or public tier (ch-6j4).
+        assert_eq!(history_tiers(&user, Permission::Read, false), Some(&["internal", "public"][..]));
+        assert_eq!(history_tiers(&user, Permission::Read, true), None);
+        assert_eq!(history_tiers(&user, Permission::Admin, true), None);
+        assert_eq!(history_tiers(&Actor::Anonymous, Permission::View, false), Some(&["public"][..]));
+        assert_eq!(history_tiers(&user, Permission::None, false), Some(&[][..]));
+        let job = Actor::Job { job_id: JobId(1), repo_id: RepoId(1), perms: JobPerms { contents_read: true, write_checks: false } };
+        assert_eq!(history_tiers(&job, Permission::Read, false), None, "a job reads its own repository's history");
     }
 
     #[test]

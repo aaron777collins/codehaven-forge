@@ -114,7 +114,9 @@ details.step[open] > summary { border-bottom: 1px solid var(--border); }
 .settings-nav a:hover { background: var(--surface-2); text-decoration: none; }
 .settings-nav a.current { background: var(--accent-soft); color: var(--link); font-weight: 650; }
 .settings-nav .nav-head { margin: var(--s3) var(--s3) var(--s1); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.settings-body { min-width: 0; display: grid; gap: var(--s5); }
+.settings-body { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s5); }
+/* A long address in a sentence (the SSH clone example) breaks instead of pushing the page sideways (ch-kdt). */
+.settings-body code { overflow-wrap: anywhere; }
 .settings-body > h1 { margin: 0; }
 .settings-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s5); }
 .settings-card h2 { font-size: 1.05rem; }

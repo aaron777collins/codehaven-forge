@@ -112,6 +112,7 @@ services! {
     tracker: Tracker,
     pipelines: Pipelines,
     mail: Mail,
+    pages: Pages,
 }
 
 /// What a crate's `build` returns. `install` moves its services into the builder.

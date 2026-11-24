@@ -23,6 +23,7 @@ pub struct Config {
     pub mcp: McpConfig,
     pub public_access: PublicAccessConfig,
     pub workspace: WorkspaceConfig,
+    pub pages: PagesConfig,
     pub log: LogConfig,
 }
 
@@ -197,6 +198,25 @@ pub struct WorkspaceConfig {
     pub linux_image_dir: String,
 }
 
+/// Codehaven Pages (`docs/design/pages.md`). An empty `host` turns Pages off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PagesConfig {
+    /// The host sites are served from, for example `pages.example.com`. Never the app's host
+    /// or a parent of it. Empty: no Pages.
+    pub host: String,
+    /// Files in one published copy.
+    pub max_files: u32,
+    /// Bytes in one published copy.
+    pub max_bytes: u64,
+    /// A reply whose body makes no progress for this long is ended and gives its place back.
+    pub reply_stall_secs: u64,
+    /// No reply's body takes longer than this.
+    pub reply_deadline_secs: u64,
+    /// Replies one client address may have open at once.
+    pub replies_per_address: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LogConfig {
@@ -306,6 +326,25 @@ impl Default for PublicAccessConfig {
 impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self { enabled: true, terminal: true, linux_image_dir: String::new() }
+    }
+}
+impl Default for PagesConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            max_files: 2000,
+            max_bytes: 50 * 1024 * 1024,
+            reply_stall_secs: 60,
+            reply_deadline_secs: 600,
+            replies_per_address: 32,
+        }
+    }
+}
+impl PagesConfig {
+    /// The pages host, lowercase, when Pages is on.
+    pub fn host(&self) -> Option<String> {
+        let h = self.host.trim().to_ascii_lowercase();
+        (!h.is_empty()).then_some(h)
     }
 }
 impl Default for LogConfig {
@@ -446,6 +485,23 @@ impl Config {
             return Err(ConfigError::Invalid("invites.default_expiry_hours is outside the allowed range".into()));
         }
         self.public_access.validate()?;
+        if let Some(h) = self.pages.host() {
+            let app = url.host.split(':').next().unwrap_or("");
+            if !crate::pages::valid_pages_host(&h, app) {
+                return Err(ConfigError::Invalid(format!(
+                    "pages.host is {h:?}: write a host name such as pages.example.com, with no port, that is neither the app's host nor a parent of it"
+                )));
+            }
+            if self.pages.max_files == 0 || self.pages.max_bytes == 0 {
+                return Err(ConfigError::Invalid("pages.max_files and pages.max_bytes must be more than 0".into()));
+            }
+            let p = &self.pages;
+            if p.reply_stall_secs == 0 || p.reply_deadline_secs == 0 || p.replies_per_address == 0 {
+                return Err(ConfigError::Invalid(
+                    "pages.reply_stall_secs, pages.reply_deadline_secs and pages.replies_per_address must be more than 0".into(),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -595,6 +651,23 @@ mod tests {
         assert!(c.validate().is_err());
         c.server.external_url = "nonsense".into();
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn pages_host_is_off_by_default_and_never_the_app() {
+        let mut c = Config::for_tests();
+        assert_eq!(c.pages.host(), None);
+        c.server.external_url = "https://code.example.com".into();
+        c.pages.host = "pages.example.com".into();
+        assert!(c.validate().is_ok());
+        assert_eq!(c.pages.host().as_deref(), Some("pages.example.com"));
+        c.pages.host = "code.example.com".into();
+        assert!(c.validate().unwrap_err().to_string().contains("pages.host"));
+        c.pages.host = "example.com".into();
+        assert!(c.validate().is_err(), "a parent of the app's host would share its cookies");
+        c.pages.host = "pages.example.com".into();
+        c.pages.reply_stall_secs = 0;
+        assert!(c.validate().unwrap_err().to_string().contains("pages.reply_stall_secs"), "a zero stall limit would cut every reply");
     }
 
     #[test]

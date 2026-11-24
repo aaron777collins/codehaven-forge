@@ -9,6 +9,7 @@
     <a class="side-link{% if section == "audit" %} current{% endif %}" href="/admin/audit"><svg class="icon" aria-hidden="true"><use href="#i-scroll-text"/></svg><span>Audit log</span></a>
     <a class="side-link{% if section == "settings" %} current{% endif %}" href="/admin/settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>Settings</span></a>
     <a class="side-link{% if section == "workspace" %} current{% endif %}" href="/admin/workspace"><svg class="icon" aria-hidden="true"><use href="#i-code"/></svg><span>Workspace</span></a>
+    <a class="side-link{% if section == "pages" %} current{% endif %}" href="/admin/pages"><svg class="icon" aria-hidden="true"><use href="#i-globe"/></svg><span>Pages</span></a>
   </nav>
   <div class="admin-main" id="main">
     {% block admin_body %}{% endblock %}

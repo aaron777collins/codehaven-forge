@@ -839,6 +839,7 @@ dependencies = [
  "ipnetwork",
  "proptest",
  "rand 0.9.5",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -890,6 +891,7 @@ dependencies = [
  "rand 0.9.5",
  "regex",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -900,6 +902,7 @@ dependencies = [
  "tokio-util",
  "tower",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -956,6 +959,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "ch-pages"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "ch-core",
+ "ch-db",
+ "ch-testkit",
+ "chrono",
+ "futures",
+ "hex",
+ "hmac 0.12.1",
+ "http",
+ "http-body-util",
+ "mime_guess",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+]
+
+[[package]]
 name = "ch-registry"
 version = "0.1.0"
 dependencies = [
@@ -970,8 +1003,10 @@ dependencies = [
  "chrono",
  "futures",
  "hex",
+ "hmac 0.12.1",
  "http",
  "proptest",
+ "rand 0.9.5",
  "regex",
  "reqwest",
  "serde",
@@ -1198,6 +1233,7 @@ dependencies = [
  "ch-git",
  "ch-mcp",
  "ch-notify",
+ "ch-pages",
  "ch-registry",
  "ch-ssh",
  "ch-testkit",

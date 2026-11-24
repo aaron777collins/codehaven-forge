@@ -30,6 +30,9 @@ pub fn build_router(state: AppState, metrics: Arc<Metrics>, extra: Option<Router
     let x_request_id = axum::http::HeaderName::from_static("x-request-id");
     // CSRF, the Origin check and rate limits. Inside the gate, so the caller is resolved.
     let guard = Arc::new(ch_auth::Guard::new(&state.config));
+    // The pages host never reaches the app: picked by `Host` before the gate, the guard and the
+    // app's headers (docs/design/pages.md, section 2).
+    let pages = ch_pages::host_router(&state).zip(state.config.pages.host());
     routes
         // The second lock on signed-out public reads: the router must pick the route the gate
         // admitted. A route layer, so it sees the matched pattern.
@@ -41,10 +44,32 @@ pub fn build_router(state: AppState, metrics: Arc<Metrics>, extra: Option<Router
         .layer(from_fn_with_state(state.clone(), security_headers_layer))
         .layer(from_fn_with_state(metrics, metrics::count))
         .layer(from_fn_with_state(state.clone(), request_timeout))
+        .layer(from_fn_with_state(state.clone(), move |State(state): State<AppState>, req: Request, next: Next| {
+            let pages = pages.clone();
+            async move { pages_or_app(&state, pages, req, next).await }
+        }))
         .layer(TraceLayer::new_for_http())
         .layer(PropagateRequestIdLayer::new(x_request_id.clone()))
         .layer(SetRequestIdLayer::new(x_request_id, MakeRequestUuid))
         .layer(from_fn(no_server_header))
+}
+
+/// Sends a request for the pages host, or one label under it, to the pages router. Everything
+/// else goes on to the app. The pages router gets the trusted client address and nothing
+/// else of the app's request info.
+async fn pages_or_app(state: &AppState, pages: Option<(Router, String)>, mut req: Request, next: Next) -> Response {
+    use tower::ServiceExt;
+    if let Some((router, host)) = pages
+        && ch_pages::host::request_host(&req).is_some_and(|h| ch_pages::host::is_pages_host(&host, &h))
+    {
+        let (ip, _) = crate::reqinfo::client_of(state, &req);
+        req.extensions_mut().insert(ch_core::model::ClientInfo { ip, user_agent: None });
+        return match router.oneshot(req).await {
+            Ok(r) => r,
+            Err(never) => match never {},
+        };
+    }
+    next.run(req).await
 }
 
 /// Never say what we run on.

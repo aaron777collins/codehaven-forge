@@ -1,7 +1,7 @@
 //! Who may read which Actions history (epic ch-4pn, item ch-4pn.12).
 //!
-//! Runs, jobs, logs, artifacts, check runs and commit statuses are read with View. Below Read,
-//! only rows recorded at a tier that covers the viewer show (`ch_core::access::history_tiers`),
+//! Runs, jobs, logs, artifacts, check runs and commit statuses are read with View. Without a
+//! grant, only rows recorded at a tier that covers the viewer show (`ch_core::access::history_tiers`),
 //! and a hidden row looks exactly like a missing one.
 
 use crate::ctx::Ctx;
@@ -14,7 +14,10 @@ pub type Tiers = Option<&'static [&'static str]>;
 pub async fn tiers(ctx: &Ctx, actor: &Actor, repo: RepoId) -> Result<Tiers> {
     ctx.authz.require(actor, repo, Permission::View).await?;
     let p = ctx.authz.repo_permission(actor, repo).await?;
-    Ok(ch_core::access::history_tiers(actor, p))
+    // Read from the tier alone is not a grant: an account on an internal repository sees only
+    // what was recorded internal or public (ch-6j4).
+    let grant = p >= Permission::Read && ctx.authz.has_grant(actor, repo).await?;
+    Ok(ch_core::access::history_tiers(actor, p, grant))
 }
 
 /// The list as a SQL bind for `($n::text[] IS NULL OR recorded_tier = ANY($n))`.

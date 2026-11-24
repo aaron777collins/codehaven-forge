@@ -23,16 +23,7 @@ pub const IDENTITY_HEADERS: &[&str] =
     &["remote-user", "remote-groups", "remote-email", "remote-name", "x-remote-user", "x-forwarded-user", "x-forwarded-email"];
 
 pub async fn request_info(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
-    let peer: IpAddr = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip()).unwrap_or(IpAddr::from([0, 0, 0, 0]));
-    let trusted = match state.ext.get::<ch_core::net::ProxyHosts>() {
-        Some(h) => h.trusted(&state.config.http.trusted_proxies),
-        None => state.config.http.trusted_proxies.clone(),
-    };
-    let trusted = &trusted;
-    let xff = req.headers().get_all("x-forwarded-for").iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join(",");
-    let xfp = req.headers().get("x-forwarded-proto").and_then(|v| v.to_str().ok());
-    let ip = net::client_ip(peer, if xff.is_empty() { None } else { Some(&xff) }, trusted);
-    let secure = net::is_secure(peer, xfp, trusted);
+    let (ip, secure) = client_of(&state, &req);
     let user_agent = req.headers().get(axum::http::header::USER_AGENT).and_then(|v| v.to_str().ok()).map(|s| s.chars().take(300).collect());
 
     for h in IDENTITY_HEADERS {
@@ -43,6 +34,20 @@ pub async fn request_info(State(state): State<AppState>, mut req: Request, next:
     req.extensions_mut().insert(client.clone());
     req.extensions_mut().insert(RequestMeta { client, secure });
     next.run(req).await
+}
+
+/// The client address, honouring `X-Forwarded-For` only from a trusted proxy, and whether the
+/// original request was https.
+pub fn client_of(state: &AppState, req: &Request) -> (IpAddr, bool) {
+    let peer: IpAddr = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip()).unwrap_or(IpAddr::from([0, 0, 0, 0]));
+    let trusted = match state.ext.get::<ch_core::net::ProxyHosts>() {
+        Some(h) => h.trusted(&state.config.http.trusted_proxies),
+        None => state.config.http.trusted_proxies.clone(),
+    };
+    let xff = req.headers().get_all("x-forwarded-for").iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join(",");
+    let xfp = req.headers().get("x-forwarded-proto").and_then(|v| v.to_str().ok());
+    let ip = net::client_ip(peer, if xff.is_empty() { None } else { Some(&xff) }, &trusted);
+    (ip, net::is_secure(peer, xfp, &trusted))
 }
 
 /// Hands the request to the identity guard (CSRF, Origin check, rate limits) with the trusted

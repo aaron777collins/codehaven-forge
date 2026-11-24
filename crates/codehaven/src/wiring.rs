@@ -29,6 +29,7 @@ pub fn install_services(b: &mut AppStateBuilder) -> Result<()> {
     ch_git::build(b)?.install(b);
     ch_collab::build(b)?.install(b);
     ch_ci::build(b)?.install(b);
+    ch_pages::build(b)?.install(b);
     Ok(())
 }
 
@@ -79,5 +80,6 @@ pub fn workers(state: &AppState) -> Vec<Worker> {
     w.extend(ch_registry::workers(state));
     w.extend(ch_collab::workers(state));
     w.extend(ch_ci::workers(state));
+    w.extend(ch_pages::workers(state));
     w
 }

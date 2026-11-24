@@ -20,6 +20,7 @@ pub mod model;
 pub mod net;
 pub mod noreply;
 pub mod not_built;
+pub mod pages;
 pub mod services;
 pub mod state;
 pub mod text;

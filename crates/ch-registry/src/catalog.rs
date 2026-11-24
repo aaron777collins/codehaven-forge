@@ -111,10 +111,18 @@ pub fn sign_skip(config: &Config, actor: &Actor, last: &str, skip: i64) -> Strin
 }
 
 /// Reads back a skip only when it is exactly the value this server issued to this caller for
-/// this `last`. Anything else is `None`.
+/// this `last`, or a bare `0`. Anything else, a leading zero included, is `None`. A signed skip
+/// does not expire and does not name `n`: it only says how many rows the caller was already
+/// told it cannot see, so replaying it later discloses nothing new.
 pub fn open_skip(config: &Config, actor: &Actor, last: &str, value: &str) -> Option<i64> {
+    if value == "0" {
+        return Some(0);
+    }
     let (num, sig) = value.split_once('.')?;
     if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if num.len() > 1 && num.starts_with('0') {
         return None;
     }
     let skip = num.parse::<i64>().ok()?;
@@ -128,11 +136,26 @@ pub fn open_skip(config: &Config, actor: &Actor, last: &str, value: &str) -> Opt
     Some(skip)
 }
 
+/// Percent-encodes a query value: every byte except ASCII letters, digits, `-`, `.`, `_`, `~`
+/// and `/` becomes `%XX` with uppercase hex. An image name stays readable; anything else a
+/// caller sent as `last` (such as `&` or `+`) cannot change the next link's meaning.
+fn query_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// The `Link` header value for the next page. `signed_skip` is the signed value this server
 /// issued, used only when the next page starts past rows the caller cannot see.
 pub fn link(n: i64, next: &Cursor, signed_skip: &str) -> String {
     let skip = if next.skip > 0 { format!("&skip={signed_skip}") } else { String::new() };
-    format!("</v2/_catalog?n={n}&last={}{skip}>; rel=\"next\"", next.last)
+    format!("</v2/_catalog?n={n}&last={}{skip}>; rel=\"next\"", query_value(&next.last))
 }
 
 #[derive(sqlx::FromRow)]

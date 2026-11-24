@@ -17,6 +17,7 @@ members = [
   "crates/ch-mcp",
   "crates/ch-render",
   "crates/ch-web",
+  "crates/ch-pages",
   "crates/haven-runner",
   "crates/haven-cli",
   "tests/e2e",
@@ -39,6 +40,7 @@ default-members = [
   "crates/ch-mcp",
   "crates/ch-render",
   "crates/ch-web",
+  "crates/ch-pages",
   "crates/haven-runner",
   "crates/haven-cli",
   "tests/e2e",
@@ -70,6 +72,7 @@ ch-ci = { path = "crates/ch-ci" }
 ch-mcp = { path = "crates/ch-mcp" }
 ch-render = { path = "crates/ch-render" }
 ch-web = { path = "crates/ch-web" }
+ch-pages = { path = "crates/ch-pages" }
 
 # Async and web
 tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "io-std", "signal", "sync", "time", "process"] }

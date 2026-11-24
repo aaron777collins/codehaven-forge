@@ -49,9 +49,10 @@ function theme() {
   };
   const bg = v("--surface", "#ffffff");
   const dark = parseInt(bg.slice(1, 3), 16) + parseInt(bg.slice(3, 5), 16) + parseInt(bg.slice(5, 7), 16) < 384;
+  // Every colour reads at 4.5:1 or more on its background, black and bright black included.
   const ansi = dark
-    ? { black: "#1a2428", red: "#ff8f80", green: "#4ade80", yellow: "#facc15", blue: "#7cb7ff", magenta: "#f0a6f0", cyan: "#2dd4bf", white: "#e6edef" }
-    : { black: "#1b2326", red: "#b42318", green: "#15803d", yellow: "#a16207", blue: "#1d4ed8", magenta: "#a21caf", cyan: "#0f766e", white: "#5b676b" };
+    ? { black: "#7d8d92", brightBlack: "#94a5aa", red: "#ff8f80", green: "#4ade80", yellow: "#facc15", blue: "#7cb7ff", magenta: "#f0a6f0", cyan: "#2dd4bf", white: "#e6edef" }
+    : { black: "#1b2326", brightBlack: "#5b676b", red: "#b42318", green: "#15803d", yellow: "#a16207", blue: "#1d4ed8", magenta: "#a21caf", cyan: "#0f766e", white: "#5b676b" };
   return { background: bg, foreground: v("--text", "#1b2326"), cursor: v("--accent", "#0f766e"), selectionBackground: v("--accent-soft", "#e0f2ef"), ...ansi };
 }
 

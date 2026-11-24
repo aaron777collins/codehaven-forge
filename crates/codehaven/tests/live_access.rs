@@ -180,3 +180,40 @@ async fn a_signed_in_page_opens_in_a_frame_only_as_the_terminal(pool: PgPool) {
     // Signed-out answers are unchanged.
     assert_eq!(status(&h.app, "/alice", &[("sec-fetch-dest", "iframe")]).await, StatusCode::SEE_OTHER);
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn another_sites_requests_never_carry_the_session(pool: PgPool) {
+    // Safari sends SameSite=Lax cookies with the requests of a sandboxed page on a sibling host
+    // of the same site, such as a Pages site (docs/design/pages.md, section 4). Only this
+    // origin's own requests and top-level navigations may use the session.
+    let h = harness(pool).await;
+    make_user(&h, "alice").await;
+    let (cookie, _) = sign_in(&h, "alice").await;
+    let c = cookie.as_str();
+    let api = "/api/v3/user";
+
+    // This origin's own requests, and a browser that sends no fetch metadata, keep the session.
+    assert_eq!(status(&h.app, api, &[("cookie", c)]).await, StatusCode::OK);
+    assert_eq!(status(&h.app, api, &[("cookie", c), ("sec-fetch-site", "same-origin"), ("sec-fetch-mode", "cors")]).await, StatusCode::OK);
+    assert_eq!(status(&h.app, api, &[("cookie", c), ("sec-fetch-site", "none"), ("sec-fetch-mode", "navigate")]).await, StatusCode::OK);
+    // A link from another site opens the page signed in, as SameSite=Lax promises.
+    let nav = [("cookie", c), ("sec-fetch-site", "cross-site"), ("sec-fetch-mode", "navigate"), ("sec-fetch-dest", "document")];
+    assert_eq!(status(&h.app, api, &nav).await, StatusCode::OK);
+    let nav = [("cookie", c), ("sec-fetch-site", "same-site"), ("sec-fetch-mode", "navigate"), ("sec-fetch-dest", "document")];
+    assert_eq!(status(&h.app, api, &nav).await, StatusCode::OK);
+
+    // Anything else another site's page asks for is answered as signed out.
+    for site in ["cross-site", "same-site", "Cross-Site"] {
+        for (mode, dest) in
+            [("cors", "empty"), ("no-cors", "empty"), ("no-cors", "image"), ("no-cors", "script"), ("websocket", "websocket")]
+        {
+            let hdrs = [("cookie", c), ("sec-fetch-site", site), ("sec-fetch-mode", mode), ("sec-fetch-dest", dest)];
+            assert_eq!(status(&h.app, api, &hdrs).await, StatusCode::UNAUTHORIZED, "{site} {mode} {dest}");
+        }
+    }
+    // A navigation inside a frame of another site is not a top-level one.
+    let framed = [("cookie", c), ("sec-fetch-site", "same-site"), ("sec-fetch-mode", "navigate"), ("sec-fetch-dest", "iframe")];
+    assert_eq!(status(&h.app, "/alice", &framed).await, StatusCode::SEE_OTHER, "a framed page from another site is the signed-out one");
+    // A sandboxed page's synchronous request in Safari has no fetch metadata, only Origin: null.
+    assert_eq!(status(&h.app, api, &[("cookie", c), ("origin", "null")]).await, StatusCode::UNAUTHORIZED);
+}

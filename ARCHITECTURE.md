@@ -164,6 +164,11 @@ directly. That is acceptable because Codehaven treats every request the same
 way wherever it comes from: no session or token, nothing beyond the public
 routes and public repositories (section 7.3).
 
+**Pages host.** With `pages.host` set (`CODEHAVEN_PAGES_HOST`), the server answers every request
+whose `Host` is that name, or one label under it, from the Pages router, before the gate, the
+guard or any app layer runs. No app route, cookie or session is reachable there. See
+`docs/design/pages.md`.
+
 ### 2.5 Runner isolation
 
 The runner never gets the host's Docker socket: other services on the host may
@@ -223,6 +228,7 @@ codehaven/
     ch-ci/                triggers, scheduler, job queue, runner API, logs, artifacts, cache, secrets, checks, statuses
     ch-render/            markdown, highlighting, ANSI to HTML, avatars
     ch-web/               HTML pages, askama templates, htmx partials, SSE, static/
+    ch-pages/             Pages: the pages host router, the storage bridge, per-site tokens, the publisher
     haven-runner/         runner binary
     haven-cli/            `haven` CLI binary
   deploy/                 compose files, Dockerfiles, dev scripts, example config

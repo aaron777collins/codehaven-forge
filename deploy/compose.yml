@@ -55,6 +55,8 @@ services:
       CODEHAVEN__LOG__FORMAT: ${CODEHAVEN_LOG_FORMAT:-json}
       # The Claude connector. Off unless you turn it on (docs/connector.md).
       CODEHAVEN__MCP__ENABLED: ${CODEHAVEN_MCP_ENABLED:-false}
+      # Codehaven Pages (docs/design/pages.md). Empty means no Pages. Never the app's own host.
+      CODEHAVEN__PAGES__HOST: ${CODEHAVEN_PAGES_HOST:-}
       # The host's own public addresses (deploy/prod/host-ips.sh --json): webhooks may not reach them.
       CODEHAVEN__WEBHOOKS__BLOCKED_IPS: ${WEBHOOK_BLOCKED_IPS?set by deploy/compose.sh; [] is allowed}
     secrets: [database_url]
@@ -73,6 +75,10 @@ services:
       retries: 6
       start_period: 20s
     mem_limit: 2g
+    # Every open Pages reply holds a socket and a file (docs/design/pages.md, section 7), and
+    # the default soft limit of 1024 is not much.
+    ulimits:
+      nofile: {soft: 65536, hard: 65536}
     networks:
       backend: {}
       runners: {}

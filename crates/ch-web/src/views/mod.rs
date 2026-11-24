@@ -20,6 +20,7 @@ pub mod code;
 pub mod forks;
 pub mod home;
 pub mod issues;
+pub mod pages;
 pub mod people;
 pub mod pulls;
 pub mod releases;

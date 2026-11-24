@@ -243,7 +243,11 @@ pub async fn admin_workspace_post(ctx: Ctx, form: FormData) -> WebResult<Respons
     }
     ctx.state.repos.set_workspace_settings(&ctx.actor, settings, &ctx.client).await?;
     let text = if terminal {
-        if settings.terminal { "The terminal is on." } else { "The terminal is off. Open terminals stop at their next request." }
+        if settings.terminal {
+            "The terminal is on."
+        } else {
+            "The terminal is off. No new terminal can start. One already open keeps running until its page is closed or reloaded."
+        }
     } else if settings.editor {
         "The editor is on."
     } else {

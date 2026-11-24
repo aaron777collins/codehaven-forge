@@ -53,7 +53,7 @@ pub async fn gate(State(state): State<AppState>, mut req: Request, next: Next) -
     // anything more than "authentication required", and only after the right password.
     let mut hint: Option<String> = None;
     let mut session_hash: Option<Vec<u8>> = None;
-    let actor = match resolve_actor(&state, req.headers(), &client, &mut session_hash).await {
+    let actor = match resolve_actor(&state, &method, req.headers(), &client, &mut session_hash).await {
         Ok(a) => a,
         Err(Error::RateLimited { retry_after_secs }) => return Error::RateLimited { retry_after_secs }.into_response(),
         // Bad credentials count as no credentials.
@@ -278,6 +278,7 @@ fn is_anonymous_bearer(headers: &HeaderMap) -> bool {
 
 async fn resolve_actor(
     state: &AppState,
+    method: &Method,
     headers: &HeaderMap,
     client: &ClientInfo,
     session_hash: &mut Option<Vec<u8>>,
@@ -297,6 +298,9 @@ async fn resolve_actor(
             _ => Ok(Actor::Anonymous),
         };
     }
+    if from_another_site(method, headers) {
+        return Ok(Actor::Anonymous);
+    }
     let cookie_name = access::session_cookie_name(state.config.is_https());
     if let Some(value) = cookie_value(headers, cookie_name) {
         let actor = state.authn.from_session(&value, client).await?;
@@ -306,6 +310,25 @@ async fn resolve_actor(
         return Ok(actor);
     }
     Ok(Actor::Anonymous)
+}
+
+/// A request that another site's page made with the browser's cookies, which the session
+/// cookie must not sign in (docs/design/pages.md, section 4). SameSite=Lax is not enough on
+/// its own: Safari sends Lax cookies with every request of a sandboxed page on a sibling host
+/// of the same site, a Pages site among them. So only this origin's own requests and top-level
+/// GET or HEAD navigations, the case Lax exists for, may use the session. A browser that sends
+/// no fetch metadata is judged by `Origin: null`, which only an opaque origin sends on a GET.
+fn from_another_site(method: &Method, headers: &HeaderMap) -> bool {
+    let get = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).map(str::to_ascii_lowercase);
+    match get("sec-fetch-site").as_deref() {
+        None => get("origin").as_deref() == Some("null") && matches!(*method, Method::GET | Method::HEAD),
+        Some("same-origin") | Some("none") => false,
+        Some(_) => {
+            let top_level =
+                get("sec-fetch-mode").as_deref() == Some("navigate") && matches!(get("sec-fetch-dest").as_deref(), None | Some("document"));
+            !(top_level && matches!(*method, Method::GET | Method::HEAD))
+        }
+    }
 }
 
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -436,6 +459,36 @@ mod tests {
         for d in ["document", "empty", "script"] {
             h.insert("sec-fetch-dest", HeaderValue::from_str(d).unwrap());
             assert!(!framed(&h), "{d}");
+        }
+    }
+
+    #[test]
+    fn only_this_origin_and_top_level_navigations_carry_the_session() {
+        let h = |pairs: &[(&'static str, &'static str)]| {
+            let mut m = HeaderMap::new();
+            for (k, v) in pairs {
+                m.insert(*k, HeaderValue::from_static(v));
+            }
+            m
+        };
+        let (get, post) = (Method::GET, Method::POST);
+        assert!(!from_another_site(&get, &h(&[])));
+        assert!(!from_another_site(&post, &h(&[("origin", "null")])), "POST is for the CSRF check");
+        assert!(from_another_site(&get, &h(&[("origin", "null")])));
+        assert!(from_another_site(&Method::HEAD, &h(&[("origin", "null")])));
+        assert!(!from_another_site(&post, &h(&[("sec-fetch-site", "same-origin"), ("origin", "null")])));
+        assert!(!from_another_site(&get, &h(&[("sec-fetch-site", "none")])));
+        let nav = [("sec-fetch-site", "cross-site"), ("sec-fetch-mode", "navigate"), ("sec-fetch-dest", "document")];
+        assert!(!from_another_site(&get, &h(&nav)));
+        assert!(from_another_site(&post, &h(&nav)), "a form posted from another site");
+        assert!(!from_another_site(&get, &h(&[("sec-fetch-site", "same-site"), ("sec-fetch-mode", "navigate")])));
+        for site in ["same-site", "cross-site", "CROSS-SITE", "something-new"] {
+            for (mode, dest) in
+                [("cors", "empty"), ("no-cors", "image"), ("navigate", "iframe"), ("websocket", "websocket"), ("no-cors", "script")]
+            {
+                let m = h(&[("sec-fetch-site", site), ("sec-fetch-mode", mode), ("sec-fetch-dest", dest)]);
+                assert!(from_another_site(&get, &m), "{site} {mode} {dest}");
+            }
         }
     }
 

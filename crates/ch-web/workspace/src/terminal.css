@@ -73,6 +73,7 @@
 .ws-term-row-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
 .ws-term-refused .ws-term-row-main { color: var(--muted); }
 .ws-term-refused { flex-wrap: wrap; }
+.ws-term-refused .ws-hint { flex-basis: 100%; padding-left: 4px; }
 .ws-term-chip {
   flex: none;
   padding: 0 6px;
@@ -81,7 +82,17 @@
   color: var(--ws-warn-text);
   font-size: 11px;
 }
-.ws-term-tray-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.ws-term-tray-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  position: sticky;
+  bottom: -8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
 
 .ws-commit-terminal { display: flex; flex-direction: column; gap: 6px; }
 .ws-commit-term-file summary { cursor: pointer; }
@@ -101,6 +112,7 @@
   .ws-term-grip { display: none; }
   .ws-term-head { flex-wrap: wrap; }
   .ws-term-row { min-height: 44px; }
-  .ws-term-row input { width: 22px; height: 22px; }
+  .ws-term-row-main { align-self: stretch; min-height: 44px; }
+  .ws-term-row input { width: 24px; height: 24px; margin: 10px; flex: none; }
   .ws-term-warn { padding-bottom: 6px; }
 }

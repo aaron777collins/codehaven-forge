@@ -74,6 +74,18 @@ again every 30 seconds, and a neighbour on the network cannot pick its own addre
 limits or the audit log. Your proxy must send every path to the server (including `/.well-known/`), remove any
 `Remote-User` style header from the client, and not buffer responses, or live CI logs stall.
 
+## Pages
+
+Codehaven Pages (`docs/design/pages.md`) is off until `CODEHAVEN_PAGES_HOST` names a host, for
+example `pages.example.com`. Point that name at the server, then give the proxy a site for it that
+drops `Cookie`, `Authorization` and identity headers on the way in and `Set-Cookie` on the way out
+(`deploy/Caddyfile.example`). The server does the same, and answers every request for that host
+itself, before any app route. The host must not be the app's host or a parent of it; the server
+refuses to start otherwise.
+
+Full mode (a site admin's switch at `/admin/pages`) also serves `*.pages.example.com`. Turn it on
+only after the proxy has a wildcard certificate for that name, which needs a DNS challenge.
+
 ## Backups
 
 ```sh

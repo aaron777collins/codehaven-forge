@@ -1,0 +1,103 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% import "settings_repo/tabs.html" as st %}
+{% block repo_body %}
+{% call st::tabs(base, "pages") %}
+<h2 class="page-h">Pages</h2>
+{% if !available %}
+{% call ui::empty("Pages is not set up here", "The server's administrator has not given Codehaven a pages host, so sites cannot be published on this instance.") %}
+{% else if !can_admin %}
+{% call ui::empty("Only admins can change Pages", "Ask someone with admin access to this repository to publish a site from it.") %}
+{% else %}
+{% if enabled %}
+<section class="card pad stack">
+  <h3>Your site</h3>
+  <div class="copyfield"><input id="pages-url" type="text" readonly value="{{ url }}" aria-label="Site address"><button type="button" class="icon-btn" data-copy="{{ url }}" aria-label="Copy the site address"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+  <p><a class="btn" href="{{ url }}" target="_blank" rel="noopener noreferrer">Open the site</a></p>
+  {% if !serving.is_empty() %}<p class="muted">Who can see it now: {{ serving }}.</p>{% else %}<p class="muted">Nothing is live yet.</p>{% endif %}
+  {% if working %}<p class="muted">A copy is being published. Reload this page to see when it is ready.</p>{% endif %}
+</section>
+{% endif %}
+<form method="post" action="{{ base }}/settings/pages" class="card pad stack">
+  {% call ui::csrf_field(c.csrf) %}
+  <h3>{% if enabled %}Source{% else %}Publish a site from this repository{% endif %}</h3>
+  {% if !enabled %}<p class="muted">Every push to the branch publishes the folder as a static site. Nothing on the server runs your code.</p>{% endif %}
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+  <div class="field">
+    <label for="pages-branch">Branch</label>
+    <select id="pages-branch" name="branch">
+      {% for b in branches %}<option value="{{ b.name }}"{% if b.selected %} selected{% endif %}>{{ b.name }}</option>{% endfor %}
+    </select>
+    {% call ui::field_error(errors.get("branch")) %}
+  </div>
+  <div class="field">
+    <label for="pages-folder">Folder</label>
+    <select id="pages-folder" name="folder">
+      <option value="/"{% if root_selected %} selected{% endif %}>/ (the whole repository)</option>
+      <option value="/docs"{% if !root_selected %} selected{% endif %}>/docs</option>
+    </select>
+    {% call ui::field_error(errors.get("folder")) %}
+  </div>
+  <div class="field">
+    <label for="pages-audience">Who can see it</label>
+    <select id="pages-audience" name="audience">
+      {% for a in audiences %}<option value="{{ a.value }}"{% if a.selected %} selected{% endif %}>{{ a.label }}</option>{% endfor %}
+    </select>
+    <p class="hint">Never more people than can read this repository. A copy made while the repository was more private stays that private.</p>
+    {% call ui::field_error(errors.get("audience")) %}
+  </div>
+  <p class="hint">Up to 2,000 files and 50 MB. Symbolic links and submodules are left out. In a site that is not public, image, style and script addresses must be relative.</p>
+  <div class="row"><button class="btn btn-primary" type="submit">{% if enabled %}Save and publish{% else %}Turn on Pages{% endif %}</button></div>
+</form>
+{% if enabled %}
+<section class="card pad stack">
+  <div class="list-head">
+    <h3>Copies</h3>
+    <span class="spacer"></span>
+    <form method="post" action="{{ base }}/settings/pages/deploy" class="inline">
+      {% call ui::csrf_field(c.csrf) %}
+      <button class="btn small" type="submit">Publish again</button>
+    </form>
+  </div>
+  {% if copies.is_empty() %}
+  <p class="muted">No copies yet.</p>
+  {% else %}
+  <ul class="pages-copies">
+    {% for d in copies %}
+    <li class="pages-copy">
+      <div class="list-head">
+        <code>{{ d.sha }}</code>
+        <span class="muted small">{{ d.branch }} {{ d.folder }}</span>
+        <span class="spacer"></span>
+        {% if d.live %}<span class="chip">Live</span>{% else %}<span class="chip {{ d.chip }}">{{ d.state }}</span>{% endif %}
+      </div>
+      <p class="small muted">{% call ui::time(d.when) %}{% if !d.files.is_empty() %}, {{ d.files }}{% endif %}</p>
+      {% if !d.error.is_empty() %}<p class="field-error">{{ d.error }}</p>{% endif %}
+      {% if d.can_serve %}
+      <form method="post" action="{{ base }}/settings/pages/rollback" class="inline">
+        {% call ui::csrf_field(c.csrf) %}
+        <input type="hidden" name="deployment" value="{{ d.id }}">
+        <button class="btn small" type="submit">Serve this copy</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+<div class="danger-zone card pad stack">
+  <h3>Danger zone</h3>
+  <div class="danger-row">
+    <div>
+      <h4>Turn off Pages</h4>
+      <p class="muted">The site stops at once and every copy is deleted. The repository is not changed.</p>
+    </div>
+    <form method="post" action="{{ base }}/settings/pages/disable" class="inline" data-confirm="Turn off Pages and delete every copy?">
+      {% call ui::csrf_field(c.csrf) %}
+      <button class="btn danger" type="submit">Turn off Pages</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

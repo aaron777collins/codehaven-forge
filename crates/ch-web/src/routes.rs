@@ -2,7 +2,7 @@
 
 use crate::assets;
 use crate::views::{
-    self, actions, admin, apps, auth, forks, issues, people, pulls, releases, repo, repo_settings as rs, settings, visibility,
+    self, actions, admin, apps, auth, forks, issues, pages, people, pulls, releases, repo, repo_settings as rs, settings, visibility,
     workspace as ws,
 };
 use axum::Router;
@@ -91,6 +91,7 @@ pub fn build_for(mcp: bool) -> Registry {
         .post("/admin/settings", visibility::admin_settings_post)
         .get("/admin/workspace", visibility::admin_workspace_get)
         .post("/admin/workspace", visibility::admin_workspace_post)
+        .form("/admin/pages", pages::admin_get, pages::admin_post)
         .get("/settings", settings::index)
         .form("/settings/profile", settings::profile_get, settings::profile_post)
         .form("/settings/password", settings::password_get, settings::password_post)
@@ -224,6 +225,11 @@ pub fn build_for(mcp: bool) -> Registry {
         .get("/{owner}/{repo}/settings/branches", rs::branches_get)
         .post("/{owner}/{repo}/settings/branches", rs::branch_protect)
         .post("/{owner}/{repo}/settings/branches/remove", rs::branch_unprotect)
+        .form("/{owner}/{repo}/settings/pages", pages::settings_get, pages::settings_post)
+        .post("/{owner}/{repo}/settings/pages/deploy", pages::deploy_post)
+        .post("/{owner}/{repo}/settings/pages/rollback", pages::rollback_post)
+        .post("/{owner}/{repo}/settings/pages/disable", pages::disable_post)
+        .get("/{owner}/{repo}/pages/open", pages::open_get)
         .get("/{owner}/{repo}/settings/hooks", rs::hooks_get)
         .post("/{owner}/{repo}/settings/hooks", rs::hook_create)
         .post("/{owner}/{repo}/settings/hooks/{id}/delete", rs::hook_delete)

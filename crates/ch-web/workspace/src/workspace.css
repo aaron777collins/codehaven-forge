@@ -510,6 +510,7 @@ a.ws-repo:hover { text-decoration: underline; }
   /* The repository name keeps its width; the branch shortens first, down to its icon. */
   .ws-top { gap: 6px; }
   .ws-repo { flex: 0 0 auto; max-width: 50%; }
+  a.ws-repo { line-height: 44px; }
   .ws-branch { flex: 0 1 auto; min-width: 44px; max-width: 160px; }
   .ws-branch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

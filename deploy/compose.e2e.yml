@@ -38,6 +38,8 @@ services:
       CODEHAVEN__DATABASE__URL: postgres://codehaven:e2e-only-not-a-secret@postgres:5432/codehaven
       CODEHAVEN__STORAGE__DATA_DIR: /data
       CODEHAVEN__LOG__FORMAT: pretty
+      # Pages (step 3): the harness reaches it at the same server, by Host.
+      CODEHAVEN__PAGES__HOST: pages.e2e.test
     tmpfs:
       # exec: docker mounts tmpfs noexec by default, and the server now refuses to start when it
       # cannot run its git hooks (they enforce branch protection).

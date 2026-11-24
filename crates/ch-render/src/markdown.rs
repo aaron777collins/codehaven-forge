@@ -40,6 +40,13 @@ fn has_scheme(url: &str) -> bool {
     false
 }
 
+/// A URL as a browser reads it: ASCII tab, line feed and carriage return removed anywhere, then
+/// leading and trailing C0 control characters and spaces trimmed (WHATWG URL parsing).
+fn url_as_loaded(url: &str) -> String {
+    let no_breaks: String = url.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+    no_breaks.trim_matches(|c: char| c <= ' ').to_string()
+}
+
 fn is_relative(url: &str) -> bool {
     !url.is_empty() && !has_scheme(url) && !url.starts_with('/') && !url.starts_with('#') && !url.starts_with("//")
 }
@@ -283,10 +290,16 @@ fn sanitizer() -> Builder<'static> {
     // blocks them anyway, and dropping the source means a stray `<img>` cannot even try.
     b.attribute_filter(|tag, attr, value| {
         if tag == "img" && attr == "src" {
+            // Browsers drop tabs and line breaks anywhere in a URL and trim white space and
+            // control characters at both ends, so check what they will load, and emit that.
+            let clean = url_as_loaded(value);
             // One leading slash only: "//host" and "/\host" both load from another host.
-            let ok = value.starts_with('/') && value.as_bytes().get(1).is_some_and(|&b| b != b'/' && b != b'\\');
+            let ok = clean.starts_with('/') && clean.as_bytes().get(1).is_some_and(|&b| b != b'/' && b != b'\\');
             if !ok {
                 return None;
+            }
+            if clean != value {
+                return Some(clean.into());
             }
         }
         if attr == "id" && !value.starts_with("user-content-") {
@@ -633,6 +646,16 @@ mod tests {
     fn protocol_relative_images_are_dropped() {
         let h = render("<img src=\"//evil.example/a.png\"><img src=\"/\\evil.example/b.png\"><img src=\"/ok/c.png\">", &repo());
         assert!(!h.contains("src=\"//") && !h.contains("src=\"/\\") && h.contains("src=\"/ok/c.png\""), "{h}");
+    }
+
+    #[test]
+    fn a_tab_or_line_break_cannot_hide_a_second_slash() {
+        let h = render(
+            "<img src=\"/\t/evil.example/a.png\"><img src=\"/\n/evil.example/b.png\"><img src=\" //evil.example/c.png\"><img src=\"/ok/\td.png\">",
+            &repo(),
+        );
+        assert!(!h.contains("evil.example"), "{h}");
+        assert!(h.contains("src=\"/ok/d.png\""), "{h}");
     }
 
     #[test]

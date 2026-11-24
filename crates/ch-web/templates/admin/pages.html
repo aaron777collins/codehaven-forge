@@ -1,0 +1,27 @@
+{% extends "admin/layout.html" %}
+{% import "components.html" as ui %}
+{% block admin_body %}
+<h1>Pages</h1>
+<section class="card stack">
+  <h2>Full mode</h2>
+  <p>Sites normally open at the pages host in a sandbox: each page runs with no cookies, and its storage is kept per project. Full mode also serves every site at its owner's subdomain of the pages host, with no sandbox, like GitHub Pages.</p>
+  {% if !available %}
+  <p>The server has no pages host (<code>CODEHAVEN_PAGES_HOST</code>). Set one first.</p>
+  {% else if full_mode %}
+  <p>Full mode is on.</p>
+  <form method="post" action="/admin/pages" class="inline">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="full_mode" value="0">
+    <button class="btn danger" type="submit">Turn full mode off</button>
+  </form>
+  {% else %}
+  <p>Full mode is off.</p>
+  <p class="form-error">{{ warning }}</p>
+  <form method="post" action="/admin/pages" class="inline" data-confirm="Trust every account on this instance with full browser features on the pages host?">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="full_mode" value="1">
+    <button class="btn btn-primary" type="submit">Turn full mode on</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

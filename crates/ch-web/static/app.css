@@ -444,3 +444,9 @@ body.bare { align-items: center; justify-content: center; padding: var(--s5); }
 .state-word.state-closed { background: none; color: var(--closed); }
 .code-hit { margin: var(--s1) 0 0; padding: var(--s2) var(--s3); background: var(--surface-2); border-radius: var(--radius); overflow-x: auto; font: 13px/1.5 var(--mono); }
 .notif-meta .meta-part, .notif-meta .state-word { white-space: nowrap; }
+
+/* Pages settings: the list of published copies. */
+.pages-copies { list-style: none; margin: 0; padding: 0; }
+.pages-copy { padding: 0.6rem 0; border-top: 1px solid var(--border); }
+.pages-copy:first-child { border-top: 0; }
+.pages-copy p { margin: 0.2rem 0; }

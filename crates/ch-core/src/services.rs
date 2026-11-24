@@ -20,6 +20,7 @@ use crate::events::{DomainEvent, StoredEvent};
 pub use crate::identity::{Credentials, Directory, Orgs, TwoFactor};
 use crate::ids::*;
 use crate::model::*;
+pub use crate::pages::Pages;
 use crate::web_contract::RepoUpdate;
 use async_trait::async_trait;
 use bytes::Bytes;

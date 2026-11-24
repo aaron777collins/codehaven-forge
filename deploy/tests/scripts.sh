@@ -253,6 +253,15 @@ ENVEOF
     bad 'B: with every key set the render works'
   fi
 
+  # ch-dp1: every open Pages reply holds a socket and a file, so the server gets more than the
+  # default 1024 open files.
+  compose_run "$BASE_ENV" config --format json
+  if [ "$run_rc" = 0 ] && printf '%s' "$run_out" | python3 -c 'import json,sys; n=json.load(sys.stdin)["services"]["server"].get("ulimits",{}).get("nofile",{}); sys.exit(0 if n.get("soft",0)>=65536 and n.get("hard",0)>=65536 else 1)'; then
+    ok 'B: the server may open 65536 files'
+  else
+    bad 'B: the server may open 65536 files'
+  fi
+
   if [ "$run_rc" = 0 ]; then
     # CODEHAVEN_TAG is not in the loop: compose.sh derives it from git when it is unset, so the
     # render must not fail. It gets its own check below.

@@ -43,6 +43,7 @@ services:
       CODEHAVEN__STORAGE__DATA_DIR: /data
       CODEHAVEN__SSH__EXTERNAL: shots.example.invalid:2222
       CODEHAVEN__LOG__FORMAT: pretty
+      CODEHAVEN__PAGES__HOST: pages.shots.example.invalid
       # The webhook step delivers to a listener on the host, a private address.
       CODEHAVEN__WEBHOOKS__ALLOW_PRIVATE: "true"
       # The host's own public addresses (deploy/prod/host-ips.sh --json): webhooks may not reach them.

@@ -217,6 +217,26 @@ impl Authz for DbAuthz {
         }
         Ok(p)
     }
+    /// Owner, site admin or a collaborator row: never the tier alone.
+    async fn has_grant(&self, actor: &Actor, repo: RepoId) -> Result<bool> {
+        let uid = match actor {
+            Actor::System => return Ok(true),
+            Actor::User { id, .. } | Actor::Token { user_id: id, .. } | Actor::App { user_id: id, .. } => *id,
+            _ => return Ok(false),
+        };
+        if actor.is_site_admin() {
+            return Ok(true);
+        }
+        let granted: Option<bool> = sqlx::query_scalar(
+            "SELECT r.owner_id = $2 OR EXISTS (SELECT 1 FROM repo_collaborators c WHERE c.repo_id = r.id AND c.user_id = $2) \
+             FROM repositories r WHERE r.id = $1",
+        )
+        .bind(repo.0)
+        .bind(uid.0)
+        .fetch_optional(&self.0)
+        .await?;
+        Ok(granted.unwrap_or(false))
+    }
     async fn org_role(&self, actor: &Actor, org: OrgId) -> Result<Option<OrgRole>> {
         Ok(actor.user_id().filter(|u| u.0 == org.0).map(|_| OrgRole::Owner))
     }

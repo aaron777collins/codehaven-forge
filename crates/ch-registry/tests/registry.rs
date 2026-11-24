@@ -1001,6 +1001,8 @@ async fn the_next_link_never_carries_a_hidden_name(pool: PgPool) {
     let _ = r;
     assert_eq!(link(2, &Cursor { last: "alice/b".into(), skip: 0 }, "ignored"), "</v2/_catalog?n=2&last=alice/b>; rel=\"next\"");
     assert_eq!(link(2, &Cursor { last: String::new(), skip: 5000 }, "5000.abc"), "</v2/_catalog?n=2&last=&skip=5000.abc>; rel=\"next\"");
+    // A `last` that is not an image name is encoded, so the link means what the server meant.
+    assert_eq!(link(2, &Cursor { last: "a&b+c d".into(), skip: 0 }, "ignored"), "</v2/_catalog?n=2&last=a%26b%2Bc%20d>; rel=\"next\"");
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
@@ -1015,12 +1017,16 @@ async fn bad_catalog_and_tag_cursors_are_400_not_500(pool: PgPool) {
         "?skip=99999999999",
         "?skip=%00",
         "?skip=1",
+        "?skip=00",
+        "?skip=01.abc",
         "?skip=3.",
         "?skip=3.00",
         "?skip=3.0000000000000000000000000000000000000000000000000000000000000000",
     ] {
         assert_eq!(catalog(&r, q, "pw-alice").await.status, 400, "{q}");
     }
+    // A bare zero skips nothing and is accepted.
+    assert_eq!(catalog(&r, "?skip=0", "pw-alice").await.status, 200);
     assert_eq!(r.get("/v2/alice/demo/tags/list?last=%00", "pw-alice").await.status, 400);
 }
 

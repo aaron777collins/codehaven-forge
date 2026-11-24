@@ -718,6 +718,43 @@ impl Directory for NotBuilt {
     }
 }
 
+#[async_trait]
+impl crate::pages::Pages for NotBuilt {
+    fn enabled(&self) -> bool {
+        false
+    }
+    async fn site(&self, actor: &Actor, repo: RepoId) -> Result<Option<crate::pages::PagesSite>> {
+        Ok(None)
+    }
+    async fn configure(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        input: crate::pages::PagesConfigInput,
+        client: &ClientInfo,
+    ) -> Result<crate::pages::PagesSite> {
+        Err(nb("Pages"))
+    }
+    async fn deploy(&self, actor: &Actor, repo: RepoId, client: &ClientInfo) -> Result<()> {
+        Err(nb("Pages"))
+    }
+    async fn rollback(&self, actor: &Actor, repo: RepoId, deployment: i64, client: &ClientInfo) -> Result<()> {
+        Err(nb("Pages"))
+    }
+    async fn disable(&self, actor: &Actor, repo: RepoId, client: &ClientInfo) -> Result<()> {
+        Err(nb("Pages"))
+    }
+    async fn open(&self, actor: &Actor, owner: &str, project: &str, path: &str) -> Result<String> {
+        Err(Error::NotFound)
+    }
+    async fn settings(&self) -> Result<crate::pages::PagesSettings> {
+        Ok(crate::pages::PagesSettings::default())
+    }
+    async fn set_settings(&self, actor: &Actor, settings: crate::pages::PagesSettings, client: &ClientInfo) -> Result<()> {
+        Err(nb("Pages"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
