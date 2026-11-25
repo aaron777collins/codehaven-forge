@@ -11,7 +11,9 @@
 #   CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE  the root-only passphrase file (mode 600 or 400)
 #
 # The archive holds the instance's master key, so it never leaves the host unencrypted: it
-# is sealed with openssl AES-256 into a scratch copy, and only that .enc file is sent. The
+# is sealed with openssl AES-256 into a scratch copy and authenticated with an HMAC tag over
+# it (backup-seal.py), and only that .enc file is sent; backup-open.sh refuses a copy whose
+# tag does not match. The
 # passphrase is read by openssl from its file and never appears on a command line. The S3
 # credentials are whatever the aws CLI already has for root; this script reads and prints
 # no credential.
@@ -81,6 +83,10 @@ enc="$tmp/$name.enc"
 openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -pass "file:$passfile" \
   -in "$archive" -out "$enc" \
   || ch_die "openssl could not encrypt $name; nothing was sent."
+# Then a tag over the whole file (encrypt, then MAC), so a copy that was changed or cut short
+# at the destination is refused when it is opened (backup-open.sh) instead of decrypting to junk.
+python3 "$(dirname "${BASH_SOURCE[0]}")/backup-seal.py" tag "$enc" "$passfile" \
+  || ch_die "the copy of $name could not be authenticated; nothing was sent."
 
 case "$CODEHAVEN_BACKUP_OFFSITE" in
   rsync:*)

@@ -566,6 +566,10 @@ async fn push(State(state): State<AppState>, CurrentActor(actor): CurrentActor, 
     if !ch_core::access::valid_owner_name(&owner) {
         return plain(StatusCode::NOT_FOUND, "Not found");
     }
+    // The namespace is checked before a byte of the upload is read.
+    if let Err(e) = crate::access::may_push_into(&state, &actor, "nuget", &owner).await {
+        return refused(e);
+    }
     let Some(boundary) = req.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).and_then(boundary_of) else {
         return plain(StatusCode::BAD_REQUEST, "send the package as multipart/form-data");
     };

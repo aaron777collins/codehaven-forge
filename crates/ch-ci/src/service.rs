@@ -162,6 +162,7 @@ impl Ci for CiImpl {
     ) -> Result<RunId> {
         self.ctx.authz.require(actor, repo, Permission::Write).await?;
         require_ci(actor, repo)?;
+        triggers::refuse_if_locked(&self.ctx, repo).await?;
         let info = repo_ci(&self.ctx, repo).await?;
         match info.availability() {
             CiAvailability::Enabled => {}
@@ -251,6 +252,7 @@ impl Ci for CiImpl {
         self.ctx.authz.require(actor, repo, Permission::Write).await?;
         require_ci(actor, repo)?;
         self.run_in_repo(repo, run).await?;
+        triggers::refuse_if_locked(&self.ctx, repo).await?;
         runs::rerun(&self.ctx, run.0, failed_only, actor.author_id()).await
     }
 
@@ -425,6 +427,7 @@ impl Ci for CiImpl {
         self.ctx.authz.require(actor, repo, Permission::Write).await?;
         self.run_in_repo(repo, run).await?;
         let who = actor.user_id().ok_or_else(|| Error::forbidden("Only a person can approve a run."))?;
+        triggers::refuse_if_locked(&self.ctx, repo).await?;
         runs::approve_run(&self.ctx, run.0, who).await?;
         let ev = AuditEvent::new(actor, client, action::RUN_APPROVED, Outcome::Success)
             .target("workflow_run", run.0)

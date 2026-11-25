@@ -885,17 +885,191 @@ impl Core {
         }
         if row.pinned != pinned {
             if pinned {
-                let n: i64 =
-                    sqlx::query_scalar("SELECT count(*) FROM issues WHERE repo_id = $1 AND pinned").bind(repo).fetch_one(&mut *tx).await?;
+                let (n, next): (i64, i32) =
+                    sqlx::query_as("SELECT count(*), COALESCE(max(pin_position) + 1, 0) FROM issues WHERE repo_id = $1 AND pinned")
+                        .bind(repo)
+                        .fetch_one(&mut *tx)
+                        .await?;
                 if n >= MAX_PINNED {
                     return Err(Error::conflict(format!("A repository can pin at most {MAX_PINNED} issues")));
                 }
+                sqlx::query("UPDATE issues SET pinned = true, pin_position = $2 WHERE id = $1")
+                    .bind(row.id)
+                    .bind(next)
+                    .execute(&mut *tx)
+                    .await?;
+            } else {
+                sqlx::query("UPDATE issues SET pinned = false, pin_position = NULL WHERE id = $1").bind(row.id).execute(&mut *tx).await?;
+                Self::close_pin_gap(&mut tx, repo).await?;
             }
-            sqlx::query("UPDATE issues SET pinned = $2 WHERE id = $1").bind(row.id).bind(pinned).execute(&mut *tx).await?;
             Self::add_event(&mut tx, row.id, Some(user), if pinned { "pinned" } else { "unpinned" }, json!({})).await?;
         }
         tx.commit().await?;
         self.hydrate_one(self.issue_row(repo, number).await?).await
+    }
+}
+
+impl Core {
+    /// Numbers the pinned issues of a repository 0, 1, 2 in their present order.
+    async fn close_pin_gap(tx: &mut DbTx<'_>, repo: RepoId) -> Result<()> {
+        sqlx::query(
+            "UPDATE issues i SET pin_position = r.pos
+               FROM (SELECT id, row_number() OVER (ORDER BY pin_position, number) - 1 AS pos FROM issues WHERE repo_id = $1 AND pinned) r
+              WHERE i.id = r.id AND i.pin_position IS DISTINCT FROM r.pos",
+        )
+        .bind(repo)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    /// The pinned issues in the order set for them. Anyone who can read the repository may ask.
+    pub async fn issue_pinned(&self, actor: &Actor, repo: RepoId) -> Result<Vec<IssueView>> {
+        self.need(actor, repo, Permission::Read).await?;
+        let sql =
+            format!("SELECT {} FROM issues i WHERE i.repo_id = $1 AND i.pinned ORDER BY i.pin_position, i.number", crate::core::ISSUE_COLS);
+        let rows = sqlx::query_as::<_, IssueRow>(&sql).bind(repo).fetch_all(self.db()).await?;
+        self.hydrate(rows).await
+    }
+
+    /// Sets the order of the pinned issues. `numbers` must name every pinned issue, once.
+    pub async fn issue_reorder_pinned(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        numbers: Vec<i64>,
+        _client: &ClientInfo,
+    ) -> Result<Vec<IssueView>> {
+        writing_user(actor, repo)?;
+        self.need(actor, repo, Permission::Triage).await?;
+        Self::ensure_writable(&self.repo(repo).await?)?;
+        let mut tx = self.db().begin().await?;
+        let held: Vec<i64> = sqlx::query_scalar("SELECT number FROM issues WHERE repo_id = $1 AND pinned ORDER BY number FOR UPDATE")
+            .bind(repo)
+            .fetch_all(&mut *tx)
+            .await?;
+        let mut asked = numbers.clone();
+        asked.sort_unstable();
+        if asked != held {
+            return Err(Error::invalid("Issue", "numbers", "Name every pinned issue exactly once"));
+        }
+        for (pos, n) in numbers.iter().enumerate() {
+            sqlx::query("UPDATE issues SET pin_position = $3 WHERE repo_id = $1 AND number = $2")
+                .bind(repo)
+                .bind(n)
+                .bind(pos as i32)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        self.issue_pinned(actor, repo).await
+    }
+
+    /// Deletes an issue for good, with its comments, reactions and timeline. Repository admins
+    /// only. The number is not used again. The audit trail keeps who did it and what it was.
+    pub async fn issue_delete(&self, actor: &Actor, repo: RepoId, number: i64, client: &ClientInfo) -> Result<()> {
+        writing_user(actor, repo)?;
+        self.need(actor, repo, Permission::Admin).await?;
+        Self::ensure_writable(&self.repo(repo).await?)?;
+        let mut tx = self.db().begin().await?;
+        let row = self.issue_row_tx(&mut tx, repo, number).await?;
+        if row.is_pull {
+            return Err(Error::invalid("Issue", "number", "Pull requests cannot be deleted"));
+        }
+        self.d
+            .audit
+            .record(
+                &mut tx,
+                AuditEvent::new(actor, client, action::ISSUE_DELETED, Outcome::Success)
+                    .target("issue", row.id)
+                    .details(json!({ "repo": repo.0, "number": number, "title": row.title, "author": row.author_id.0 })),
+            )
+            .await?;
+        sqlx::query("DELETE FROM issues WHERE id = $1").bind(row.id).execute(&mut *tx).await?;
+        Self::close_pin_gap(&mut tx, repo).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Moves an issue to another repository (ch-u6j). Write access on both, and never to a
+    /// repository more visible than the one it leaves: what was said in a private place does not
+    /// move into a public one. It keeps its author, text, state, comments, reactions and
+    /// timeline; labels, the milestone and assignees belong to the old repository and are
+    /// dropped, and so are subscriptions other than its author's and the mover's.
+    pub async fn issue_transfer(&self, actor: &Actor, repo: RepoId, number: i64, target: RepoId, client: &ClientInfo) -> Result<IssueView> {
+        let user = writing_user(actor, repo)?;
+        if target == repo {
+            return Err(Error::invalid("Issue", "target", "Pick another repository"));
+        }
+        self.need(actor, repo, Permission::Write).await?;
+        self.need(actor, target, Permission::Write).await?;
+        let (source_row, target_row) = (self.repo(repo).await?, self.repo(target).await?);
+        Self::ensure_writable(&source_row)?;
+        Self::ensure_writable(&target_row)?;
+        if !target_row.has_issues {
+            return Err(Error::invalid("Issue", "target", "Issues are turned off for that repository"));
+        }
+        let ranks: Vec<(RepoId, i32)> = sqlx::query_as(
+            "SELECT id, CASE access_tier WHEN 'public' THEN 2 WHEN 'internal' THEN 1 ELSE 0 END FROM repositories WHERE id = ANY($1)",
+        )
+        .bind(vec![repo.0, target.0])
+        .fetch_all(self.db())
+        .await?;
+        let rank = |id: RepoId| ranks.iter().find(|(r, _)| *r == id).map(|(_, n)| *n).unwrap_or(0);
+        if rank(target) > rank(repo) {
+            return Err(Error::invalid(
+                "Issue",
+                "target",
+                "An issue can move to a repository that is the same or less visible, never a more visible one",
+            ));
+        }
+        let mut tx = self.db().begin().await?;
+        let row = self.issue_row_tx(&mut tx, repo, number).await?;
+        if row.is_pull {
+            return Err(Error::invalid("Issue", "number", "Pull requests cannot be moved"));
+        }
+        let new_number: i64 =
+            sqlx::query_scalar("UPDATE repositories SET next_number = next_number + 1 WHERE id = $1 RETURNING next_number - 1")
+                .bind(target)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(Error::NotFound)?;
+        sqlx::query("DELETE FROM issue_labels WHERE issue_id = $1").bind(row.id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM issue_assignees WHERE issue_id = $1").bind(row.id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM issue_subscriptions WHERE issue_id = $1 AND user_id <> ALL($2)")
+            .bind(row.id)
+            .bind(vec![row.author_id.0, user.0])
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE issues SET repo_id = $2, number = $3, milestone_id = NULL, pinned = false, pin_position = NULL, updated_at = now() WHERE id = $1",
+        )
+        .bind(row.id)
+        .bind(target)
+        .bind(new_number)
+        .execute(&mut *tx)
+        .await?;
+        Self::close_pin_gap(&mut tx, repo).await?;
+        Self::add_event(
+            &mut tx,
+            row.id,
+            Some(user),
+            "transferred",
+            json!({ "from": format!("{}#{}", source_row.full_name(), number), "to": format!("{}#{}", target_row.full_name(), new_number) }),
+        )
+        .await?;
+        self.d
+            .audit
+            .record(
+                &mut tx,
+                AuditEvent::new(actor, client, action::ISSUE_TRANSFERRED, Outcome::Success).target("issue", row.id).details(json!({
+                    "from": format!("{}#{}", source_row.full_name(), number),
+                    "to": format!("{}#{}", target_row.full_name(), new_number),
+                })),
+            )
+            .await?;
+        tx.commit().await?;
+        self.hydrate_one(self.issue_row(target, new_number).await?).await
     }
 }
 

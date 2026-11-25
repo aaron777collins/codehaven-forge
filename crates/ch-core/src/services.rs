@@ -220,6 +220,15 @@ pub trait Repos: Send + Sync {
         let _ = (actor, new, url, client);
         Err(Error::unavailable("importing is not built yet"))
     }
+    /// A private repository for an existing account, filled from a bare git repository at `path`
+    /// on this server's own disk (inside the container). For `codehaven admin` only: the system
+    /// actor, never a person, so the path is the operator's. `run_ci` also announces the
+    /// default branch as a push by the owner, so the repository's own workflows start. Nothing
+    /// is overwritten: an existing name is refused.
+    async fn import_local(&self, actor: &Actor, new: NewRepo, path: &str, run_ci: bool, client: &ClientInfo) -> Result<Repo> {
+        let _ = (actor, new, path, run_ci, client);
+        Err(Error::unavailable("importing is not built yet"))
+    }
     /// A fork at a chosen tier: private by default, never above the source, never public.
     async fn fork_as(&self, actor: &Actor, id: RepoId, into: UserId, visibility: Visibility, client: &ClientInfo) -> Result<Repo> {
         let _ = visibility;
@@ -563,6 +572,29 @@ pub trait Issues: Send + Sync {
         let _ = (actor, repo, number, pinned, client);
         unbuilt("issues")
     }
+    /// The pinned issues of a repository, in the order set for them (ch-u6j).
+    async fn pinned(&self, actor: &Actor, repo: RepoId) -> Result<Vec<IssueView>> {
+        let _ = (actor, repo);
+        unbuilt("issues")
+    }
+    /// Puts the pinned issues in the order given, which must name each pinned issue once.
+    async fn reorder_pinned(&self, actor: &Actor, repo: RepoId, numbers: Vec<i64>, client: &ClientInfo) -> Result<Vec<IssueView>> {
+        let _ = (actor, repo, numbers, client);
+        unbuilt("issues")
+    }
+    /// Deletes an issue with its comments, for repository admins only. Audited. Pull requests
+    /// cannot be deleted.
+    async fn delete(&self, actor: &Actor, repo: RepoId, number: i64, client: &ClientInfo) -> Result<()> {
+        let _ = (actor, repo, number, client);
+        unbuilt("issues")
+    }
+    /// Moves an issue, with its comments, to another repository. Needs write access on both, and
+    /// the target must be no more visible than the source. Labels, the milestone and assignees
+    /// belong to the old repository and are left behind. Returns the issue at its new address.
+    async fn transfer(&self, actor: &Actor, repo: RepoId, number: i64, target: RepoId, client: &ClientInfo) -> Result<IssueView> {
+        let _ = (actor, repo, number, target, client);
+        unbuilt("issues")
+    }
     /// People who can be assigned: the owner and everyone with at least triage access.
     async fn assignable(&self, actor: &Actor, repo: RepoId) -> Result<Vec<UserRef>> {
         let _ = (actor, repo);
@@ -648,6 +680,13 @@ pub trait Issues: Send + Sync {
 #[async_trait]
 pub trait Pulls: Send + Sync {
     async fn create(&self, actor: &Actor, new: NewPull, client: &ClientInfo) -> Result<PullRequest>;
+    /// `create`, with the person's say-so that the head's commits may be copied into a public
+    /// base from a repository that is not public (`publish_head`, ch-4pn.14). Without it, such a
+    /// pull request is refused with a `publish_head` field error that says what it would publish.
+    async fn create_publishing(&self, actor: &Actor, new: NewPull, publish_head: bool, client: &ClientInfo) -> Result<PullRequest> {
+        let _ = publish_head;
+        self.create(actor, new, client).await
+    }
     async fn get(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<PullRequest>;
     async fn list(&self, actor: &Actor, repo: RepoId, filter: IssueFilter) -> Result<Vec<PullRequest>>;
     async fn merge_gate(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<GateReport>;
@@ -698,6 +737,13 @@ pub trait Pulls: Send + Sync {
     async fn commits(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Vec<CommitInfo>> {
         let _ = (actor, repo, number);
         unbuilt("pulls")
+    }
+    /// True when this pull request's changes must not be shown to `actor`: its head is in a
+    /// repository the actor cannot read and its author never agreed to publish it in this
+    /// public repository. The pages that show the diff or the commits ask first.
+    async fn head_hidden(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<bool> {
+        let _ = (actor, repo, number);
+        Ok(false)
     }
     /// Merges the base branch into the head branch ("Update branch").
     async fn update_branch(&self, actor: &Actor, repo: RepoId, number: i64, client: &ClientInfo) -> Result<PullView> {

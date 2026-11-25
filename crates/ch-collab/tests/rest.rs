@@ -814,3 +814,45 @@ async fn repo_wide_review_comments_skip_pending_reviews(pool: PgPool) {
     assert_eq!(r.json()[0]["body"], "submitted note");
     assert_eq!(api.get(&w.eve_a(), &format!("{R}/pulls/comments")).await.status, StatusCode::NOT_FOUND);
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn pinned_order_delete_and_transfer_over_http(pool: PgPool) {
+    let w = World::new(pool).await;
+    let api = Api::new(&w).await;
+    for i in 0..3 {
+        w.issue(w.alice, &format!("i{i}"), "").await;
+    }
+    for n in 1..=3 {
+        assert_eq!(api.call(&w.dave_a(), "PUT", &format!("/repos/alice/demo/issues/{n}/pin"), None).await.status, StatusCode::NO_CONTENT);
+    }
+    let numbers = |r: &Reply| r.json().as_array().unwrap().iter().map(|i| i["number"].as_i64().unwrap()).collect::<Vec<_>>();
+    let r = api.get(&w.carol_a(), "/repos/alice/demo/codehaven/issues/pinned").await;
+    assert_eq!((r.status, numbers(&r)), (StatusCode::OK, vec![1, 2, 3]));
+    let r = api.call(&w.dave_a(), "PUT", "/repos/alice/demo/codehaven/issues/pinned/order", Some(json!({"numbers": [2, 3, 1]}))).await;
+    assert_eq!((r.status, numbers(&r)), (StatusCode::OK, vec![2, 3, 1]));
+    let r = api.call(&w.dave_a(), "PUT", "/repos/alice/demo/codehaven/issues/pinned/order", Some(json!({"numbers": [2, 3]}))).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let r = api.call(&w.carol_a(), "PUT", "/repos/alice/demo/codehaven/issues/pinned/order", Some(json!({"numbers": [1, 2, 3]}))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    // Moving: a repository the person cannot see is "no such repository", a visible one needs write.
+    let elsewhere = w.env.repo(w.alice, "elsewhere").await;
+    let r =
+        api.call(&w.bob_a(), "POST", "/repos/alice/demo/codehaven/issues/3/transfer", Some(json!({"repository": "alice/elsewhere"}))).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    w.env.collaborator(elsewhere, w.bob, "write").await;
+    let r =
+        api.call(&w.bob_a(), "POST", "/repos/alice/demo/codehaven/issues/3/transfer", Some(json!({"repository": "alice/elsewhere"}))).await;
+    assert_eq!((r.status, r.json()["number"].as_i64(), r.json()["title"].as_str()), (StatusCode::OK, Some(1), Some("i2")));
+    assert!(r.json()["html_url"].as_str().unwrap().contains("/alice/elsewhere/issues/1"), "{}", r.json());
+    // Delete: admins only.
+    let uri = "/repos/alice/demo/codehaven/issues/1";
+    assert_eq!(api.call(&w.bob_a(), "DELETE", uri, None).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(api.call(&w.eve_a(), "DELETE", uri, None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(api.call(&w.alice_a(), "DELETE", uri, None).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(api.get(&w.alice_a(), "/repos/alice/demo/issues/1").await.status, StatusCode::NOT_FOUND);
+    // Signed out, none of it is served.
+    for (m, u) in [("GET", "/repos/alice/demo/codehaven/issues/pinned"), ("DELETE", uri)] {
+        let r = api.call(&Actor::Anonymous, m, u, None).await;
+        assert!(matches!(r.status, StatusCode::UNAUTHORIZED | StatusCode::NOT_FOUND), "{m} {u}: {}", r.status);
+    }
+}

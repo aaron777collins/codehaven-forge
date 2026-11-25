@@ -812,8 +812,7 @@ FAKE
     && [ "$(grep -c '^backup@example.invalid:/srv/b/$' "$T/h-rsync.calls" || true)" = 1 ] \
     && [ -f "$T/h-sent.enc" ] \
     && ! grep -q PLAINTEXT-MARKER "$T/h-sent.enc" \
-    && openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass "file:$T/h-pass" \
-         -in "$T/h-sent.enc" -out "$T/h-dec" \
+    && CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE="$T/h-pass" bash "$TREE/deploy/prod/backup-open.sh" "$T/h-sent.enc" "$T/h-dec" \
     && cmp -s "$T/h-archive" "$T/h-dec" \
     && h_last 'offsite: backup@example.invalid:/srv/b/h-archive.enc'; then
     ok 'H: rsync sends one encrypted copy that decrypts back'
@@ -869,6 +868,56 @@ FAKE
     ok 'H: a failing sender fails the run'
   else
     bad 'H: a failing sender fails the run'
+  fi
+
+  # H7: a copy that was changed, cut short or opened with another passphrase is refused, and
+  # nothing is written. h_open <sealed> <passfile> <out>: backup-open.sh in a clean environment.
+  h_open() {
+    ( unset_test_env; CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE="$2" bash "$TREE/deploy/prod/backup-open.sh" "$1" "$3" ) > "$T/h.out" 2>&1
+  }
+  h7_refused() {
+    local name="$1" sealed="$2" pass="$3"
+    rm -f "$T/h-bad-out"
+    if ! h_open "$sealed" "$pass" "$T/h-bad-out" && [ ! -e "$T/h-bad-out" ]; then
+      ok "$name"
+    else
+      bad "$name"
+    fi
+  }
+  size=$(wc -c < "$T/h-sent.enc" | tr -d ' ')
+  # a byte flipped in the middle of the ciphertext
+  cp "$T/h-sent.enc" "$T/h-flip.enc"
+  printf '\377' | dd of="$T/h-flip.enc" bs=1 seek=$((size / 2)) conv=notrunc 2>/dev/null
+  h7_refused 'H: a copy with one changed byte is refused' "$T/h-flip.enc" "$T/h-pass"
+  # a byte flipped in the tag itself
+  cp "$T/h-sent.enc" "$T/h-fliptag.enc"
+  printf '\377' | dd of="$T/h-fliptag.enc" bs=1 seek=$((size - 1)) conv=notrunc 2>/dev/null
+  h7_refused 'H: a copy with a changed tag is refused' "$T/h-fliptag.enc" "$T/h-pass"
+  # cut short, and cut to nothing
+  head -c $((size - 20)) "$T/h-sent.enc" > "$T/h-short.enc"
+  h7_refused 'H: a copy cut short is refused' "$T/h-short.enc" "$T/h-pass"
+  : > "$T/h-empty.enc"
+  h7_refused 'H: an empty copy is refused' "$T/h-empty.enc" "$T/h-pass"
+  # the old shape, which has no tag
+  head -c $((size - 32)) "$T/h-sent.enc" > "$T/h-notag.enc"
+  h7_refused 'H: a copy with no tag is refused' "$T/h-notag.enc" "$T/h-pass"
+  # another passphrase
+  printf 'wrong horse\n' > "$T/h-pass2"
+  chmod 600 "$T/h-pass2"
+  h7_refused 'H: a copy opened with another passphrase is refused' "$T/h-sent.enc" "$T/h-pass2"
+  # and the untouched copy still opens, so the refusals above are the tampering and nothing else
+  rm -f "$T/h-dec2"
+  if h_open "$T/h-sent.enc" "$T/h-pass" "$T/h-dec2" && cmp -s "$T/h-archive" "$T/h-dec2"; then
+    ok 'H: the untouched copy still opens'
+  else
+    bad 'H: the untouched copy still opens'
+  fi
+  # restore.sh refuses a tampered .enc before it looks at anything else (it stops at the
+  # root check on a machine that is not root, so this only runs where that is cheap to see).
+  if grep -q 'backup-open.sh' "$TREE/deploy/prod/restore.sh"; then
+    ok 'H: restore.sh opens a .enc copy through backup-open.sh'
+  else
+    bad 'H: restore.sh opens a .enc copy through backup-open.sh'
   fi
 else
   skip 'H: openssl is missing'

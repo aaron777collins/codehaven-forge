@@ -117,6 +117,12 @@ impl GitCore {
             if !self.store.exists(src) || !have(src).await {
                 continue;
             }
+            // Decided here, with the write ticket held, so a repository that was made public a
+            // moment ago is seen as public. A request that was checked earlier cannot slip a
+            // private head into it (ch-4pn.14).
+            if !self.may_copy_into(repo, src).await? {
+                continue;
+            }
             let cmd = self
                 .git(repo)
                 .args(["-c", "uploadpack.allowAnySHA1InWant=true", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head"])
@@ -127,6 +133,33 @@ impl GitCore {
             return Ok(());
         }
         Err(Error::invalid("Object", "sha", "that commit does not exist in this repository"))
+    }
+
+    /// May the server copy commits of `src` into `dest`? A repository that is not public never
+    /// gives its commits to one that is, unless a pull request of `dest` from `src` is open with
+    /// its author's say-so that the commits be published there (`head_publish_tier` is public).
+    /// Anyone can fetch any object a public repository holds, so this is the last check, made
+    /// under the write ticket, and it holds whatever the callers decided before they waited for
+    /// it (ch-4pn.14).
+    pub(crate) async fn may_copy_into(&self, dest: RepoId, src: RepoId) -> Result<bool> {
+        let tiers: Vec<(i64, String)> = sqlx::query_as("SELECT id, access_tier FROM repositories WHERE id = ANY($1)")
+            .bind(vec![dest.0, src.0])
+            .fetch_all(&self.db)
+            .await?;
+        let tier = |id: RepoId| tiers.iter().find(|(i, _)| *i == id.0).map(|(_, t)| t.as_str());
+        let (Some(d), Some(s)) = (tier(dest), tier(src)) else { return Ok(false) };
+        if d != "public" || s == "public" {
+            return Ok(true);
+        }
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pull_requests p JOIN issues i ON i.id = p.issue_id
+                             WHERE p.repo_id = $1 AND p.head_repo_id = $2 AND i.open AND p.merged_at IS NULL
+                               AND p.head_publish_tier = 'public')",
+        )
+        .bind(dest.0)
+        .bind(src.0)
+        .fetch_one(&self.db)
+        .await?)
     }
 
     /// `sha` must be a commit this repository already holds. Nothing is fetched.
@@ -155,6 +188,7 @@ impl GitCore {
         // A person names a commit that is already here. Only the server copies across the fork
         // network, for a pull request it has checked (ch-1c5, ch-g3r).
         if actor.is_system() {
+            self.pull_ref_allowed(repo_id, &full).await?;
             self.ensure_object(Some(actor), repo_id, sha).await?;
         } else {
             self.ensure_local_commit(repo_id, sha).await?;
@@ -210,6 +244,7 @@ impl GitCore {
         // A person names a commit that is already here. Only the server copies across the fork
         // network, for a pull request it has checked (ch-1c5, ch-g3r).
         if actor.is_system() {
+            self.pull_ref_allowed(repo_id, &full).await?;
             self.ensure_object(Some(actor), repo_id, sha).await?;
         } else {
             self.ensure_local_commit(repo_id, sha).await?;

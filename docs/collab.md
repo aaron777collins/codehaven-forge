@@ -137,3 +137,49 @@ make STREAM=collab test P=ch-collab      # 228 tests against a real Postgres, no
 `TestAuthz`, `FakeRepos`, `FakeAccounts` and `FakeChecks`. `World` sets up alice (owner), bob (write), carol
 (read), dave (triage) and eve (stranger) on a private repository. Real git behind these traits is exercised by
 the end-to-end run once the git stream is merged.
+
+## Copy consent for a pull request from a less visible fork (ch-4pn.14)
+
+Opening a pull request from a fork copies the head's commits into the base, where everyone who
+can read the base sees them. When the base is public and the head repository is not, the person
+opening it must say so on purpose, or the request is refused with a `publish_head` field error
+that says what it would publish. Web: a checkbox that appears with that error. REST: the
+Codehaven field `publish_head: true` on `POST /repos/{owner}/{repo}/pulls`. CLI:
+`haven pr create --publish-head`. The tier the head was published to (the base's, as strangers
+see it) is kept in `pull_requests.head_publish_tier`. A later head of that pull request is
+copied into the base only while the base is no wider than that tier: a base that becomes public
+after the pull request was opened keeps the head it had, and the author opens a new pull
+request with the confirm to publish more.
+
+When a base is made public, the pull requests that came from a fork that is not public and
+were never confirmed are withdrawn: no pull ref, no copied commits, no test merge, and the merge
+gate says the author has not agreed to publish. Their "Files changed" and "Commits" lists, in
+the API and on the pages, are empty for anyone who cannot read the fork (signed out included),
+and such a person cannot comment on their lines. Line comments made before the base was widened
+stay in the database, but their diff hunk and file path (code from the fork) go out blank, in the
+thread and comment lists, a single comment and the repository-wide list, for anyone who cannot
+read the fork. The words of the comment stay. Whoever can read the fork still sees the
+changes and the full comments. The git layer repeats the rule under the write ticket, so a refresh or merge that was
+checked just before the base went public still copies nothing: a repository that is not public
+gives no commits to one that is, unless an open pull request from it was confirmed.
+
+## Deleting, moving and ordering issues (ch-u6j)
+
+- **Delete** an issue: repository admins only, audited (`issue.deleted`). Removes the issue,
+  its comments, reactions and timeline; the number is not used again. Pull requests cannot be
+  deleted. REST: `DELETE /repos/{owner}/{repo}/codehaven/issues/{number}`. Web: Manage, Delete.
+- **Transfer** an issue: write access on both repositories, and the target must be the same
+  tier or narrower, never wider (a private issue never lands in a public repository). The issue
+  keeps its author, text, state, comments and reactions and gets the next number of the target;
+  labels, milestone, assignees and other people's subscriptions stay behind. Audited
+  (`issue.transferred`). REST: `POST .../codehaven/issues/{number}/transfer` with
+  `{"repository": "owner/name"}`. Web: Manage, Transfer. A repository the person cannot see is
+  "no such repository".
+- **Pinned order**: pinned issues carry a `pin_position` (at most three pinned). REST:
+  `GET .../codehaven/issues/pinned` and `PUT .../codehaven/issues/pinned/order` with
+  `{"numbers": [3, 1, 2]}` naming every pinned issue once (triage access). Web: pinned issues
+  sit first on the open issue list, with Reorder pinned for people with triage access.
+- The repository-wide comment lists are `GET /repos/{owner}/{repo}/issues/comments` and
+  `/pulls/comments`, as GitHub's.
+
+All of these need a signed-in person; signed out they answer like a repository that is not there.

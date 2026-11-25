@@ -263,6 +263,10 @@ pub struct PrCreateArgs {
     pub head: Option<String>,
     #[arg(long, short)]
     pub draft: bool,
+    /// Say that the head's commits may be copied into a public repository from one that is not
+    /// public. Without it such a pull request is refused and the reason is shown.
+    #[arg(long)]
+    pub publish_head: bool,
     #[arg(long)]
     pub json: bool,
 }

@@ -3,8 +3,8 @@
 
 #![allow(clippy::unwrap_used)]
 
-use ch_core::Config;
 use ch_core::state::AppState;
+use ch_core::{Actor, Config};
 use codehaven::admin;
 use codehaven::cli::{AdminCommand, CreateUser, InviteCommand};
 use codehaven::wiring;
@@ -153,4 +153,73 @@ async fn runners_are_listed_and_revoked_from_the_cli(pool: PgPool) {
     assert_eq!(count(&pool, "SELECT count(*) FROM audit_events WHERE action = 'runner.removed'").await, 1);
     // A second time there is nothing to remove.
     assert!(admin::run(&state, AdminCommand::RevokeRunner { id }).await.is_err());
+}
+
+/// A bare repository with one commit on `main` and a tag, made with the system git.
+fn bare_source(dir: &std::path::Path) -> std::path::PathBuf {
+    let work = dir.join("work");
+    let bare = dir.join("source.git");
+    let git = |cwd: &std::path::Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(cwd)
+            .args(["-c", "user.name=T", "-c", "user.email=t@example.org", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    std::fs::create_dir_all(&work).unwrap();
+    git(&work, &["init", "-q"]);
+    std::fs::write(work.join("README.md"), "the source\n").unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-q", "-m", "first"]);
+    git(&work, &["tag", "v1"]);
+    git(dir, &["clone", "-q", "--bare", work.to_str().unwrap(), bare.to_str().unwrap()]);
+    bare
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn repo_import_makes_a_private_repository_for_an_existing_account_and_audits_it(pool: PgPool) {
+    let (state, dir) = state(pool.clone()).await;
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let bare = bare_source(&src);
+    admin::run(&state, create("aaron", false)).await.unwrap();
+    let import = |owner: &str, name: &str, from: &std::path::Path, run_ci: bool| AdminCommand::RepoImport {
+        owner: owner.into(),
+        name: name.into(),
+        from: from.to_str().unwrap().into(),
+        run_ci,
+    };
+    // An owner that does not exist, a path that is not a bare repository, a path that is not absolute: refused, nothing made.
+    assert!(admin::run(&state, import("nobody", "codehaven", &bare, false)).await.is_err());
+    assert!(
+        admin::run(&state, import("aaron", "codehaven", &src.join("work"), false)).await.is_err(),
+        "a working tree is not a bare repository"
+    );
+    assert!(admin::run(&state, import("aaron", "codehaven", std::path::Path::new("relative/x.git"), false)).await.is_err());
+    assert_eq!(count(&pool, "SELECT count(*) FROM repositories").await, 0);
+    // The import: private, owned by Aaron, with the branch and the tag, and the source untouched.
+    admin::run(&state, import("aaron", "codehaven", &bare, false)).await.unwrap();
+    let (tier, owner, empty, branch): (String, String, bool, String) = sqlx::query_as(
+        "SELECT r.access_tier, u.username::text, r.is_empty, r.default_branch FROM repositories r JOIN users u ON u.id = r.owner_id WHERE r.name = 'codehaven'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((tier.as_str(), owner.as_str(), empty, branch.as_str()), ("private", "aaron", false, "main"));
+    let repo = state.repos.get_by_name(&Actor::System, "aaron", "codehaven").await.unwrap();
+    assert_eq!(state.git.blob(repo.id, "main", "README.md", 100).await.unwrap().content, b"the source\n");
+    assert_eq!(state.git.refs(repo.id, Some("refs/tags/")).await.unwrap().len(), 1);
+    // Both a person and a stranger see nothing of it.
+    let stranger = Actor::Anonymous;
+    assert!(matches!(state.repos.get(&stranger, repo.id).await, Err(ch_core::Error::NotFound)));
+    // It is audited, naming where it came from, and a second import under the same name is refused whole.
+    assert_eq!(count(&pool, "SELECT count(*) FROM audit_events WHERE action = 'repo.imported_from_server_path'").await, 1);
+    assert!(admin::run(&state, import("aaron", "codehaven", &bare, false)).await.is_err());
+    assert_eq!(count(&pool, "SELECT count(*) FROM repositories").await, 1);
+    // With --run-ci the default branch is announced as a push by the owner, once.
+    let before = count(&pool, "SELECT count(*) FROM outbox_events WHERE kind = 'push'").await;
+    admin::run(&state, import("aaron", "second", &bare, true)).await.unwrap();
+    assert_eq!(count(&pool, "SELECT count(*) FROM outbox_events WHERE kind = 'push'").await, before + 1);
 }

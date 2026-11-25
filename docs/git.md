@@ -83,7 +83,15 @@ after typing the repository's name and ticking that the history was checked for 
 
 Forks: a new bare repository fetches every branch and tag of its source, so the fork copies
 its objects and borrows nothing through `alternates`. A fork starts private and can never be
-more visible than its source. A repository that still has forks cannot be deleted.
+more visible than its source.
+
+Deleting a repository that has forks keeps them. In the middle of a chain, its direct forks
+go to its own parent. When the root of a fork network is deleted, its oldest surviving direct
+fork becomes the new root (no parent), the other direct forks hang under it, and every fork in
+the network follows it. Nothing becomes more visible: a fork that would be wider than its new
+parent is narrowed to the parent's tier, and the fork lock and the rule that hides a private
+fork from anyone who cannot see a private ancestor read the new chain from then on. Each
+re-parenting is audited (`repo.fork_reparented`, with the tier before and after).
 
 ## Notes for the other streams
 

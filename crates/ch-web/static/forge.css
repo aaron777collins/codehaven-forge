@@ -186,6 +186,8 @@ details.step[open] > summary { border-bottom: 1px solid var(--border); }
 .repo-item-title { display: flex; align-items: center; gap: var(--s2); font-weight: 650; font-size: 1.02rem; }
 .notif-item, .hit-item { padding: var(--s3) var(--s4); }
 .notif-item p, .hit-item p { margin: 2px 0 0; }
+/* A link that sits in a block with other text is told apart by more than its colour (WCAG 1.4.1). */
+.notif-item > a, .hit-item > a, .person-row > div > a, .notif-row a[href] { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
 .hit-title { font-weight: 600; }
 .notif-row { gap: var(--s3); }
 .notif-main { flex: 1 1 auto; min-width: 0; }

@@ -199,6 +199,11 @@ pub struct CreatePull {
     pub head_repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maintainer_can_modify: Option<bool>,
+    /// Codehaven's own: true says the head's commits may be copied into this repository although
+    /// it is public and the head repository is not (ch-4pn.14). Without it such a pull request
+    /// is refused with a `publish_head` field error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publish_head: Option<bool>,
 }
 
 /// Body of `PATCH /repos/{owner}/{repo}/pulls/{number}`.
@@ -453,6 +458,7 @@ mod tests {
             draft: Some(false),
             head_repo: None,
             maintainer_can_modify: Some(true),
+            publish_head: None,
         };
         crate::roundtrip("pulls_create_pull", &c);
     }

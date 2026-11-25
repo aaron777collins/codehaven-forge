@@ -47,6 +47,11 @@ fn zero_sha(s: &str) -> bool {
 
 /// Starts a run for every workflow that listens to the event. Returns the runs created.
 pub async fn fire(ctx: &Ctx, t: &Trigger, only: Option<&str>) -> Result<Vec<RunId>> {
+    // A locked fork starts nothing, whatever asked: a push, a manual run or a schedule (ch-4pn.16).
+    if fork_locked(ctx, t.repo).await? {
+        tracing::debug!(repo = t.repo.0, "a locked fork starts no run");
+        return Ok(Vec::new());
+    }
     let info = repo_ci(ctx, t.repo).await?;
     if info.availability() != CiAvailability::Enabled {
         tracing::debug!(repo = t.repo.0, availability = ?info.availability(), "workflows are off here");
@@ -217,6 +222,18 @@ fn event_repo(ev: &DomainEvent) -> Option<RepoId> {
 /// from any more (`ch_db::fork_lock`).
 pub async fn fork_locked(ctx: &Ctx, repo: RepoId) -> Result<bool> {
     ch_db::fork_lock::is_locked(&ctx.db, ctx.authz.as_ref(), repo).await
+}
+
+/// Refuses to start or release a run on a locked fork. Every road to a run goes through this or
+/// through [`fire`], which checks the same thing: events, manual runs, reruns, schedules and the
+/// approval of a held run alike.
+pub async fn refuse_if_locked(ctx: &Ctx, repo: RepoId) -> Result<()> {
+    if fork_locked(ctx, repo).await? {
+        return Err(Error::forbidden(
+            "This fork is locked: its owner can no longer see the repository it was forked from, so it runs no workflows.",
+        ));
+    }
+    Ok(())
 }
 
 /// True for the reserved account workflow jobs write as.

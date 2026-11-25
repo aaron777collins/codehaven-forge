@@ -380,18 +380,87 @@ impl GitCore {
         self.repo_row(id).await
     }
 
+    /// What happens to the forks of a repository that is being deleted (ch-nq8). In the middle of
+    /// a chain, its direct forks go to its own parent. A root hands the network to its oldest
+    /// surviving direct fork, which becomes the new root; the other direct forks hang under it
+    /// and every fork in the network follows it. Nothing becomes more visible: the tier trigger
+    /// narrows a fork that would be wider than its new parent, and the fork lock and the lineage
+    /// rule read the new chain from then on.
+    async fn reparent_forks(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        actor: &Actor,
+        client: &ClientInfo,
+        repo: &Repo,
+    ) -> Result<()> {
+        let id = repo.id;
+        let direct: Vec<(i64, String)> =
+            sqlx::query_as("SELECT id, access_tier FROM repositories WHERE fork_parent_id = $1 ORDER BY created_at, id")
+                .bind(id.0)
+                .fetch_all(&mut **tx)
+                .await?;
+        if direct.is_empty() {
+            return Ok(());
+        }
+        let parent: Option<i64> =
+            sqlx::query_scalar("SELECT fork_parent_id FROM repositories WHERE id = $1").bind(id.0).fetch_one(&mut **tx).await?;
+        let new_parent = match parent {
+            Some(p) => {
+                sqlx::query("UPDATE repositories SET fork_parent_id = $2 WHERE fork_parent_id = $1")
+                    .bind(id.0)
+                    .bind(p)
+                    .execute(&mut **tx)
+                    .await?;
+                p
+            }
+            None => {
+                let new_root = direct[0].0;
+                sqlx::query("UPDATE repositories SET fork_parent_id = NULL, fork_root_id = NULL WHERE id = $1")
+                    .bind(new_root)
+                    .execute(&mut **tx)
+                    .await?;
+                sqlx::query("UPDATE repositories SET fork_parent_id = $2 WHERE fork_parent_id = $1 AND id <> $2")
+                    .bind(id.0)
+                    .bind(new_root)
+                    .execute(&mut **tx)
+                    .await?;
+                sqlx::query("UPDATE repositories SET fork_root_id = $2 WHERE fork_root_id = $1 AND id <> $2")
+                    .bind(id.0)
+                    .bind(new_root)
+                    .execute(&mut **tx)
+                    .await?;
+                new_root
+            }
+        };
+        for (fork, tier_before) in direct {
+            let (tier_after, name): (String, String) =
+                sqlx::query_as("SELECT access_tier, (SELECT username::text FROM users WHERE id = owner_id) || '/' || name::text FROM repositories WHERE id = $1")
+                    .bind(fork)
+                    .fetch_one(&mut **tx)
+                    .await?;
+            let target = AuditEvent::new(actor, client, action::REPO_FORK_REPARENTED, Outcome::Success).target("repository", fork).details(
+                serde_json::json!({
+                    "fork": name,
+                    "deleted": repo.full_name(),
+                    "now_under": if fork == new_parent { None } else { Some(new_parent) },
+                    "tier_before": tier_before,
+                    "tier_after": tier_after,
+                }),
+            );
+            self.audit.record(tx, target).await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn do_delete(&self, actor: &Actor, id: RepoId, client: &ClientInfo) -> Result<()> {
         let repo = self.repo_row(id).await?;
         self.authz.require(actor, id, Permission::Admin).await?;
-        let (forks,): (i64,) =
-            sqlx::query_as("SELECT count(*) FROM repositories WHERE (fork_root_id = $1 OR fork_parent_id = $1) AND id <> $1")
-                .bind(id.0)
-                .fetch_one(&self.db)
-                .await?;
-        if forks > 0 {
-            return Err(Error::conflict("This repository has forks that share its storage. Delete or detach the forks first."));
+        // A fork that still borrows this store takes its own copy first.
+        for borrower in self.borrowers_of(id).await? {
+            self.detach_alternates(borrower).await?;
         }
         let mut tx = self.db.begin().await?;
+        self.reparent_forks(&mut tx, actor, client, &repo).await?;
         self.audit
             .record(&mut tx, client_audit(actor, client, action::REPO_DELETED, &repo, serde_json::json!({"full_name": repo.full_name()})))
             .await?;

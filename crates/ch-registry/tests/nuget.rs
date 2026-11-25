@@ -386,3 +386,33 @@ async fn who_may_read_and_who_may_push(pool: PgPool) {
     let refs: i64 = sqlx::query_scalar("SELECT COALESCE(sum(refcount), 0)::bigint FROM blobs").fetch_one(&r.env.pool).await.unwrap();
     assert_eq!(refs, 0, "the package's hold on its file is gone with it");
 }
+
+/// A form body that sends its first bytes and then never finishes, as a client that holds the
+/// upload open. A server that reads it waits; one that refuses first answers at once.
+fn stalled_form() -> (reqwest::Body, String) {
+    use futures::StreamExt;
+    let (body, ct) = form(b"x");
+    let first = bytes::Bytes::from(body[..32].to_vec());
+    let s = futures::stream::once(async move { Ok::<_, std::io::Error>(first) }).chain(futures::stream::pending());
+    (reqwest::Body::wrap_stream(s), ct)
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_push_the_account_may_not_make_is_refused_before_its_body_is_read(pool: PgPool) {
+    let r = Reg::new(pool).await;
+    let _alice = user(&r, "alice").await;
+    let _bob = user(&r, "bob").await;
+    // Bob has the scope but no right to Alice's feed, and the account that does not exist is
+    // refused the same way: both answers come while the upload is still open.
+    for (owner, secret) in [("alice", "pkg-bob"), ("nobody", "pkg-bob")] {
+        let (body, ct) = stalled_form();
+        let rb = r.c.request(reqwest::Method::PUT, format!("{}/nuget/{owner}/push", r.base)).header("content-type", ct).body(body);
+        let sent = tokio::time::timeout(std::time::Duration::from_secs(5), r.send(rb, secret)).await;
+        let resp = sent.unwrap_or_else(|_| panic!("{owner}: the server waited for the body of a push it would refuse"));
+        assert!([403, 404].contains(&resp.status), "{owner}: {}", resp.status);
+    }
+    // The owner of the feed is let through to send the body (and so waits for it here).
+    let (body, ct) = stalled_form();
+    let rb = r.c.request(reqwest::Method::PUT, format!("{}/nuget/alice/push", r.base)).header("content-type", ct).body(body);
+    assert!(tokio::time::timeout(std::time::Duration::from_secs(2), r.send(rb, "pkg-alice")).await.is_err(), "the owner's push is read");
+}

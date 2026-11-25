@@ -60,6 +60,8 @@ pub mod action {
     pub const REPO_VISIBILITY: &str = "repo.visibility_changed";
     pub const REPO_TRANSFERRED: &str = "repo.transferred";
     pub const REPO_DELETED: &str = "repo.deleted";
+    pub const REPO_IMPORTED_LOCAL: &str = "repo.imported_from_server_path";
+    pub const REPO_FORK_REPARENTED: &str = "repo.fork_reparented";
     pub const BRANCH_PROTECTION: &str = "repo.branch_protection_changed";
     pub const USER_UNSUSPENDED: &str = "user.unsuspended";
     pub const EMAIL_ADDED: &str = "email.added";
@@ -86,6 +88,8 @@ pub mod action {
     pub const REVIEW_DISMISSED: &str = "review.dismissed";
     pub const COMMENT_DELETED: &str = "comment.deleted";
     pub const ISSUE_LOCKED: &str = "issue.lock_changed";
+    pub const ISSUE_DELETED: &str = "issue.deleted";
+    pub const ISSUE_TRANSFERRED: &str = "issue.transferred";
     pub const LABEL_DELETED: &str = "label.deleted";
     pub const RELEASE_PUBLISHED: &str = "release.published";
     pub const RELEASE_DELETED: &str = "release.deleted";

@@ -151,6 +151,41 @@ pub fn may_push(actor: &Actor) -> bool {
     scope_allows(actor, Access::Push)
 }
 
+/// May this credential push anything into `owner`'s namespace? Asked before an upload is read.
+/// It is the namespace half of `authorize_kind`: the owner (or an organization's owner) may, a job
+/// may for its own repository's owner, and anyone else only where a package of that owner is
+/// linked to a repository, since the repository's write permission is checked once the package
+/// is known. The answers are the ones `authorize_kind` gives, so nothing new is learned.
+pub async fn may_push_into(state: &AppState, actor: &Actor, kind: &str, owner: &str) -> RegResult<()> {
+    if !scope_allows(actor, Access::Push) {
+        return Err(RegError::denied("this token needs the write:packages scope"));
+    }
+    let Some((owner_id, owner_kind_str, _)) = owner_kind(state, owner).await? else { return Err(RegError::name_unknown()) };
+    if let Actor::Job { repo_id, .. } = actor {
+        let own: Option<i64> =
+            sqlx::query_scalar("SELECT owner_id FROM repositories WHERE id = $1").bind(repo_id.0).fetch_optional(&state.db).await?;
+        return if own == Some(owner_id) { Ok(()) } else { Err(RegError::name_unknown()) };
+    }
+    let is_org = owner_kind_str == "org";
+    if owner_allows(state, actor, owner_id, is_org, Access::Push, false).await? {
+        return Ok(());
+    }
+    let linked: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM packages WHERE owner_id = $1 AND kind = $2 AND repo_id IS NOT NULL)")
+            .bind(owner_id)
+            .bind(kind)
+            .fetch_one(&state.db)
+            .await?;
+    if linked {
+        return Ok(());
+    }
+    Err(if owner_allows(state, actor, owner_id, is_org, Access::Pull, false).await? {
+        RegError::denied("you cannot push packages for that account")
+    } else {
+        RegError::name_unknown()
+    })
+}
+
 /// Does the credential carry any package access at all? The catalog asks this once before it
 /// reads a single row.
 pub fn may_list(actor: &Actor) -> bool {

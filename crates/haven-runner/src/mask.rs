@@ -6,6 +6,32 @@ use std::sync::RwLock;
 
 pub const MASK: &str = "***";
 
+/// What comes before the grant in a signed artifact link (`.../toolkit/blobs/{grant}`). The grant
+/// is a bearer credential for one upload or one download, made by the server inside the action's
+/// process, so the runner never holds it as a value to mask; it is found by its place instead.
+const LINK_MARK: &str = "/toolkit/blobs/";
+
+/// Replaces the grant of every signed artifact link in `line` with `***`.
+pub fn mask_signed_links(line: &str) -> String {
+    if !line.contains(LINK_MARK) {
+        return line.to_string();
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(i) = rest.find(LINK_MARK) {
+        let end = i + LINK_MARK.len();
+        out.push_str(&rest[..end]);
+        let tail = &rest[end..];
+        let grant = tail.find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))).unwrap_or(tail.len());
+        if grant > 0 {
+            out.push_str(MASK);
+        }
+        rest = &tail[grant..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Shared by every log writer of one job.
 #[derive(Default)]
 pub struct Masker {
@@ -39,11 +65,12 @@ impl Masker {
     }
 
     pub fn mask(&self, line: &str) -> String {
-        let Ok(values) = self.values.read() else { return line.to_string() };
+        let line = mask_signed_links(line);
+        let Ok(values) = self.values.read() else { return line };
         if values.is_empty() {
-            return line.to_string();
+            return line;
         }
-        let mut out = line.to_string();
+        let mut out = line;
         for v in values.iter() {
             if out.contains(v.as_str()) {
                 out = out.replace(v.as_str(), MASK);
@@ -115,6 +142,24 @@ mod tests {
         m.add("abc");
         m.add("abc");
         assert_eq!(m.len(), 1);
+    }
+
+    #[test]
+    fn a_signed_artifact_link_is_masked_wherever_it_appears() {
+        let m = Masker::new();
+        let up = "https://git.example/api/runner/v1/toolkit/blobs/u.12.1999999999.0123abcdef";
+        assert_eq!(
+            m.mask(&format!("PUT {up}?comp=block&blockid=AAAA")),
+            "PUT https://git.example/api/runner/v1/toolkit/blobs/***?comp=block&blockid=AAAA"
+        );
+        let two = format!("a {up} b {}", up.replace("u.12", "a.7"));
+        assert_eq!(
+            m.mask(&two),
+            "a https://git.example/api/runner/v1/toolkit/blobs/*** b https://git.example/api/runner/v1/toolkit/blobs/***"
+        );
+        // Nothing else in a line changes, and a link with no grant after it is left alone.
+        assert_eq!(m.mask("see /api/runner/v1/toolkit/blobs/ for more"), "see /api/runner/v1/toolkit/blobs/ for more");
+        assert_eq!(m.mask("plain line"), "plain line");
     }
 
     #[test]

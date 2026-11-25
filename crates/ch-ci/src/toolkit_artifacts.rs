@@ -550,6 +550,16 @@ async fn commit_list(ctx: &Ctx, id: i64, body: Body) -> Response {
     let dir = tmp_dir(ctx);
     let joined = upload_file(ctx, id);
     let tmp = dir.join(format!("art-{id}.joining"));
+    // The joined file sits beside its blocks until they are removed, so it counts against the
+    // server's cap on unfinished uploads like any other write: at most what the list names (a
+    // block may be named more than once), and never more than one artifact may hold.
+    let mut named = 0u64;
+    for b in &ids {
+        named = named.saturating_add(tokio::fs::metadata(block_file(ctx, id, b)).await.map(|m| m.len()).unwrap_or(0));
+    }
+    if inflight_bytes(&dir).await.saturating_add(named.min(store::MAX_ARTIFACT_BYTES)) > crate::toolkit::MAX_INFLIGHT_BYTES {
+        return blob_error(StatusCode::SERVICE_UNAVAILABLE, "ServerBusy");
+    }
     let result = async {
         let mut out = tokio::fs::File::create(&tmp).await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE.into_response())?;
         let mut total = 0u64;

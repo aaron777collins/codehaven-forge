@@ -2,6 +2,10 @@
 // Runs on the build host with playwright-core and the system Chrome, against the throwaway server over its own
 // network, with session cookies written by e2e_full.py (step 20).
 //   node shoot.mjs <base-url> <session.json> <outdir>
+// SHOTS_AXE=1 also runs axe-core (WCAG 2.0 and 2.1, A and AA) on every page, and fails on any
+// serious or critical finding. axe-core is a pinned install next to playwright-core in
+// $CODEHAVEN_SHOTS_NODE_MODULES (npm install --save-exact axe-core@4.10.2); the pages' own
+// Content-Security-Policy stays as it is in production and is bypassed only here, to inject it.
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -67,20 +71,22 @@ const cookieName = sess.cookie_name || '__Host-ch_session';
 
 const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox', '--disable-gpu'] });
 const results = [];
+const axeOn = !!process.env.SHOTS_AXE;
+const axeSource = axeOn ? fs.readFileSync('node_modules/axe-core/axe.min.js', 'utf8') : '';
 for (const [sizeName, viewport, mobile] of sizes) {
   for (const scheme of schemes) {
     const byWho = {};
     for (const [name, who, url] of pages) {
       const key = who || 'anon';
       if (!byWho[key]) {
-        const ctx = await browser.newContext({ viewport, colorScheme: scheme, isMobile: mobile, hasTouch: mobile, deviceScaleFactor: 1 });
+        const ctx = await browser.newContext({ viewport, colorScheme: scheme, isMobile: mobile, hasTouch: mobile, deviceScaleFactor: 1, bypassCSP: axeOn });
         // The server expects the `__Host-` cookie, which a browser will not send over plain http.
         // The pages are shot over the internal network, so the cookie goes in as a header.
         if (who) await ctx.setExtraHTTPHeaders({ Cookie: `${cookieName}=${sess[who]}` });
         byWho[key] = ctx;
       }
       const page = await byWho[key].newPage();
-      let status = 0, err = '', overflow = 0, wide = [];
+      let status = 0, err = '', overflow = 0, wide = [], axe = [];
       try {
         const r = await page.goto(base + url, { waitUntil: 'networkidle', timeout: 30000 });
         status = r ? r.status() : 0;
@@ -100,8 +106,17 @@ for (const [sizeName, viewport, mobile] of sizes) {
         overflow = m.over; wide = m.wide;
         const file = path.join(outDir, `${name}-${sizeName}-${scheme}.png`);
         await page.screenshot({ path: file, fullPage: true });
+        if (axeOn) {
+          await page.evaluate(axeSource);
+          axe = await page.evaluate(async () => {
+            const r = await window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } });
+            return r.violations
+              .filter(v => v.impact === 'serious' || v.impact === 'critical')
+              .map(v => ({ id: v.id, impact: v.impact, count: v.nodes.length, where: v.nodes.slice(0, 3).map(n => n.target.join(' ')), help: v.help }));
+          });
+        }
       } catch (e) { err = String(e).split('\n')[0]; }
-      results.push({ name, sizeName, scheme, status, err, overflow, wide });
+      results.push({ name, sizeName, scheme, status, err, overflow, wide, axe });
       await page.close();
     }
     for (const c of Object.values(byWho)) await c.close();
@@ -109,6 +124,16 @@ for (const [sizeName, viewport, mobile] of sizes) {
 }
 await browser.close();
 fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify(results, null, 1));
-const bad = results.filter(r => r.err || r.status >= 400 || r.overflow > 0);
+const bad = results.filter(r => r.err || r.status >= 400 || r.overflow > 0 || r.axe.length > 0);
 console.log(`shots: ${results.length}, problems: ${bad.length}`);
-for (const b of bad.slice(0, 40)) console.log('  ', b.name, b.sizeName, b.scheme, b.status, b.err, b.overflow ? `sideways overflow ${b.overflow}px ${(b.wide || []).join(' ')}` : '');
+for (const b of bad.slice(0, 40)) console.log('  ', b.name, b.sizeName, b.scheme, b.status, b.err, b.overflow ? `sideways overflow ${b.overflow}px ${(b.wide || []).join(' ')}` : '', b.axe.map(a => `axe ${a.id} (${a.impact}, ${a.count}): ${a.where.join(' | ')}`).join('; '));
+if (axeOn) {
+  const seen = new Map();
+  for (const r of results) for (const a of r.axe) {
+    const k = `${a.id} ${a.where[0]}`;
+    if (!seen.has(k)) seen.set(k, { a, pages: [] });
+    seen.get(k).pages.push(`${r.name}/${r.sizeName}/${r.scheme}`);
+  }
+  console.log(`axe: ${seen.size} distinct serious or critical findings`);
+  for (const [k, v] of seen) console.log('  ', k, `(${v.a.impact}, ${v.a.help})`, 'on', v.pages.slice(0, 6).join(', '), v.pages.length > 6 ? `and ${v.pages.length - 6} more` : '');
+}

@@ -6,7 +6,7 @@
 
 use ch_core::model::*;
 use ch_core::state::{AppState, AppStateBuilder};
-use ch_core::{Actor, AuthVia, Config, Install, Permission, RepoId, UserId};
+use ch_core::{Actor, AuthVia, Config, Install, Permission, RepoId, RunId, UserId};
 use ch_db::{FsBlobStore, PgAudit, PgEventBus};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -164,4 +164,204 @@ async fn a_locked_fork_sends_no_webhook_and_its_deploy_key_opens_nothing(pool: P
     h.s.repos.set_collaborator(&alice.1, parent, bob.0, Permission::Read, &c()).await.unwrap();
     assert_eq!(sent(pool.clone(), &h, &push).await, 1);
     assert!(opens(&h).await);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn an_org_fork_is_locked_when_one_of_its_owners_loses_the_parent(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let bob = user(&h, "bob").await;
+    let carol = user(&h, "carol").await;
+    let parent =
+        h.s.repos
+            .create(
+                &alice.1,
+                NewRepo {
+                    owner_id: alice.0,
+                    name: "secret".into(),
+                    description: String::new(),
+                    visibility: Visibility::Private,
+                    default_branch: None,
+                    auto_init: true,
+                },
+                &c(),
+            )
+            .await
+            .unwrap()
+            .id;
+    h.s.repos.set_collaborator(&alice.1, parent, bob.0, Permission::Read, &c()).await.unwrap();
+    h.s.repos.set_collaborator(&alice.1, parent, carol.0, Permission::Read, &c()).await.unwrap();
+    // Bob makes an organization, makes Carol an owner too, and forks the original into it.
+    let org = h.s.orgs.create(&bob.1, "crew", "Crew", &c()).await.unwrap();
+    h.s.orgs.set_member(&bob.1, ch_core::OrgId(org.id.0), carol.0, ch_core::services::OrgRole::Owner, &c()).await.unwrap();
+    let fork = h.s.repos.fork(&bob.1, parent, UserId(org.id.0), &c()).await.unwrap().id;
+    let ctx = ch_ci::ctx::Ctx::from_state(&h.s);
+    assert!(!ch_ci::triggers::fork_locked(&ctx, fork).await.unwrap(), "every owner can still see the original");
+    // Alice shuts Carol out of the original: one of the fork's owners is out, so the fork is locked.
+    h.s.repos.remove_collaborator(&alice.1, parent, carol.0, &c()).await.unwrap();
+    assert!(ch_ci::triggers::fork_locked(&ctx, fork).await.unwrap(), "an owner who lost the original locks the org's fork");
+    assert!(ch_db::fork_lock::is_locked(&pool, h.s.authz.as_ref(), fork).await.unwrap());
+    // Carol leaving the organization lets it run again; so does Alice letting her back in.
+    h.s.orgs.remove_member(&bob.1, ch_core::OrgId(org.id.0), carol.0, &c()).await.unwrap();
+    assert!(!ch_ci::triggers::fork_locked(&ctx, fork).await.unwrap());
+    // Alice shuts Bob out as well: the last owner is out, locked again.
+    h.s.repos.remove_collaborator(&alice.1, parent, bob.0, &c()).await.unwrap();
+    assert!(ch_ci::triggers::fork_locked(&ctx, fork).await.unwrap());
+    // A member who is not an owner does not matter: Dave, a plain member, never saw the original.
+    let dave = user(&h, "dave").await;
+    h.s.orgs.set_member(&bob.1, ch_core::OrgId(org.id.0), dave.0, ch_core::services::OrgRole::Member, &c()).await.unwrap();
+    h.s.repos.set_collaborator(&alice.1, parent, bob.0, Permission::Read, &c()).await.unwrap();
+    assert!(!ch_ci::triggers::fork_locked(&ctx, fork).await.unwrap(), "only owners decide the lock");
+}
+
+const MANUAL: &str = "name: w\non:\n  push:\n  workflow_dispatch:\n  schedule:\n    - cron: '* * * * *'\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n";
+
+/// Commits a workflow to the fork's main as its owner.
+async fn add_workflow(h: &H, who: &Actor, repo: RepoId) {
+    let tip = h.s.git.resolve(repo, "refs/heads/main").await.unwrap();
+    h.s.git
+        .commit_file_change(
+            who,
+            CommitFileChange {
+                repo_id: repo,
+                branch: "main".into(),
+                new_branch: None,
+                expected_sha: Some(tip),
+                changes: vec![FileChange {
+                    path: ".github/workflows/w.yml".into(),
+                    content: Some(MANUAL.as_bytes().to_vec()),
+                    renamed_from: None,
+                }],
+                message: "workflow".into(),
+                author: Signature { name: "A".into(), email: "a@example.org".into(), at: chrono::Utc::now() },
+            },
+            &c(),
+        )
+        .await
+        .unwrap();
+}
+
+async fn dispatch(h: &H, who: &Actor, fork: RepoId) -> ch_core::Result<RunId> {
+    h.s.ci.dispatch(who, fork, "w.yml", "main", serde_json::json!({}), &c()).await
+}
+
+async fn runs_of(pool: &PgPool, repo: RepoId) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM workflow_runs WHERE repo_id = $1").bind(repo.0).fetch_one(pool).await.unwrap()
+}
+
+/// A locked fork starts nothing by any road: not a manual run, not a rerun, not a schedule, not
+/// the approval of a held run. Letting the owner back in turns all of them on again.
+async fn a_locked_fork_runs_nothing(
+    h: &H,
+    pool: &PgPool,
+    fork: RepoId,
+    owner: &Actor,
+    unlock: impl std::future::Future<Output = ()>,
+    lock: impl std::future::Future<Output = ()>,
+) {
+    add_workflow(h, owner, fork).await;
+    // Open: a manual run starts, and so can a rerun of a finished run, and a schedule.
+    let first = dispatch(h, owner, fork).await.unwrap();
+    sqlx::query("UPDATE workflow_runs SET status = 'completed', conclusion = 'success' WHERE id = $1")
+        .bind(first.0)
+        .execute(pool)
+        .await
+        .unwrap();
+    let held: i64 = sqlx::query_scalar(
+        "INSERT INTO workflow_runs (repo_id, workflow_id, run_number, attempt, event, head_sha, git_ref, title, status, event_payload)
+         SELECT repo_id, workflow_id, run_number + 100, 1, event, head_sha, git_ref, title, 'waiting', event_payload FROM workflow_runs WHERE id = $1
+         RETURNING id",
+    )
+    .bind(first.0)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO schedules (workflow_id, repo_id, cron, next_run_at) SELECT workflow_id, repo_id, '* * * * *', now() - interval '1 minute' FROM workflow_runs WHERE id = $1
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(first.0)
+    .execute(pool)
+    .await
+    .unwrap();
+    let ctx = ch_ci::ctx::Ctx::from_state(&h.s);
+
+    lock.await;
+    let before = runs_of(pool, fork).await;
+    let refused = |r: ch_core::Result<RunId>, what: &str| match r {
+        Err(ch_core::Error::Forbidden(_)) => {}
+        other => panic!("{what} on a locked fork: expected a refusal, got {other:?}"),
+    };
+    refused(dispatch(h, owner, fork).await, "dispatch");
+    refused(h.s.ci.rerun(owner, fork, first, false, &c()).await, "rerun");
+    refused(h.s.ci.rerun(owner, fork, first, true, &c()).await, "rerun of failed jobs");
+    match h.s.ci.approve_run(owner, fork, RunId(held), &c()).await {
+        Err(ch_core::Error::Forbidden(_)) => {}
+        other => panic!("approve on a locked fork: expected a refusal, got {other:?}"),
+    }
+    assert_eq!(ch_ci::workers::fire_due_schedules(&ctx).await.unwrap(), 0, "the scheduler starts nothing here");
+    assert_eq!(runs_of(pool, fork).await, before, "no run was made");
+    let status: String = sqlx::query_scalar("SELECT status FROM workflow_runs WHERE id = $1").bind(held).fetch_one(pool).await.unwrap();
+    assert_eq!(status, "waiting", "the held run stayed held");
+
+    unlock.await;
+    sqlx::query("UPDATE schedules SET next_run_at = now() - interval '1 minute'").execute(pool).await.unwrap();
+    dispatch(h, owner, fork).await.unwrap();
+    h.s.ci.rerun(owner, fork, first, false, &c()).await.unwrap();
+    assert!(ch_ci::workers::fire_due_schedules(&ctx).await.unwrap() >= 1, "let back in, the scheduler runs it again");
+    h.s.ci.approve_run(owner, fork, RunId(held), &c()).await.unwrap();
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_locked_personal_fork_starts_no_manual_run_rerun_schedule_or_approval(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let bob = user(&h, "bob").await;
+    sqlx::query("UPDATE users SET can_run_ci = true").execute(&pool).await.unwrap();
+    let parent = private_repo(&h, &alice, "secret").await;
+    h.s.repos.set_collaborator(&alice.1, parent, bob.0, Permission::Read, &c()).await.unwrap();
+    let fork = h.s.repos.fork(&bob.1, parent, bob.0, &c()).await.unwrap().id;
+    let (s, a, b, p) = (&h.s, &alice.1, bob.0, parent);
+    let lock = async move { s.repos.remove_collaborator(a, p, b, &c()).await.unwrap() };
+    let unlock = async move { s.repos.set_collaborator(a, p, b, Permission::Read, &c()).await.unwrap() };
+    a_locked_fork_runs_nothing(&h, &pool, fork, &bob.1, unlock, lock).await;
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_locked_org_fork_starts_no_manual_run_rerun_schedule_or_approval(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let bob = user(&h, "bob").await;
+    let carol = user(&h, "carol").await;
+    let parent = private_repo(&h, &alice, "secret").await;
+    h.s.repos.set_collaborator(&alice.1, parent, bob.0, Permission::Read, &c()).await.unwrap();
+    h.s.repos.set_collaborator(&alice.1, parent, carol.0, Permission::Read, &c()).await.unwrap();
+    let org = h.s.orgs.create(&bob.1, "crew", "Crew", &c()).await.unwrap();
+    h.s.orgs.set_member(&bob.1, ch_core::OrgId(org.id.0), carol.0, ch_core::services::OrgRole::Owner, &c()).await.unwrap();
+    let fork = h.s.repos.fork(&bob.1, parent, UserId(org.id.0), &c()).await.unwrap().id;
+    sqlx::query("UPDATE users SET can_run_ci = true").execute(&pool).await.unwrap();
+    let (s, a, cr, p) = (&h.s, &alice.1, carol.0, parent);
+    // Carol, one of the organization's owners, loses the original; Bob, the other, still sees it.
+    let lock = async move { s.repos.remove_collaborator(a, p, cr, &c()).await.unwrap() };
+    let unlock = async move { s.repos.set_collaborator(a, p, cr, Permission::Read, &c()).await.unwrap() };
+    a_locked_fork_runs_nothing(&h, &pool, fork, &bob.1, unlock, lock).await;
+}
+
+async fn private_repo(h: &H, owner: &(UserId, Actor), name: &str) -> RepoId {
+    h.s.repos
+        .create(
+            &owner.1,
+            NewRepo {
+                owner_id: owner.0,
+                name: name.into(),
+                description: String::new(),
+                visibility: Visibility::Private,
+                default_branch: None,
+                auto_init: true,
+            },
+            &c(),
+        )
+        .await
+        .unwrap()
+        .id
 }

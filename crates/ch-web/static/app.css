@@ -15,6 +15,7 @@
   --accent: #0f766e;
   --accent-hover: #0b5f58;
   --accent-ink: #ffffff;
+  --badge-ink: #ffffff;
   --accent-soft: #e0f2ef;
   --link: #0b6b64;
   --open: #0f766e;
@@ -60,6 +61,7 @@
     --accent: #2dd4bf;
     --accent-hover: #5eead4;
     --accent-ink: #04201c;
+  --badge-ink: #0b1214;
     --accent-soft: #0f2f2c;
     --link: #5eead4;
     --open: #2dd4bf;
@@ -93,6 +95,7 @@
   --accent: #2dd4bf;
   --accent-hover: #5eead4;
   --accent-ink: #04201c;
+  --badge-ink: #0b1214;
   --accent-soft: #0f2f2c;
   --link: #5eead4;
   --open: #2dd4bf;
@@ -221,6 +224,7 @@ time { white-space: nowrap; }
 .btn-block { display: flex; width: 100%; }
 .btn.disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 .chip { display: inline-block; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 0.78rem; font-weight: 550; color: var(--muted); line-height: 1.6; vertical-align: middle; }
+button.chip { background: transparent; font-family: inherit; cursor: pointer; }
 .chip-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 .chip-ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
 .chip-fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
@@ -399,11 +403,11 @@ body.bare { align-items: center; justify-content: center; padding: var(--s5); }
 .status-run .icon { animation: spin 1.4s linear infinite; }
 .status-queued, .status-skip, .status-cancel { color: var(--muted); }
 @keyframes spin { to { transform: rotate(360deg); } }
-.state { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border-radius: 999px; font-weight: 650; font-size: 0.86rem; color: #fff; }
+.state { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border-radius: 999px; font-weight: 650; font-size: 0.86rem; color: var(--badge-ink); }
 .state-open { background: var(--open); color: var(--accent-ink); }
-.state-merged { background: var(--merged); color: #fff; }
-.state-closed { background: var(--closed); color: #fff; }
-.state-draft { background: var(--draft); color: #fff; }
+.state-merged { background: var(--merged); color: var(--badge-ink); }
+.state-closed { background: var(--closed); color: var(--badge-ink); }
+.state-draft { background: var(--draft); color: var(--badge-ink); }
 .state-icon { display: inline-flex; background: none !important; color: var(--draft); }
 .state-icon.state-open { color: var(--open); }
 .state-icon.state-merged { color: var(--merged); }

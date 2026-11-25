@@ -348,6 +348,29 @@ impl Core {
     }
 
     pub async fn pull_create(&self, actor: &Actor, new: NewPull, client: &ClientInfo) -> Result<PullView> {
+        self.pull_create_publishing(actor, new, false, client).await
+    }
+
+    /// The effective tier rank of a repository as a stranger on the instance sees it: private 0,
+    /// internal 1, public 2 (1 while public repositories are switched off).
+    async fn reach(&self, id: RepoId) -> Result<i32> {
+        let r: Option<i32> = sqlx::query_scalar(
+            "SELECT CASE r.access_tier WHEN 'public' THEN CASE WHEN (SELECT allow_public_repos FROM visibility_settings) THEN 2 ELSE 1 END \
+                    WHEN 'internal' THEN 1 ELSE 0 END FROM repositories r WHERE r.id = $1",
+        )
+        .bind(id.0)
+        .fetch_optional(self.db())
+        .await?;
+        r.ok_or(Error::NotFound)
+    }
+
+    /// True when copying `head` into `base` would show its commits to the world: the base is
+    /// public and the head repository is not (ch-4pn.14).
+    pub(crate) async fn publishes_to_the_world(&self, head: RepoId, base: RepoId) -> Result<bool> {
+        Ok(head != base && self.reach(base).await? == 2 && self.reach(head).await? < 2)
+    }
+
+    pub async fn pull_create_publishing(&self, actor: &Actor, new: NewPull, publish_head: bool, client: &ClientInfo) -> Result<PullView> {
         let user = writing_user(actor, new.repo_id)?;
         let base_repo = self.repo(new.repo_id).await.map_err(|_| Error::NotFound)?;
         self.need_contribute(actor, base_repo.id).await?;
@@ -387,6 +410,11 @@ impl Core {
             // publish it (ch-g3r).
             if !self.may_copy(user, head_repo_id, base_repo.id).await? {
                 return Err(Error::invalid("PullRequest", "head", NOT_YOURS_TO_SHARE));
+            }
+            // A public base shows what it is given to anyone. A head from a repository that is
+            // not public goes there only when its author says so on purpose.
+            if self.publishes_to_the_world(head_repo_id, base_repo.id).await? && !publish_head {
+                return Err(Error::invalid("PullRequest", "publish_head", PUBLISH_HEAD_CONFIRM));
             }
         } else if !granted {
             return Err(Error::invalid("PullRequest", "head", OWN_FORK_ONLY));
@@ -430,11 +458,17 @@ impl Core {
         }
         let stats = stats_of(&cmp);
 
+        let published_tier = if head_repo_id == base_repo.id {
+            None
+        } else {
+            let (base_reach, head_reach) = (self.reach(base_repo.id).await?, self.reach(head_repo_id).await?);
+            (head_reach < base_reach).then(|| tier_name(base_reach))
+        };
         let mut tx = self.db().begin().await?;
         let row = self.alloc_issue(&mut tx, base_repo.id, true, user, &title, &body).await?;
         sqlx::query(
-            "INSERT INTO pull_requests (issue_id, repo_id, head_repo_id, head_ref, head_sha, base_ref, base_sha, merge_base, draft, commits_count, additions, deletions, changed_files)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+            "INSERT INTO pull_requests (issue_id, repo_id, head_repo_id, head_ref, head_sha, base_ref, base_sha, merge_base, draft, commits_count, additions, deletions, changed_files, head_publish_tier)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(row.id)
         .bind(base_repo.id)
@@ -449,6 +483,11 @@ impl Core {
         .bind(stats.additions as i32)
         .bind(stats.deletions as i32)
         .bind(stats.changed_files as i32)
+        // The tier the head was published to, when it was shown to more people than its own
+        // repository shows it to: the base's, as the instance's strangers see it now. A head
+        // that was already as visible as the base needs no consent, so none is recorded, and
+        // it does not stand in for consent if the head repository is narrowed later.
+        .bind(published_tier)
         .execute(&mut *tx)
         .await?;
         Self::subscribe_default(&mut tx, row.id, user, "author").await?;
@@ -500,6 +539,34 @@ impl Core {
         }
     }
 
+    /// May a later head of this pull request be copied into its base? The author must still be
+    /// allowed to share it (ch-g3r), and a head from a repository that is not public goes into a
+    /// base that is public only if the pull request was opened with that in view, which
+    /// `head_publish_tier` records (ch-4pn.14). A base that became public afterwards does not
+    /// get commits nobody agreed to publish: the pull request keeps the head it had.
+    async fn may_copy_later(&self, issue: &IssueRow, pull: &PullRow, head_repo: RepoId) -> bool {
+        if !self.may_copy(issue.author_id, head_repo, pull.repo_id).await.unwrap_or(false) {
+            return false;
+        }
+        !self.head_withheld(issue.id, pull).await.unwrap_or(true)
+    }
+
+    /// True when this pull request's head is in a repository that is not public and the base is
+    /// public, and its author did not agree to publish it there. The head is then neither copied
+    /// into the base nor merged into it. A head from a repository that is public, or from the base
+    /// itself, is never withheld, and neither is one whose fork is gone (the gate says so).
+    pub(crate) async fn head_withheld(&self, issue_id: IssueId, pull: &PullRow) -> Result<bool> {
+        let Some(head_repo) = pull.head_repo() else { return Ok(false) };
+        if !self.publishes_to_the_world(head_repo, pull.repo_id).await? {
+            return Ok(false);
+        }
+        let said: Option<Option<String>> = sqlx::query_scalar("SELECT head_publish_tier FROM pull_requests WHERE issue_id = $1")
+            .bind(issue_id)
+            .fetch_optional(self.db())
+            .await?;
+        Ok(said.flatten().as_deref() != Some("public"))
+    }
+
     /// May commits of `source` be copied into `dest` because `user` asked (ch-g3r)? Yes with
     /// write access on the source, which an owner of a fork has, or when the source is already
     /// open to everyone who can read the destination. Reading a private fork is not enough.
@@ -547,7 +614,7 @@ impl Core {
                 let live = self.d.git.resolve(head_repo, &full_branch(&pull.head_ref)).await.unwrap_or_else(|_| pull.head_sha.clone());
                 // A later head is copied into the base only while the author may still share it
                 // there (ch-g3r). Otherwise the pull request keeps the head it had.
-                let sha = if live != pull.head_sha && !self.may_copy(issue.author_id, head_repo, pull.repo_id).await.unwrap_or(false) {
+                let sha = if live != pull.head_sha && !self.may_copy_later(issue, pull, head_repo).await {
                     tracing::info!(
                         repo = pull.repo_id.0,
                         number = issue.number,
@@ -557,13 +624,17 @@ impl Core {
                 } else {
                     live
                 };
-                // The test merge reads exactly that commit, never the branch as it is now.
-                let state = self
-                    .d
-                    .git
-                    .test_merge(pull.repo_id, &full_branch(&pull.base_ref), head_repo, &sha)
-                    .await
-                    .unwrap_or(MergeableState::Unknown);
+                // The test merge reads exactly that commit, never the branch as it is now. It
+                // copies the commit into the base, so a head the world may not see is not tried.
+                let state = if self.head_withheld(issue.id, pull).await.unwrap_or(true) {
+                    MergeableState::Unknown
+                } else {
+                    self.d
+                        .git
+                        .test_merge(pull.repo_id, &full_branch(&pull.base_ref), head_repo, &sha)
+                        .await
+                        .unwrap_or(MergeableState::Unknown)
+                };
                 (sha, state)
             }
             // The fork is gone, so its head cannot move. The base's branch of the same name is
@@ -760,13 +831,38 @@ impl Core {
     pub async fn pull_files(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Diff> {
         self.need_view(actor, repo).await?;
         let (issue, pull) = self.pull_pair(repo, number).await?;
+        if self.head_hidden_from(actor, &issue, &pull).await? {
+            return Ok(Diff { files: Vec::new() });
+        }
         Ok(self.pull_compare(&issue, &pull).await?.diff)
     }
 
     pub async fn pull_commits(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Vec<CommitInfo>> {
         self.need_view(actor, repo).await?;
         let (issue, pull) = self.pull_pair(repo, number).await?;
+        if self.head_hidden_from(actor, &issue, &pull).await? {
+            return Ok(Vec::new());
+        }
         Ok(self.pull_compare(&issue, &pull).await?.commits)
+    }
+
+    /// True when `actor` may not see what this pull request changes: its head is withheld from a
+    /// public base (see `head_withheld`) and the actor cannot read the head repository. The
+    /// comparison reads that repository's objects, so the base being readable is not enough
+    /// (ch-4pn.14). The pull request, its title and its conversation stay visible.
+    pub(crate) async fn head_hidden_from(&self, actor: &Actor, issue: &IssueRow, pull: &PullRow) -> Result<bool> {
+        if !self.head_withheld(issue.id, pull).await? {
+            return Ok(false);
+        }
+        let Some(head_repo) = pull.head_repo() else { return Ok(false) };
+        Ok(self.permission(actor, head_repo).await? < Permission::Read)
+    }
+
+    /// The same question the "Files changed" and "Commits" pages ask, by number.
+    pub async fn pull_head_hidden(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<bool> {
+        self.need_view(actor, repo).await?;
+        let (issue, pull) = self.pull_pair(repo, number).await?;
+        self.head_hidden_from(actor, &issue, &pull).await
     }
 
     pub async fn pull_diff_paths(&self, issue: &IssueRow, pull: &PullRow) -> Result<Vec<String>> {
@@ -825,6 +921,16 @@ pub fn stats_of(c: &Compare) -> PullStats {
 /// Why someone without access to a repository cannot open a pull request from a branch there.
 pub const OWN_FORK_ONLY: &str = "Without access to this repository, send the pull request from a fork you own";
 /// A pull request copies its head into the base, where everyone who reads the base sees it.
+/// The name `head_publish_tier` stores for a reach (see `reach`).
+fn tier_name(reach: i32) -> &'static str {
+    match reach {
+        2 => "public",
+        1 => "internal",
+        _ => "private",
+    }
+}
+
+pub const PUBLISH_HEAD_CONFIRM: &str = "This repository is public and the head repository is not. Opening this pull request copies the head's commits into this repository, where anyone can read them. Confirm that you mean to publish them";
 pub const NOT_YOURS_TO_SHARE: &str = "You need write access to the head repository to share its commits here, or it must already be readable by everyone who can read this repository";
 
 impl Core {

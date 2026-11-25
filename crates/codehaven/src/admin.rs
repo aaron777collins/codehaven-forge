@@ -195,6 +195,32 @@ pub async fn run(state: &AppState, command: AdminCommand) -> Result<()> {
                 );
             }
         },
+        AdminCommand::RepoImport { owner, name, from, run_ci } => {
+            let user = state.accounts.get_by_username(&sys, &owner).await.map_err(describe)?;
+            let repo = state
+                .repos
+                .import_local(
+                    &sys,
+                    NewRepo {
+                        owner_id: user.id,
+                        name: name.clone(),
+                        description: String::new(),
+                        visibility: Visibility::Private,
+                        default_branch: None,
+                        auto_init: false,
+                    },
+                    &from,
+                    run_ci,
+                    &cli_client,
+                )
+                .await
+                .map_err(describe)?;
+            println!(
+                "Created the private repository {} from {from}{}.",
+                repo.full_name(),
+                if run_ci { " and started its workflows" } else { "" }
+            );
+        }
         AdminCommand::Suspend { username } => {
             let user = state.accounts.get_by_username(&sys, &username).await.map_err(describe)?;
             state.accounts.suspend(&sys, user.id, &cli_client).await.map_err(describe)?;

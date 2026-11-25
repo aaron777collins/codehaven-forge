@@ -171,7 +171,7 @@ impl GitCore {
     }
 
     /// Every fork whose `alternates` points into this repository's store.
-    async fn borrowers_of(&self, id: RepoId) -> Result<Vec<RepoId>> {
+    pub(crate) async fn borrowers_of(&self, id: RepoId) -> Result<Vec<RepoId>> {
         let objects = self.store.repo_path(id).join("objects");
         let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE (fork_root_id = $1 OR fork_parent_id = $1) AND id <> $1")
             .bind(id.0)
@@ -184,10 +184,59 @@ impl GitCore {
             .collect())
     }
 
+    /// The numbers of the pull requests whose head must not be copied into this repository's
+    /// store while the world can read it (ch-4pn.14): the head came from a fork, the fork is not
+    /// public (or is gone), and its author never agreed to publish it to a public base. With
+    /// `as_public` the answer is for the repository as it would be once public. Without it, the
+    /// answer is empty unless the repository is public now.
+    pub(crate) async fn withheld_pull_numbers(&self, id: RepoId, as_public: bool) -> Result<Vec<i64>> {
+        Ok(sqlx::query_scalar(
+            "SELECT i.number FROM issues i
+               JOIN pull_requests p ON p.issue_id = i.id
+               JOIN repositories b ON b.id = i.repo_id
+               LEFT JOIN repositories h ON h.id = p.head_repo_id
+              WHERE i.repo_id = $1 AND ($2 OR b.access_tier = 'public')
+                AND p.from_fork
+                AND p.head_publish_tier IS DISTINCT FROM 'public'
+                AND (h.id IS NULL OR h.access_tier <> 'public')",
+        )
+        .bind(id.0)
+        .bind(as_public)
+        .fetch_all(&self.db)
+        .await?)
+    }
+
+    /// `refs/pull/<n>/head` and the head commit the pull request is stored at, for every pull
+    /// request of the repository (open, closed or merged) except the ones withheld from a
+    /// repository that is about to be public.
+    async fn stored_pull_heads(&self, id: RepoId, to_public: bool) -> Result<std::collections::HashMap<String, String>> {
+        let rows: Vec<(i64, String)> =
+            sqlx::query_as("SELECT i.number, p.head_sha FROM issues i JOIN pull_requests p ON p.issue_id = i.id WHERE i.repo_id = $1")
+                .bind(id.0)
+                .fetch_all(&self.db)
+                .await?;
+        let withheld = if to_public { self.withheld_pull_numbers(id, true).await? } else { Vec::new() };
+        Ok(rows.into_iter().filter(|(n, _)| !withheld.contains(n)).map(|(n, sha)| (format!("refs/pull/{n}/head"), sha)).collect())
+    }
+
+    /// May the server write `name` in this repository now? Not a pull ref whose head is withheld
+    /// from a public repository. Called with the write ticket held, so a visibility change that
+    /// is rebuilding the store cannot slip between the check and the write.
+    pub(crate) async fn pull_ref_allowed(&self, id: RepoId, name: &str) -> Result<()> {
+        let Some(n) = name.strip_prefix("refs/pull/").and_then(|r| r.strip_suffix("/head")).and_then(|n| n.parse::<i64>().ok()) else {
+            return Ok(());
+        };
+        if self.withheld_pull_numbers(id, false).await?.contains(&n) {
+            return Err(Error::forbidden("The author of this pull request has not agreed to publish its commits in a public repository."));
+        }
+        Ok(())
+    }
+
     /// Rebuilds a repository's store from its refs, so it holds nothing a new reader may not
-    /// have: no deleted branches, no force-pushed commits, nothing borrowed. The caller holds the
+    /// have: no deleted branches, no force-pushed commits, nothing borrowed, and, for a store about
+    /// to be public, no pull request head its author did not agree to publish. The caller holds the
     /// rebuild ticket. On any failure the old store is still in place.
-    pub(crate) async fn rebuild_store(&self, id: RepoId) -> Result<()> {
+    pub(crate) async fn rebuild_store(&self, id: RepoId, to: Visibility) -> Result<()> {
         let old = self.store.repo_path(id);
         if !self.store.exists(id) {
             return Err(Error::internal(anyhow::anyhow!("repository {id} has no files on disk")));
@@ -207,15 +256,43 @@ impl GitCore {
                 self.exec(fresh_cmd().args(["config", &k, &v])).await?;
             }
             self.exec(fresh_cmd().args(["symbolic-ref", "HEAD", &head])).await?;
-            // Every ref, and only what refs reach.
+            // Every ref but the pull refs, and only what refs reach. The pull refs come next: a
+            // ref that no pull request holds, or that is not at its stored head, is not carried.
             self.exec(
                 fresh_cmd()
                     .args(["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--update-head-ok"])
                     .arg(&old)
-                    .arg("+refs/*:refs/*")
+                    .args(["+refs/*:refs/*", "^refs/pull/*"])
                     .timeout(Duration::from_secs(1800)),
             )
             .await?;
+            let stored = self.stored_pull_heads(id, to == Visibility::Public).await?;
+            let held: Vec<(String, String)> = self
+                .exec(self.store.bare_cmd().git_dir(old.clone()).args(["for-each-ref", "--format=%(objectname) %(refname)", "refs/pull/"]))
+                .await?
+                .stdout_str()
+                .lines()
+                .filter_map(|l| l.split_once(' ').map(|(sha, name)| (sha.to_string(), name.to_string())))
+                .collect();
+            let carried: Vec<&str> = held.iter().filter(|(sha, name)| stored.get(name) == Some(sha)).map(|(_, n)| n.as_str()).collect();
+            for chunk in carried.chunks(200) {
+                let mut f = fresh_cmd().args(["fetch", "--quiet", "--no-tags", "--no-write-fetch-head"]).arg(&old);
+                for name in chunk {
+                    f = f.arg(format!("+{name}:{name}"));
+                }
+                self.exec(f.timeout(Duration::from_secs(1800))).await?;
+            }
+            // A pull request whose ref was not carried gets it back from its stored head, when
+            // that commit is in the new store through some other ref.
+            for (name, sha) in &stored {
+                if carried.contains(&name.as_str()) {
+                    continue;
+                }
+                let there = self.exec_any(fresh_cmd().args(["cat-file", "-e", &format!("{sha}^{{commit}}")])).await?.code == 0;
+                if there {
+                    self.exec(fresh_cmd().args(["update-ref", name, sha])).await?;
+                }
+            }
             if fresh.join("objects/info/alternates").exists() {
                 return Err(Error::internal(anyhow::anyhow!("the rebuilt store has alternates")));
             }
@@ -225,8 +302,18 @@ impl GitCore {
                     .await
                     .map(|o| o.stdout_str())
             };
-            if list(old.clone()).await? != list(fresh.clone()).await? {
+            // Every ref but the pull refs is the same; each pull ref that is there is at its
+            // pull request's stored head.
+            let (old_refs, fresh_refs) = (list(old.clone()).await?, list(fresh.clone()).await?);
+            let others = |t: &str| t.lines().filter(|l| !l.contains(" refs/pull/")).map(str::to_string).collect::<Vec<_>>();
+            if others(&old_refs) != others(&fresh_refs) {
                 return Err(Error::internal(anyhow::anyhow!("the rebuilt store does not have the same refs")));
+            }
+            for l in fresh_refs.lines().filter(|l| l.contains(" refs/pull/")) {
+                let ok = l.split_once(' ').is_some_and(|(sha, name)| stored.get(name).map(String::as_str) == Some(sha));
+                if !ok {
+                    return Err(Error::internal(anyhow::anyhow!("the rebuilt store holds a pull ref that is not a pull request's head")));
+                }
             }
             Ok::<_, Error>(())
         }
@@ -406,7 +493,7 @@ impl GitCore {
             self.detach_alternates(f).await?;
         }
         let ticket = self.writes.rebuild(id).await?;
-        if let Err(e) = self.rebuild_store(id).await {
+        if let Err(e) = self.rebuild_store(id, to).await {
             tracing::error!(repo = id.0, error = %e, "store rebuild failed; the repository keeps its tier");
             drop(ticket);
             return refuse(Error::unavailable("The repository could not be prepared. Nothing changed.")).await;

@@ -246,12 +246,72 @@ async fn forks_copy_their_objects_borrow_nothing_and_block_deleting_their_parent
     assert_eq!(f.branch_sha(&grand, "main").await, f.branch_sha(&fork, "main").await);
     assert_eq!(f.state.git.blob(grand.id, "main", "bob.txt", 100).await.unwrap().content, b"bob was here\n");
 
-    // A repository with forks below it cannot be deleted, middle of a chain included.
-    assert!(matches!(f.state.repos.delete(&f.actor(alice), root.id, &f.client()).await, Err(Error::Conflict(_))));
-    assert!(matches!(f.state.repos.delete(&f.actor(bob), fork.id, &f.client()).await, Err(Error::Conflict(_))));
+    // Deleting the middle of a chain hands its forks to its parent (ch-nq8); the rest of the
+    // chain goes one at a time here, and re-parenting has its own test below.
     f.state.repos.delete(&f.actor(carol), grand.id, &f.client()).await.unwrap();
     f.state.repos.delete(&f.actor(bob), fork.id, &f.client()).await.unwrap();
     f.state.repos.delete(&f.actor(alice), root.id, &f.client()).await.unwrap();
+}
+
+async fn tier_of(f: &Fixture, id: ch_core::RepoId) -> String {
+    sqlx::query_scalar("SELECT access_tier FROM repositories WHERE id = $1").bind(id.0).fetch_one(&f.env.pool).await.unwrap()
+}
+
+async fn links(f: &Fixture, id: ch_core::RepoId) -> (Option<i64>, Option<i64>) {
+    sqlx::query_as("SELECT fork_parent_id, fork_root_id FROM repositories WHERE id = $1").bind(id.0).fetch_one(&f.env.pool).await.unwrap()
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn deleting_a_root_makes_its_oldest_fork_the_root_and_never_widens_anything(pool: PgPool) {
+    let f = Fixture::new(pool).await;
+    let (alice, bob, carol, dave) = (f.user("alice").await, f.user("bob").await, f.user("carol").await, f.user("dave").await);
+    let root = f.public_repo(alice, "proj").await;
+    // Bob forks first (private), Carol second; Carol's fork is then opened to the instance, which
+    // a fork may be while the root is public. Dave forks Bob's fork.
+    let bobs = f.state.repos.fork(&f.actor(bob), root.id, bob, &f.client()).await.unwrap();
+    let carols = f.state.repos.fork(&f.actor(carol), root.id, carol, &f.client()).await.unwrap();
+    sqlx::query("UPDATE repositories SET access_tier = 'internal' WHERE id = $1").bind(carols.id.0).execute(&f.env.pool).await.unwrap();
+    f.env.collaborator(bobs.id, dave, "read").await;
+    let daves = f.state.repos.fork(&f.actor(dave), bobs.id, dave, &f.client()).await.unwrap();
+    assert_eq!(tier_of(&f, carols.id).await, "internal");
+    assert_eq!(links(&f, daves.id).await, (Some(bobs.id.0), Some(root.id.0)));
+
+    // Only an admin of the root may delete it, and it now works with forks below it.
+    assert!(matches!(f.state.repos.delete(&f.actor(bob), root.id, &f.client()).await, Err(Error::NotFound | Error::Forbidden(_))));
+    f.state.repos.delete(&f.actor(alice), root.id, &f.client()).await.unwrap();
+
+    // The oldest surviving direct fork is the root of what is left.
+    assert_eq!(links(&f, bobs.id).await, (None, None));
+    // The other fork hangs under it, and is no more visible than the new root.
+    assert_eq!(links(&f, carols.id).await, (Some(bobs.id.0), Some(bobs.id.0)));
+    assert_eq!(tier_of(&f, carols.id).await, "private", "narrowed to its new parent, never widened");
+    assert_eq!(tier_of(&f, bobs.id).await, "private");
+    // A fork further down keeps its parent and follows the new root.
+    assert_eq!(links(&f, daves.id).await, (Some(bobs.id.0), Some(bobs.id.0)));
+    assert!(f.audit_actions().await.contains(&"repo.fork_reparented".to_string()));
+    // Nothing of the deleted repository is left on disk, and the forks stand on their own.
+    for fork in [&bobs, &carols, &daves] {
+        let fsck = f.core.store.cmd(fork.id).args(["fsck", "--connectivity-only"]).run().await;
+        assert!(fsck.is_ok(), "{fsck:?}");
+    }
+    // Deleting the middle of a chain hands its forks to its own parent.
+    f.state.repos.delete(&f.actor(carol), carols.id, &f.client()).await.unwrap();
+    assert_eq!(links(&f, bobs.id).await, (None, None), "untouched");
+    f.state.repos.delete(&f.actor(bob), bobs.id, &f.client()).await.unwrap();
+    assert_eq!(links(&f, daves.id).await, (None, None), "the last fork is a root of its own");
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn deleting_the_middle_of_a_chain_gives_its_forks_to_its_parent(pool: PgPool) {
+    let f = Fixture::new(pool).await;
+    let (alice, bob, carol) = (f.user("alice").await, f.user("bob").await, f.user("carol").await);
+    let root = f.public_repo(alice, "proj").await;
+    let middle = f.state.repos.fork(&f.actor(bob), root.id, bob, &f.client()).await.unwrap();
+    f.env.collaborator(middle.id, carol, "read").await;
+    let leaf = f.state.repos.fork(&f.actor(carol), middle.id, carol, &f.client()).await.unwrap();
+    f.state.repos.delete(&f.actor(bob), middle.id, &f.client()).await.unwrap();
+    assert_eq!(links(&f, leaf.id).await, (Some(root.id.0), Some(root.id.0)));
+    assert_eq!(f.state.repos.get(&f.actor(carol), leaf.id).await.unwrap().fork_parent_id, Some(root.id));
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]

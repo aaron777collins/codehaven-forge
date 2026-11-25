@@ -69,6 +69,24 @@ pub enum AdminCommand {
     Unsuspend { username: String },
     /// List accounts, newest last.
     Users,
+    /// Make a private repository for an existing account and fill it from a bare git repository
+    /// at a path inside this container. Nothing is overwritten and no password or token is
+    /// needed; the import is audited. For putting an instance's own source into itself.
+    RepoImport {
+        /// The account that will own the repository.
+        #[arg(long)]
+        owner: String,
+        /// The repository's name.
+        #[arg(long)]
+        name: String,
+        /// Absolute path of a bare git repository inside the container.
+        #[arg(long = "from")]
+        from: String,
+        /// Also announce the default branch as a push by the owner, so the repository's own
+        /// workflows run once (the owner needs the right to run CI).
+        #[arg(long)]
+        run_ci: bool,
+    },
     /// Whether repositories may be public (readable by anyone without an account). `off`
     /// lowers every public repository to internal at once; `on` makes none public.
     PublicRepos {

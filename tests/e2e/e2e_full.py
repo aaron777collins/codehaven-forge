@@ -1392,6 +1392,215 @@ def step26():
     print("         " + [ln for ln in log.splitlines() if "tests run:" in ln][-1].strip(), flush=True)
 
 
+def step27():
+    """Batch C10 on the real stack: the admin path that imports a bare repository for an existing
+    account, delete, transfer and the pinned order of issues over HTTP, the pull request publish
+    confirm, and everything new answering a signed-out caller as nothing."""
+    a, tok = Client("10.9.2.4"), S["alice_token"]
+    # 1. `codehaven admin repo-import` inside the server container: no password, no token.
+    prep = ("set -e; rm -rf /tmp/e2e-src /tmp/e2e-src.git; git init -q -b main /tmp/e2e-src; cd /tmp/e2e-src; "
+            "git -c user.name=e -c user.email=e@example.test commit -q --allow-empty -m first; "
+            "git clone -q --bare /tmp/e2e-src /tmp/e2e-src.git")
+    p = subprocess.run(CLI[:-1] + ["sh", "-c", prep], capture_output=True, text=True, timeout=120)
+    check(p.returncode == 0, f"could not make a bare repository in the server container: {(p.stdout + p.stderr)[-300:]}")
+    rc, out, err = cli("admin", "repo-import", "--owner", "alice", "--name", "imported", "--from", "/tmp/e2e-src.git")
+    check(rc == 0, f"repo-import failed: {(out + err)[-300:]}")
+    rc, out, err = cli("admin", "repo-import", "--owner", "alice", "--name", "imported", "--from", "/tmp/e2e-src.git")
+    check(rc != 0, "a second import under the same name must be refused")
+    r = a.api("GET", "/repos/alice/imported", auth=tok)
+    check(r.status == 200 and r.json().get("private") is True, f"the imported repository is not private: {r.status} {r.text[:200]}")
+    anon = Client("10.9.2.9")
+    check(anon.api("GET", "/repos/alice/imported").status in (401, 404), "a stranger can see the imported repository")
+    # 2. Pinned order, transfer and delete, as GitHub-shaped JSON over the Codehaven prefix.
+    nums = []
+    for i in range(3):
+        r = a.api("POST", "/repos/alice/imported/issues", js={"title": f"c10 issue {i}"}, auth=tok)
+        check(r.status == 201, f"open an issue: {r.status} {r.text[:200]}")
+        nums.append(r.json()["number"])
+    for n in nums:
+        check(a.api("PUT", f"/repos/alice/imported/issues/{n}/pin", auth=tok).status == 204, "pin")
+    want = [nums[2], nums[0], nums[1]]
+    r = a.api("PUT", "/repos/alice/imported/codehaven/issues/pinned/order", js={"numbers": want}, auth=tok)
+    check(r.status == 200 and [i["number"] for i in r.json()] == want, f"reorder: {r.status} {r.text[:200]}")
+    r = a.api("GET", "/repos/alice/imported/codehaven/issues/pinned", auth=tok)
+    check([i["number"] for i in r.json()] == want, "the pinned list does not follow the order")
+    r = a.api("POST", f"/repos/alice/imported/codehaven/issues/{nums[0]}/transfer", js={"repository": "alice/demo"}, auth=tok)
+    check(r.status == 200 and "/alice/demo/issues/" in r.json().get("html_url", ""), f"transfer: {r.status} {r.text[:200]}")
+    # demo is private like imported, so the move is allowed; moving into a more visible repository is not.
+    bob = S.get("bob_token")
+    if bob:
+        check(a.api("DELETE", f"/repos/alice/imported/codehaven/issues/{nums[1]}", auth=bob).status in (403, 404), "bob deleted an issue")
+    check(a.api("DELETE", f"/repos/alice/imported/codehaven/issues/{nums[1]}", auth=tok).status == 204, "the admin could not delete")
+    check(a.api("GET", f"/repos/alice/imported/issues/{nums[1]}", auth=tok).status == 404, "a deleted issue is still there")
+    # 3. Signed out, none of it is served, and the NuGet feed refuses a push with no credential.
+    for m, u in [("GET", "/repos/alice/imported/codehaven/issues/pinned"), ("PUT", "/repos/alice/imported/codehaven/issues/pinned/order"),
+                 ("DELETE", f"/repos/alice/imported/codehaven/issues/{nums[2]}"),
+                 ("POST", f"/repos/alice/imported/codehaven/issues/{nums[2]}/transfer")]:
+        r = anon.api(m, u, js={} if m in ("PUT", "POST") else None)
+        check(r.status in (401, 404), f"{m} {u} signed out answered {r.status}")
+    r = anon.req("PUT", "/nuget/alice/push", body=b"x", headers={"Content-Type": "multipart/form-data; boundary=x"})
+    check(r.status == 401, f"a NuGet push with no credential answered {r.status}")
+    for path in ("/api/runner/v1/toolkit/blobs/u.1.9999999999." + "0" * 64, "/api/runner/v1/toolkit/blobs/a.1.9999999999." + "0" * 64):
+        check(anon.req("GET", path).status == 404, f"a made-up artifact link answered something other than 404: {path[:50]}")
+    subprocess.run(CLI[:-1] + ["rm", "-rf", "/tmp/e2e-src", "/tmp/e2e-src.git"], capture_output=True, text=True, timeout=60)
+    # Leaves a pinned issue in alice/demo, so the screenshots show the pinned section and the Manage block.
+    check(a.api("PUT", "/repos/alice/demo/issues/1/pin", auth=tok).status == 204, "pin issue 1 of alice/demo")
+
+
+def step28():
+    """C10 review: commits copied into an internal base from a private fork are not published when
+    the base is made public, and a signed-out stranger cannot fetch them."""
+    ip, a, tok, bob = "10.9.2.5", S["alice"], S["alice_token"], S["bob_token"]
+    rc, out, err = cli("admin", "public-repos", "on")
+    check(rc == 0, f"public-repos on: {(out + err)[-300:]}")
+    r = Client(ip).api("POST", "/user/repos", js={"name": "c10pub", "visibility": "internal", "auto_init": True}, auth=tok)
+    check(r.status == 201, f"create the internal repository: {r.status} {r.text[:200]}")
+    r = Client(ip).api("POST", "/repos/alice/c10pub/forks", js={"visibility": "private"}, auth=bob)
+    check(r.status in (200, 201, 202), f"fork: {r.status} {r.text[:200]}")
+    wd = os.path.join(WORK, "c10pub-bob")
+    git(["clone", "-q", http_url("bob", bob, "bob/c10pub"), wd], WORK)
+    git(["checkout", "-q", "-b", "feat"], wd)
+    with open(os.path.join(wd, "carol-private-1.txt"), "w") as f:
+        f.write("line one\nA5-HUNK-SECRET-LINE\nline three\n")
+    git(["add", "."], wd)
+    git(["commit", "-q", "-m", "xqz private commit message"], wd)
+    git(["push", "-q", "origin", "feat"], wd)
+    sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    # Into an internal base no confirm is needed.
+    r = Client(ip).api("POST", "/repos/alice/c10pub/pulls", js={"title": "private work", "head": "bob:feat", "base": "main"}, auth=bob)
+    check(r.status == 201, f"open the pull request: {r.status} {r.text[:300]}")
+    n = r.json()["number"]
+    # While the base is internal alice reads the diff and comments on a line of it. The comment
+    # keeps a piece of the diff (its hunk) and the file's path.
+    r = Client(ip).api("POST", f"/repos/alice/c10pub/pulls/{n}/comments", auth=tok,
+                       js={"body": "why this line?", "commit_id": sha, "path": "carol-private-1.txt", "line": 2, "side": "RIGHT"})
+    check(r.status == 201 and "A5-HUNK-SECRET-LINE" in r.json().get("diff_hunk", ""), f"alice's line comment: {r.status} {r.text[:300]}")
+    cid = r.json()["id"]
+    base_url = f"http://{HOST}:{PORT}/alice/c10pub.git"
+    anon_env = gitenv("10.9.2.9")
+    check(git(["ls-remote", base_url], WORK, env=anon_env, check_rc=False).returncode != 0, "a signed-out stranger read an internal repository")
+    # Alice makes the base public in the browser, as the owner.
+    page = "/alice/c10pub/settings/visibility"
+    m = re.search(r'name="snapshot"\s+value="([^"]+)"', a.get(page).text)
+    check(m, "no snapshot on the make-public page")
+    r = a.post_form(page, {"value": "public", "snapshot": m.group(1), "confirm": "alice/c10pub", "checked_history": "1"}, page=page)
+    check(r.status in (200, 303), f"make public: {r.status} {r.text[:300]}")
+    r = Client(ip).api("GET", "/repos/alice/c10pub", auth=tok)
+    check(r.json().get("visibility") == "public", f"the repository is not public: {r.text[:200]}")
+    # Signed out: no pull refs, and the private commit cannot be fetched by id or by ref.
+    refs = git(["ls-remote", base_url], WORK, env=anon_env).stdout
+    check("refs/pull/" not in refs, f"a pull ref is advertised in the public repository: {refs[:300]}")
+    probe = os.path.join(WORK, "c10pub-anon")
+    git(["init", "-q", probe], WORK)
+    for want in (f"refs/pull/{n}/head", sha):
+        f = git(["fetch", "-q", base_url, want], probe, env=anon_env, check_rc=False)
+        check(f.returncode != 0, f"a signed-out stranger fetched {want[:20]}")
+    check(git(["cat-file", "-e", sha + "^{commit}"], probe, check_rc=False).returncode != 0, "the private commit is in the stranger's clone")
+    # A later push to the fork is not copied either, and the pull request cannot be merged.
+    with open(os.path.join(wd, "carol-private-2.txt"), "w") as f:
+        f.write("more private work\n")
+    git(["add", "."], wd)
+    git(["commit", "-q", "-m", "more private work"], wd)
+    git(["push", "-q", "origin", "feat"], wd)
+    time.sleep(4)
+    refs = git(["ls-remote", base_url], WORK, env=anon_env).stdout
+    check("refs/pull/" not in refs, "a later head was written into the public repository")
+    r = Client(ip).api("GET", f"/repos/alice/c10pub/pulls/{n}/merge-gate", auth=tok)
+    check(r.status == 200 and r.json().get("mergeable") is False and "agreed to publish" in r.text, f"merge gate: {r.status} {r.text[:300]}")
+    g = a.get(f"/alice/c10pub/pulls/{n}")
+    check(g.status == 200, f"the pull request page: {g.status}")
+    # The pull request's changes are not shown to anyone who cannot read Bob's private fork,
+    # signed out included, through the API or the pages. Bob still sees his own.
+    stranger = Client("10.9.2.9")
+    for tail in ("files", "commits"):
+        r = stranger.api("GET", f"/repos/alice/c10pub/pulls/{n}/{tail}")
+        check(r.status == 200 and r.json() == [], f"signed out /pulls/{n}/{tail}: {r.status} {r.text[:200]}")
+        r = Client(ip).api("GET", f"/repos/alice/c10pub/pulls/{n}/{tail}", auth=tok)
+        check(r.status == 200 and r.json() == [], f"alice /pulls/{n}/{tail}: {r.status} {r.text[:200]}")
+        g = stranger.get(f"/alice/c10pub/pulls/{n}/{tail}")
+        check("carol-private-1.txt" not in g.text and "xqz private commit message" not in g.text, f"signed out web {tail} shows the private change")
+    r = Client(ip).api("GET", f"/repos/alice/c10pub/pulls/{n}/files", auth=bob)
+    check(r.status == 200 and any(f.get("filename") == "carol-private-1.txt" for f in r.json()), f"bob does not see his own files: {r.text[:200]}")
+    # The line comment's stored hunk and path are code from the private fork too: blank for a
+    # signed-out reader and for alice (she cannot read the fork), whole for Bob.
+    for who, auth in (("signed out", None), ("alice", tok)):
+        cl = stranger if auth is None else Client(ip)
+        kw = {} if auth is None else {"auth": auth}
+        # The repository-wide list is not among the routes a signed-out reader may use at all.
+        tails = [f"/pulls/{n}/comments", f"/pulls/{n}/threads", f"/pulls/comments/{cid}"] + ([] if auth is None else ["/pulls/comments"])
+        for tail in tails:
+            r = cl.api("GET", f"/repos/alice/c10pub{tail}", **kw)
+            check(r.status == 200, f"{who} {tail}: {r.status} {r.text[:200]}")
+            check("A5-HUNK-SECRET-LINE" not in r.text and "carol-private-1.txt" not in r.text, f"{who} {tail} leaks the private code: {r.text[:300]}")
+            check("why this line?" in r.text, f"{who} {tail} lost the comment itself: {r.text[:300]}")
+        g = cl.get(f"/alice/c10pub/pulls/{n}")
+        check(g.status == 200 and "A5-HUNK-SECRET-LINE" not in g.text and "carol-private-1.txt" not in g.text, f"{who} pull request page leaks the private code")
+    r = Client(ip).api("GET", f"/repos/alice/c10pub/pulls/{n}/comments", auth=bob)
+    check(r.status == 200 and "A5-HUNK-SECRET-LINE" in r.text, f"bob does not see his own hunk: {r.text[:300]}")
+    # A late merge request (a merge that checked while the base was internal) is refused and copies nothing.
+    r = Client(ip).api("PUT", f"/repos/alice/c10pub/pulls/{n}/merge", js={"merge_method": "merge"}, auth=tok)
+    check(r.status in (405, 409, 422), f"the merge of a withheld head: {r.status} {r.text[:200]}")
+    refs = git(["ls-remote", base_url], WORK, env=anon_env).stdout
+    check("refs/pull/" not in refs, "a merge attempt wrote a pull ref into the public repository")
+    f = git(["fetch", "-q", base_url, sha], probe, env=anon_env, check_rc=False)
+    check(f.returncode != 0, "a signed-out stranger fetched the private commit after a merge attempt")
+
+
+def step29():
+    """C10 review round 2: merge requests and refreshes that race the base being made public copy
+    nothing private into it, and the pull request shows no private change to a stranger."""
+    ip, a, tok, bob = "10.9.2.5", S["alice"], S["alice_token"], S["bob_token"]
+    r = Client(ip).api("POST", "/user/repos", js={"name": "c10race", "visibility": "internal", "auto_init": True}, auth=tok)
+    check(r.status == 201, f"create the internal repository: {r.status} {r.text[:200]}")
+    r = Client(ip).api("POST", "/repos/alice/c10race/forks", js={"visibility": "private"}, auth=bob)
+    check(r.status in (200, 201, 202), f"fork: {r.status} {r.text[:200]}")
+    wd = os.path.join(WORK, "c10race-bob")
+    git(["clone", "-q", http_url("bob", bob, "bob/c10race"), wd], WORK)
+    git(["checkout", "-q", "-b", "feat"], wd)
+    with open(os.path.join(wd, "race-private.txt"), "w") as f:
+        f.write("TOPSECRET-RACE\n")
+    git(["add", "."], wd)
+    git(["commit", "-q", "-m", "race private work"], wd)
+    git(["push", "-q", "origin", "feat"], wd)
+    sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    r = Client(ip).api("POST", "/repos/alice/c10race/pulls", js={"title": "race", "head": "bob:feat", "base": "main"}, auth=bob)
+    check(r.status == 201, f"open the pull request: {r.status} {r.text[:300]}")
+    n = r.json()["number"]
+    stop = threading.Event()
+
+    def hammer(k):
+        c = Client(f"10.9.3.{k}")
+        while not stop.is_set():
+            c.api("PUT", f"/repos/alice/c10race/pulls/{n}/merge", js={"sha": "0" * 40, "merge_method": "merge"}, auth=tok)
+
+    pool = [threading.Thread(target=hammer, args=(k,), daemon=True) for k in range(10, 14)]
+    for t in pool:
+        t.start()
+    time.sleep(1)
+    page = "/alice/c10race/settings/visibility"
+    m = re.search(r'name="snapshot"\s+value="([^"]+)"', a.get(page).text)
+    check(m, "no snapshot on the make-public page")
+    r = a.post_form(page, {"value": "public", "snapshot": m.group(1), "confirm": "alice/c10race", "checked_history": "1"}, page=page)
+    check(r.status in (200, 303), f"make public: {r.status} {r.text[:300]}")
+    time.sleep(4)
+    stop.set()
+    for t in pool:
+        t.join(timeout=30)
+    base_url = f"http://{HOST}:{PORT}/alice/c10race.git"
+    anon_env = gitenv("10.9.2.9")
+    probe = os.path.join(WORK, "c10race-anon")
+    git(["init", "-q", probe], WORK)
+    f = git(["fetch", "-q", base_url, sha], probe, env=anon_env, check_rc=False)
+    check(f.returncode != 0, "a signed-out stranger fetched a private commit that a racing merge copied")
+    stranger = Client("10.9.2.9")
+    for tail in ("files", "commits"):
+        r = stranger.api("GET", f"/repos/alice/c10race/pulls/{n}/{tail}")
+        check(r.status == 200 and r.json() == [], f"signed out /pulls/{n}/{tail}: {r.status} {r.text[:200]}")
+        g = stranger.get(f"/alice/c10race/pulls/{n}/{tail}")
+        check("TOPSECRET-RACE" not in g.text and "race-private.txt" not in g.text and "race private work" not in g.text,
+              f"signed out web {tail} shows the private change")
+
+
 ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1), (2, "first admin and two-factor", step2),
        (3, "invites", step3), (4, "token and ssh key", step4), (5, "rate limit and lockout", step5), (6, "create repo", step6),
        (7, "push over HTTP", step7), (8, "push over SSH", step8), (9, "collaborator and clone", step9),
@@ -1401,7 +1610,10 @@ ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1)
        (20, "leave data for the screenshots", step20), (21, "live job log in a browser", step21),
        (22, "workspace in a browser", step22), (23, "terminal in a browser", step23),
        (24, "batch C3 on a real runner", step24), (25, "batch C9: a reusable workflow on a real runner", step25),
-       (26, "ch-d9s: make ci of the Codehaven source on its own runner (slow, ask for it)", step26)]
+       (26, "ch-d9s: make ci of the Codehaven source on its own runner (slow, ask for it)", step26),
+       (27, "batch C10: admin repo-import, issue order, transfer and delete, signed-out probes", step27),
+       (28, "C10 review: private fork commits are not published when the base becomes public", step28),
+       (29, "C10 review round 2: merge requests racing the base being made public copy nothing private", step29)]
 
 
 THROWAWAY_PROJECT = re.compile(r"^(test|e2e|shots|tmp)-[a-z0-9][a-z0-9-]*$")

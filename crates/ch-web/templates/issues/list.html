@@ -58,6 +58,13 @@
   <button class="btn" type="submit">Search</button>
   {% if filtered %}<a class="btn btn-quiet" href="{{ clear_href }}">Clear filters</a>{% endif %}
 </form>
+{% if !pinned_rows.is_empty() %}
+<section class="pinned-issues" aria-label="Pinned issues">
+  <h2 class="small muted">Pinned</h2>
+  <ul class="issue-list card">{% for r in pinned_rows %}{% call m::issue_row(r) %}{% endfor %}</ul>
+  {% if can_pin && pinned_rows.len() > 1 %}<details class="menu" data-menu><summary class="btn small">Reorder pinned</summary><form class="menu-panel pad stack" method="post" action="{{ base }}/issues/pinned/order">{% call ui::csrf_field(c.csrf) %}{% for r in pinned_rows %}<p class="row"><span>#{{ r.number }} {{ r.title }}</span> <button class="btn small" type="submit" name="move" value="{{ r.number }}:up"{% if loop.first %} disabled{% endif %}>Move up</button> <button class="btn small" type="submit" name="move" value="{{ r.number }}:down"{% if loop.last %} disabled{% endif %}>Move down</button></p>{% endfor %}</form></details>{% endif %}
+</section>
+{% endif %}
 {% if rows.is_empty() %}
   {% if filtered %}{% call ui::empty("No issues match", "Try fewer filters.") %}{% else %}{% call ui::empty("No issues yet", "Open one to track a bug, a task or an idea.") %}{% endif %}
 {% else %}

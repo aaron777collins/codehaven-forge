@@ -376,7 +376,7 @@ pub async fn new_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, for
         base_ref: base_ref.clone(),
         draft: form.flag("draft"),
     };
-    match ctx.state.pulls.create(&ctx.actor, new, &ctx.client).await {
+    match ctx.state.pulls.create_publishing(&ctx.actor, new, form.flag("publish_head"), &ctx.client).await {
         Ok(pr) => Ok(ctx.redirect(&format!("{}/pulls/{}", rc.base(), pr.issue.number))),
         Err(e) => match FieldErrors::from_error(&e) {
             Some(errors) => again(errors).await,
@@ -453,7 +453,10 @@ async fn load(ctx: &Ctx, owner: &str, name: &str, number: i64) -> WebResult<Load
     let rc = RepoCtx::load(ctx, owner, name).await?;
     let pr = ctx.state.pulls.get(&ctx.actor, rc.id(), number).await?;
     let base_rev = pr.merge_base.clone().unwrap_or_else(|| pr.base_sha.clone());
-    let cmp = ctx.state.git.compare(rc.id(), &base_rev, &pr.head_sha).await.ok();
+    // A head its author did not agree to publish here is not compared for people who cannot read
+    // its repository (ch-4pn.14). Anything not known to be safe is hidden.
+    let hidden = ctx.state.pulls.head_hidden(&ctx.actor, rc.id(), number).await.unwrap_or(true);
+    let cmp = if hidden { None } else { ctx.state.git.compare(rc.id(), &base_rev, &pr.head_sha).await.ok() };
     Ok(Loaded { rc, pr, cmp, people: People::new(&ctx.state) })
 }
 

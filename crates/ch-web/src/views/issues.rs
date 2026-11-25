@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use ch_core::model::{Comment, Issue, IssueFilter, NewIssue};
 use ch_core::web_contract::{Label, Milestone};
-use ch_core::{Error, MilestoneId, Permission, UserId};
+use ch_core::{Error, FieldError, MilestoneId, Permission, UserId};
 use ch_render::markdown::{self, MdContext};
 use std::collections::HashMap;
 
@@ -131,6 +131,9 @@ struct ListPage {
     active_labels: Vec<String>,
     label_items: Vec<LabelFilterItem>,
     rows: Vec<IssueRow>,
+    /// The pinned issues, first on the first page of an unfiltered open list (ch-u6j).
+    pinned_rows: Vec<IssueRow>,
+    can_pin: bool,
     pager: Pager,
     can_create: bool,
     filtered: bool,
@@ -281,6 +284,13 @@ pub async fn list(ctx: Ctx, Path((owner, name)): Path<(String, String)>, Query(q
         closed_issues: m.closed_issues,
         percent: milestone_percent(m.open_issues, m.closed_issues),
     });
+    let pinned_issues: Vec<Issue> = if lq.open && !filtered && lq.page <= 1 {
+        ctx.state.issues.pinned(&ctx.actor, rc.id()).await.unwrap_or_default().into_iter().map(|v| v.issue).collect()
+    } else {
+        Vec::new()
+    };
+    let pinned_rows = rows_for(&ctx, &rc, &pinned_issues, "issues").await;
+    let can_pin = rc.perm.allows(Permission::Triage) && !rc.repo.archived;
     let c = rc.chrome(&ctx, "Issues", "issues").await;
     ctx.page(&ListPage {
         c,
@@ -294,6 +304,8 @@ pub async fn list(ctx: Ctx, Path((owner, name)): Path<(String, String)>, Query(q
         active_labels: active,
         label_items,
         rows,
+        pinned_rows,
+        can_pin,
         pager: Pager::new(&format!("{base}/issues{}", qs(&q, &[], &[])), lq.page, has_more),
         can_create: true,
         filtered,
@@ -455,6 +467,9 @@ struct ShowPage {
     can_comment: bool,
     can_triage: bool,
     can_edit: bool,
+    pinned: bool,
+    can_write: bool,
+    can_admin: bool,
     label_choices: Vec<Choice>,
     milestone_choices: Vec<Choice>,
     assignee_choices: Vec<Choice>,
@@ -551,6 +566,9 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
         can_comment: me.is_some() && !rc.repo.archived && !issue.locked,
         can_triage,
         can_edit,
+        pinned: ctx.state.issues.pinned(&ctx.actor, rc.id()).await.map(|p| p.iter().any(|v| v.issue.number == number)).unwrap_or(false),
+        can_write: rc.perm.allows(Permission::Write) && !rc.repo.archived,
+        can_admin: rc.perm.allows(Permission::Admin) && !rc.repo.archived,
         label_choices,
         milestone_choices,
         assignee_choices,
@@ -640,6 +658,58 @@ pub async fn do_assignees(ctx: &Ctx, rc: &RepoCtx, number: i64, form: &FormData,
     let users: Vec<UserId> = form.all("assignees").into_iter().filter_map(|v| v.parse::<i64>().ok()).map(UserId).collect();
     ctx.state.tracker.set_assignees(&ctx.actor, rc.id(), number, users, &ctx.client).await?;
     Ok(ctx.redirect(&back(rc, kind, number)))
+}
+
+/// Pins or unpins an issue (`pin` is `1` or `0`).
+pub async fn pin_post(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Triage)?;
+    match ctx.state.issues.set_pinned(&ctx.actor, rc.id(), number, form.get("pin") == "1", &ctx.client).await {
+        Ok(_) => Ok(ctx.redirect(&back(&rc, "issues", number))),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Moves one pinned issue up or down: `move` is `<number>:up` or `<number>:down`.
+pub async fn pinned_order_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Triage)?;
+    let mut order: Vec<i64> = ctx.state.issues.pinned(&ctx.actor, rc.id()).await?.iter().map(|v| v.issue.number).collect();
+    if let Some((n, dir)) = form.get("move").split_once(':')
+        && let Ok(n) = n.parse::<i64>()
+        && let Some(at) = order.iter().position(|x| *x == n)
+    {
+        let to = if dir == "up" { at.checked_sub(1) } else { Some(at + 1).filter(|t| *t < order.len()) };
+        if let Some(to) = to {
+            order.swap(at, to);
+            ctx.state.issues.reorder_pinned(&ctx.actor, rc.id(), order, &ctx.client).await?;
+        }
+    }
+    Ok(ctx.redirect(&format!("{}/issues", rc.base())))
+}
+
+/// Deletes an issue for good. Repository admins only.
+pub async fn delete_post(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, _form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Admin)?;
+    ctx.state.issues.delete(&ctx.actor, rc.id(), number, &ctx.client).await?;
+    Ok(ctx.redirect(&format!("{}/issues", rc.base())))
+}
+
+/// Moves an issue to another repository, named `owner/name` in the `target` field.
+pub async fn transfer_post(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Write)?;
+    let wanted = form.get("target").trim().to_string();
+    let target = match wanted.split_once('/') {
+        Some((o, n)) => ctx.state.repos.get_by_name(&ctx.actor, o.trim(), n.trim()).await.ok(),
+        None => None,
+    };
+    let Some(target) = target else {
+        return Err(Error::Validation(vec![FieldError::custom("Issue", "target", "Name a repository you can see, as owner/name")]).into());
+    };
+    let moved = ctx.state.issues.transfer(&ctx.actor, rc.id(), number, target.id, &ctx.client).await?;
+    Ok(ctx.redirect(&format!("/{}/{}/issues/{}", target.owner_name, target.name, moved.issue.number)))
 }
 
 pub async fn assignees_post(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {

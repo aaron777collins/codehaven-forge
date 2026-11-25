@@ -97,6 +97,7 @@ pub struct GateInput {
 }
 
 /// Why a pull request whose fork was deleted cannot be merged.
+pub const HEAD_NOT_PUBLISHED: &str = "This repository is public and the fork this pull request came from is not. Its author has not agreed to publish the commits here. Ask them to open the pull request again and confirm";
 pub const HEAD_GONE: &str = "The repository this pull request came from was deleted, so it cannot be merged";
 
 pub fn evaluate(i: &GateInput) -> GateReport {

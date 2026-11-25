@@ -90,6 +90,9 @@ impl Repos for GitCore {
     async fn import(&self, actor: &Actor, new: NewRepo, url: &str, client: &ClientInfo) -> Result<Repo> {
         self.do_import_repo(actor, new, url, client).await
     }
+    async fn import_local(&self, actor: &Actor, new: NewRepo, path: &str, run_ci: bool, client: &ClientInfo) -> Result<Repo> {
+        self.do_import_local(actor, new, path, run_ci, client).await
+    }
     async fn set_contribution_policy(&self, actor: &Actor, id: RepoId, policy: ContributionPolicy, client: &ClientInfo) -> Result<Repo> {
         self.do_set_contribution_policy(actor, id, policy, client).await
     }

@@ -52,6 +52,13 @@
       {% if let Some(ms) = milestone %}<p><a href="{{ ms.1 }}">{{ ms.0 }}</a></p>{% else %}<p class="muted">No milestone</p>{% endif %}
       {% if can_triage %}{% if !milestone_choices.is_empty() %}<details class="menu" data-menu><summary class="btn small">Change</summary><form class="menu-panel pad" method="post" action="{{ base }}/issues/{{ number }}/milestone">{% call ui::csrf_field(c.csrf) %}<select name="milestone"><option value="">None</option>{% for ms in milestone_choices %}<option value="{{ ms.value }}"{% if ms.on %} selected{% endif %}>{{ ms.text }}</option>{% endfor %}</select><button class="btn btn-primary small" type="submit">Save</button></form></details>{% endif %}{% endif %}
     </section>
+    {% if can_triage %}
+    <section class="side-block"><h2>Manage</h2>
+      <form method="post" action="{{ base }}/issues/{{ number }}/pin">{% call ui::csrf_field(c.csrf) %}<input type="hidden" name="pin" value="{% if pinned %}0{% else %}1{% endif %}"><button class="btn small" type="submit">{% if pinned %}Unpin issue{% else %}Pin issue{% endif %}</button></form>
+      {% if can_write %}<details class="menu" data-menu><summary class="btn small">Transfer</summary><form class="menu-panel pad stack" method="post" action="{{ base }}/issues/{{ number }}/transfer">{% call ui::csrf_field(c.csrf) %}<label for="transfer-target" class="small">Move to (owner/name)</label><input id="transfer-target" name="target" type="text" placeholder="owner/repository" autocapitalize="none" spellcheck="false" maxlength="140" required><p class="muted small">Only to a repository that is the same or less visible. Comments go with it; labels, milestone and assignees stay behind.</p><button class="btn btn-primary small" type="submit">Transfer issue</button></form></details>{% endif %}
+      {% if can_admin %}<details class="menu" data-menu><summary class="btn small btn-danger">Delete</summary><form class="menu-panel pad stack" method="post" action="{{ base }}/issues/{{ number }}/delete">{% call ui::csrf_field(c.csrf) %}<p class="small">Deleting removes the issue and its comments for good. This is recorded in the audit log.</p><button class="btn btn-danger small" type="submit">Delete this issue</button></form></details>{% endif %}
+    </section>
+    {% endif %}
   </aside>
 </div>
 {% endblock %}

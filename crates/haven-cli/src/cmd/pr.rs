@@ -56,6 +56,7 @@ async fn create(ctx: &Ctx, a: PrCreateArgs) -> Result<i32> {
         draft: if a.draft { Some(true) } else { None },
         head_repo: None,
         maintainer_can_modify: None,
+        publish_head: if a.publish_head { Some(true) } else { None },
     };
     let pr: PullRequest = api.post(&format!("/repos/{owner}/{repo}/pulls"), &req).await?;
     if a.json {

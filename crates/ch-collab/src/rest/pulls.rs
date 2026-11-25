@@ -169,7 +169,7 @@ async fn create_pull(
     };
     let pr = s
         .pulls
-        .create(
+        .create_publishing(
             &actor,
             NewPull {
                 repo_id: repo.id,
@@ -180,6 +180,7 @@ async fn create_pull(
                 base_ref: body.base,
                 draft: body.draft.unwrap_or(false),
             },
+            body.publish_head.unwrap_or(false),
             &client,
         )
         .await?;

@@ -146,6 +146,18 @@ impl Issues for IssuesSvc {
     async fn set_pinned(&self, actor: &Actor, repo: RepoId, number: i64, pinned: bool, client: &ClientInfo) -> Result<IssueView> {
         self.0.issue_set_pinned(actor, repo, number, pinned, client).await
     }
+    async fn pinned(&self, actor: &Actor, repo: RepoId) -> Result<Vec<IssueView>> {
+        self.0.issue_pinned(actor, repo).await
+    }
+    async fn reorder_pinned(&self, actor: &Actor, repo: RepoId, numbers: Vec<i64>, client: &ClientInfo) -> Result<Vec<IssueView>> {
+        self.0.issue_reorder_pinned(actor, repo, numbers, client).await
+    }
+    async fn delete(&self, actor: &Actor, repo: RepoId, number: i64, client: &ClientInfo) -> Result<()> {
+        self.0.issue_delete(actor, repo, number, client).await
+    }
+    async fn transfer(&self, actor: &Actor, repo: RepoId, number: i64, target: RepoId, client: &ClientInfo) -> Result<IssueView> {
+        self.0.issue_transfer(actor, repo, number, target, client).await
+    }
     async fn assignable(&self, actor: &Actor, repo: RepoId) -> Result<Vec<UserRef>> {
         self.0.assignable(actor, repo).await
     }
@@ -211,6 +223,9 @@ impl Pulls for PullsSvc {
     async fn create(&self, actor: &Actor, new: NewPull, client: &ClientInfo) -> Result<PullRequest> {
         Ok(self.0.pull_create(actor, new, client).await?.pull)
     }
+    async fn create_publishing(&self, actor: &Actor, new: NewPull, publish_head: bool, client: &ClientInfo) -> Result<PullRequest> {
+        Ok(self.0.pull_create_publishing(actor, new, publish_head, client).await?.pull)
+    }
     async fn get(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<PullRequest> {
         self.0.pull_get(actor, repo, number).await
     }
@@ -260,6 +275,9 @@ impl Pulls for PullsSvc {
     }
     async fn commits(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Vec<CommitInfo>> {
         self.0.pull_commits(actor, repo, number).await
+    }
+    async fn head_hidden(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<bool> {
+        self.0.pull_head_hidden(actor, repo, number).await
     }
     async fn update_branch(&self, actor: &Actor, repo: RepoId, number: i64, client: &ClientInfo) -> Result<PullView> {
         self.0.pull_update_branch(actor, repo, number, client).await

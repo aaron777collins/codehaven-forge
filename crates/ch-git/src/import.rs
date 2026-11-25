@@ -237,11 +237,16 @@ impl GitCore {
                 }
             }
         }
+        self.open_on_default_branch(id).await.map(|_| ())
+    }
+
+    /// Points HEAD at the branch an import opens on and marks the repository as not empty.
+    /// Returns the branch, or `None` when nothing came across (an empty repository, as if made by hand).
+    async fn open_on_default_branch(&self, id: RepoId) -> Result<Option<String>> {
         let out = self.exec(self.git(id).args(["for-each-ref", "--format=%(refname:strip=2)", "refs/heads/"])).await?;
         let branches: Vec<String> = out.stdout_str().lines().map(str::to_string).filter(|b| !b.is_empty()).collect();
         let Some(branch) = pick_default(&branches, &self.repo_row(id).await?.default_branch) else {
-            // Nothing to bring in: an empty repository, as if made by hand.
-            return Ok(());
+            return Ok(None);
         };
         self.exec(self.git(id).args(["symbolic-ref", "HEAD"]).arg(format!("refs/heads/{branch}"))).await?;
         sqlx::query("UPDATE repositories SET default_branch = $2, is_empty = false, pushed_at = now(), updated_at = now() WHERE id = $1")
@@ -249,7 +254,107 @@ impl GitCore {
             .bind(&branch)
             .execute(&self.db)
             .await?;
-        Ok(())
+        Ok(Some(branch))
+    }
+
+    /// A private repository for an existing account from a bare repository on this server's disk
+    /// (`codehaven admin repo-import`). The system actor only. Branches and tags come across and
+    /// nothing else; the source is never changed. With `run_ci` the default branch is announced
+    /// as a push by the owner, so the repository's workflows run once.
+    pub(crate) async fn do_import_local(&self, actor: &Actor, new: NewRepo, path: &str, run_ci: bool, client: &ClientInfo) -> Result<Repo> {
+        if !actor.is_system() {
+            return Err(Error::forbidden("Only the server's own administration may import from a path."));
+        }
+        check_repo_name(&new.name)?;
+        let src = std::path::Path::new(path);
+        if !src.is_absolute() || !src.is_dir() {
+            return Err(Error::Validation(vec![FieldError::custom(
+                "Import",
+                "path",
+                "Give the absolute path of a bare git repository on this server.",
+            )]));
+        }
+        let bare = self
+            .exec_any(self.store.bare_cmd().args(["rev-parse", "--is-bare-repository"]).git_dir(src.to_path_buf()))
+            .await
+            .map(|o| o.code == 0 && o.stdout_str().trim() == "true")
+            .unwrap_or(false);
+        if !bare {
+            return Err(Error::Validation(vec![FieldError::custom("Import", "path", "That path is not a bare git repository.")]));
+        }
+        let owner = new.owner_id;
+        let repo = self
+            .do_create_repo(actor, NewRepo { auto_init: false, visibility: ch_core::model::Visibility::Private, ..new }, client)
+            .await?;
+        let fetched = self
+            .exec(
+                self.git(repo.id)
+                    .args([
+                        "-c",
+                        "protocol.allow=never",
+                        "-c",
+                        "protocol.file.allow=always",
+                        "fetch",
+                        "--quiet",
+                        "--no-tags",
+                        "--no-write-fetch-head",
+                    ])
+                    .arg(src)
+                    .args(["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"])
+                    .timeout(IMPORT_DEADLINE),
+            )
+            .await;
+        let branch = match fetched {
+            Ok(_) => self.open_on_default_branch(repo.id).await,
+            Err(e) => Err(Error::from(e)),
+        };
+        let branch = match branch {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = sqlx::query("DELETE FROM repositories WHERE id = $1").bind(repo.id.0).execute(&self.db).await;
+                let _ = self.store.trash(repo.id);
+                tracing::info!(error = %e, "import from a server path failed");
+                return Err(Error::Validation(vec![FieldError::custom(
+                    "Import",
+                    "path",
+                    "The import did not work. Is that a complete bare repository?",
+                )]));
+            }
+        };
+        let mut tx = self.db.begin().await?;
+        self.audit
+            .record(
+                &mut tx,
+                ch_core::audit::AuditEvent::new(
+                    actor,
+                    client,
+                    ch_core::audit::action::REPO_IMPORTED_LOCAL,
+                    ch_core::audit::Outcome::Success,
+                )
+                .target("repository", repo.id.0)
+                .details(serde_json::json!({ "full_name": repo.full_name(), "from": path, "run_ci": run_ci })),
+            )
+            .await?;
+        if run_ci && let Some(branch) = &branch {
+            let after = self.read_resolve(repo.id, &format!("refs/heads/{branch}")).await?;
+            self.events
+                .emit(
+                    &mut tx,
+                    ch_core::events::DomainEvent::Push {
+                        repo_id: repo.id,
+                        git_ref: format!("refs/heads/{branch}"),
+                        before: "0".repeat(40),
+                        after,
+                        pusher: Some(owner),
+                        forced: false,
+                        app: None,
+                        server_built: false,
+                    },
+                )
+                .await?;
+        }
+        tx.commit().await?;
+        self.repo_row(repo.id).await
     }
 }
 

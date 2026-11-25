@@ -197,7 +197,7 @@ impl Core {
             MergeMethod::Squash => repo.allow_squash_merge,
             MergeMethod::Rebase => repo.allow_rebase_merge,
         };
-        Ok(gate::evaluate(&GateInput {
+        let mut report = gate::evaluate(&GateInput {
             open: issue.open,
             merged: pull.merged_at.is_some(),
             draft: pull.draft,
@@ -212,7 +212,13 @@ impl Core {
             unowned_reviews: unowned,
             unresolved_threads: threads as u32,
             head_gone: pull.head_gone(),
-        }))
+        });
+        // A head its author did not agree to publish does not go into a public base (ch-4pn.14).
+        if issue.open && pull.merged_at.is_none() && self.head_withheld(issue.id, pull).await? {
+            report.mergeable = false;
+            report.reasons.push(gate::HEAD_NOT_PUBLISHED.into());
+        }
+        Ok(report)
     }
 
     pub async fn pull_merge_gate(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<GateReport> {

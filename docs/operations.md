@@ -116,6 +116,19 @@ on a build host. Once, on the instance that should run it:
 5. The push starts the `ci` workflow on the instance's runner. Later pushes and pull requests
    run it again.
 
+Without a password or a token: a person with root on the host can do steps 3 and 4 inside the
+server container with the admin command, which makes a private repository for an existing
+account (it never overwrites, and is audited as `repo.imported_from_server_path`) from a bare
+git repository at a path in the container, and with `--run-ci` starts the workflows once:
+
+```sh
+git clone --bare <the source checkout> /tmp/codehaven-src.git          # on the host
+docker cp /tmp/codehaven-src.git <server container>:/tmp/codehaven-src.git
+docker exec <server container> codehaven admin repo-import --owner <account> --name codehaven \
+  --from /tmp/codehaven-src.git --run-ci
+docker exec <server container> rm -rf /tmp/codehaven-src.git
+```
+
 The job takes the source from the instance, so its address must be one a job may reach: the
 public https name does (the runner's Docker daemon lets jobs open tcp/443 to it and nothing else on
 the host). The Postgres service image is pulled from Docker Hub by that daemon the first time.
@@ -204,9 +217,15 @@ than this host, because without it the off-site copies cannot be opened. To open
 another machine:
 
 ```sh
-openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass file:/path/to/passphrase \
-  -in <name>.tar.gz.enc -out <name>.tar.gz
+CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE=/path/to/passphrase \
+  bash deploy/prod/backup-open.sh <name>.tar.gz.enc <name>.tar.gz
 ```
+
+Each copy is encrypted and then authenticated: a 32 byte HMAC-SHA256 tag (made with a key
+of its own, from the same passphrase) follows the encrypted data. `backup-open.sh` checks
+the tag first and refuses a copy that was changed, cut short or sealed with another
+passphrase, writing nothing. `restore.sh` takes a `.enc` copy directly and does the same
+check before it touches anything. It needs only openssl and python3.
 
 Codehaven never prunes the remote side: what the destination keeps is the operator's
 retention policy. When a send fails, the run writes `OFFSITE FAILED` to `backup-daily.log`

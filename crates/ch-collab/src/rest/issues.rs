@@ -22,6 +22,11 @@ pub fn routes() -> Router<AppState> {
         .route("/repos/{owner}/{repo}/issues/{number}", get(get_issue).patch(patch_issue))
         .route("/repos/{owner}/{repo}/issues/{number}/lock", put(lock_issue).delete(unlock_issue))
         .route("/repos/{owner}/{repo}/issues/{number}/pin", put(pin_issue).delete(unpin_issue))
+        // Codehaven's own, under their own prefix because GitHub has no REST for them (ch-u6j).
+        .route("/repos/{owner}/{repo}/codehaven/issues/pinned", get(list_pinned))
+        .route("/repos/{owner}/{repo}/codehaven/issues/pinned/order", put(order_pinned))
+        .route("/repos/{owner}/{repo}/codehaven/issues/{number}", axum::routing::delete(delete_issue))
+        .route("/repos/{owner}/{repo}/codehaven/issues/{number}/transfer", post(transfer_issue))
         .route("/repos/{owner}/{repo}/issues/{number}/comments", get(list_comments).post(add_comment))
         .route("/repos/{owner}/{repo}/issues/comments", get(list_repo_comments))
         .route("/repos/{owner}/{repo}/issues/comments/{id}", get(get_comment).patch(edit_comment).delete(delete_comment))
@@ -320,6 +325,80 @@ async fn unpin_issue(
     let (repo, _) = repo_of(&s, &actor, &owner, &name).await?;
     s.issues.set_pinned(&actor, repo.id, number, false, &client).await?;
     Ok(no_content())
+}
+
+// ---------------------------------------------------------------- pinned order, delete, transfer (Codehaven's own)
+
+/// `GET /repos/{owner}/{repo}/codehaven/issues/pinned`: the pinned issues in their order.
+async fn list_pinned(
+    State(s): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Path((owner, name)): Path<(String, String)>,
+) -> Result<Response> {
+    let (repo, ctx) = repo_of(&s, &actor, &owner, &name).await?;
+    let views = s.issues.pinned(&actor, repo.id).await?;
+    Ok(ok(views.iter().map(|v| ctx.issue(v)).collect::<Vec<_>>()))
+}
+
+#[derive(Debug, Deserialize)]
+struct PinnedOrder {
+    numbers: Vec<i64>,
+}
+
+/// `PUT .../codehaven/issues/pinned/order` with `{"numbers": [3, 1, 2]}`: every pinned issue, once.
+async fn order_pinned(
+    State(s): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Client(client): Client,
+    Path((owner, name)): Path<(String, String)>,
+    ApiJson(body): ApiJson<PinnedOrder>,
+) -> Result<Response> {
+    let (repo, ctx) = repo_of(&s, &actor, &owner, &name).await?;
+    let views = s.issues.reorder_pinned(&actor, repo.id, body.numbers, &client).await?;
+    Ok(ok(views.iter().map(|v| ctx.issue(v)).collect::<Vec<_>>()))
+}
+
+/// `DELETE .../codehaven/issues/{number}`: repository admins only; audited.
+async fn delete_issue(
+    State(s): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Client(client): Client,
+    Path((owner, name, number)): Path<(String, String, i64)>,
+) -> Result<Response> {
+    let (repo, _) = repo_of(&s, &actor, &owner, &name).await?;
+    s.issues.delete(&actor, repo.id, number, &client).await?;
+    Ok(no_content())
+}
+
+#[derive(Debug, Deserialize)]
+struct TransferBody {
+    /// `owner/name` of the repository to move the issue to.
+    repository: String,
+}
+
+/// `POST .../codehaven/issues/{number}/transfer` with `{"repository": "owner/name"}`: write access
+/// on both; the target may not be more visible. Answers with the issue at its new address.
+async fn transfer_issue(
+    State(s): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Client(client): Client,
+    Path((owner, name, number)): Path<(String, String, i64)>,
+    ApiJson(body): ApiJson<TransferBody>,
+) -> Result<Response> {
+    let (repo, _) = repo_of(&s, &actor, &owner, &name).await?;
+    let (to_owner, to_name) = body
+        .repository
+        .split_once('/')
+        .ok_or_else(|| Error::Validation(vec![FieldError::custom("Issue", "repository", "Use owner/name")]))?;
+    // A repository the person cannot see answers like one that is not there.
+    let target = s
+        .repos
+        .get_by_name(&actor, to_owner, to_name)
+        .await
+        .map_err(|_| Error::Validation(vec![FieldError::custom("Issue", "repository", "No such repository")]))?;
+    let moved = s.issues.transfer(&actor, repo.id, number, target.id, &client).await?;
+    let ctx = Ctx::new(&s.config.server.external_url, &target.owner_name, &target.name);
+    Ok(ok(ctx.issue(&moved)))
 }
 
 // ---------------------------------------------------------------- comments

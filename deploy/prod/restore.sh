@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Restores a backup made by backup.sh into an EMPTY instance. Run it as root.
-#   sudo bash deploy/prod/restore.sh <archive>
+#   sudo bash deploy/prod/restore.sh <archive>        (an off-host copy, name.enc, works too: it needs
+#                                                      CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE)
 #
 # It refuses when the project is running, or when the data directories, the secrets directory or
 # the database directory already hold anything. It never overwrites and never deletes: restore into
@@ -29,7 +30,16 @@ done
 
 work="$(mktemp -d)"; chmod 700 "$work"
 trap 'rm -rf "$work"' EXIT
-tar -xzf "$archive" -C "$work"
+# An off-host copy (name.enc, from backup-offsite.sh) is checked and opened first; a copy that was
+# changed or cut short, or sealed with another passphrase, stops the restore before anything is written.
+case "$archive" in
+  *.enc)
+    bash "$dir/deploy/prod/backup-open.sh" "$archive" "$work/opened.tar.gz" || ch_die "the off-host copy was refused. Nothing was restored."
+    tar -xzf "$work/opened.tar.gz" -C "$work"
+    rm -f "$work/opened.tar.gz"
+    ;;
+  *) tar -xzf "$archive" -C "$work" ;;
+esac
 for f in MANIFEST pg.dump data.tar compose-secrets.tar codehaven.env; do [ -e "$work/$f" ] || ch_die "the archive has no $f. Not a backup from backup.sh."; done
 
 if [ -f "$work/SHA256SUMS" ]; then

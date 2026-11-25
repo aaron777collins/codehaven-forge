@@ -285,3 +285,27 @@ async fn one_upload_cannot_pass_the_size_limit_in_blocks(pool: PgPool) {
     let (s, _) = c.blob(Method::PUT, &link, "comp=block&blockid=AAAA", b"abc".to_vec()).await;
     assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn joining_blocks_counts_the_joined_file_against_the_server_cap(pool: PgPool) {
+    let (w, _r, job) = job_world(pool).await;
+    let rt = runtime_token(&job.token, job.run_id, job.job_id, chrono::Utc::now().timestamp() + 600);
+    let c = Client { w: &w, rt, run: job.run_id, job: job.job_id };
+    let link = c.create("dist").await;
+    // Other uploads hold all but a few bytes of what the server allows (a sparse file costs no disk).
+    let dir = ch_ci::toolkit::tmp_dir(&w.ctx);
+    std::fs::create_dir_all(&dir).unwrap();
+    let big = std::fs::File::create(dir.join("cache-998.part")).unwrap();
+    big.set_len(ch_ci::toolkit::MAX_INFLIGHT_BYTES - 4).unwrap();
+    let (s, _) = c.blob(Method::PUT, &link, "comp=block&blockid=AAAA", b"abc".to_vec()).await;
+    assert_eq!(s, StatusCode::CREATED, "the block itself fits");
+    // The joined copy would sit beside the blocks, and together they pass the cap: refused.
+    let (s, _) = c.blob(Method::PUT, &link, "comp=blocklist", block_list(&["AAAA"])).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    let joining = std::fs::read_dir(&dir).unwrap().filter_map(Result::ok).any(|e| e.file_name().to_string_lossy().ends_with(".joining"));
+    assert!(!joining, "no half-made join is left");
+    // Room again, and the same list joins.
+    std::fs::remove_file(dir.join("cache-998.part")).unwrap();
+    let (s, _) = c.blob(Method::PUT, &link, "comp=blocklist", block_list(&["AAAA"])).await;
+    assert_eq!(s, StatusCode::CREATED);
+}

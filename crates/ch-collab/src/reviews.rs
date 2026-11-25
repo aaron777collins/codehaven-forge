@@ -298,25 +298,50 @@ impl Core {
         Ok((c, issue))
     }
 
+    /// An inline comment keeps a piece of the diff and the file's path, which is code from the
+    /// head repository. When the pull request's head is withheld from this reader (a private fork
+    /// into a public base, see `head_hidden_from`), those two fields go out blank. The words of
+    /// the comment stay, and the stored row is left alone so whoever can read the fork still sees
+    /// all of it (ch-4pn.14).
+    fn withhold_code(c: &mut ReviewCommentView) {
+        c.comment.diff_hunk.clear();
+        c.comment.path.clear();
+    }
+
     pub async fn review_comment(&self, actor: &Actor, repo: RepoId, comment: CommentId) -> Result<ReviewCommentView> {
         self.need_view(actor, repo).await?;
-        let (c, _) = self.comment_row(repo, comment).await?;
+        let (c, issue) = self.comment_row(repo, comment).await?;
         // Someone else's pending comment does not exist as far as this caller is concerned.
         if c.pending && Some(c.author_id) != actor.author_id() {
             return Err(Error::NotFound);
         }
-        self.comment_views_for(vec![c]).await?.into_iter().next().ok_or(Error::NotFound)
+        let hidden = self.pull_hidden_from(actor, &issue).await?;
+        let mut view = self.comment_views_for(vec![c]).await?.into_iter().next().ok_or(Error::NotFound)?;
+        if hidden {
+            Self::withhold_code(&mut view);
+        }
+        Ok(view)
+    }
+
+    /// `head_hidden_from` for the pull request behind an issue row.
+    async fn pull_hidden_from(&self, actor: &Actor, issue: &IssueRow) -> Result<bool> {
+        let pull = self.pull_row(issue.id).await?;
+        self.head_hidden_from(actor, issue, &pull).await
     }
 
     pub async fn review_threads(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Vec<ThreadView>> {
         self.need_view(actor, repo).await?;
-        let (issue, _) = self.pull_pair(repo, number).await?;
+        let (issue, pull) = self.pull_pair(repo, number).await?;
+        let hidden = self.head_hidden_from(actor, &issue, &pull).await?;
         let viewer = actor.author_id();
         let sql = format!(
             "{COMMENT_SELECT} WHERE c.pull_id = $1 AND (r.id IS NULL OR r.state <> 'pending' OR r.author_id = $2) ORDER BY c.created_at, c.id"
         );
         let rows = sqlx::query_as::<_, CommentRow>(&sql).bind(issue.id).bind(viewer).fetch_all(self.db()).await?;
-        let views = self.comment_views_for(rows).await?;
+        let mut views = self.comment_views_for(rows).await?;
+        if hidden {
+            views.iter_mut().for_each(Self::withhold_code);
+        }
         let threads: Vec<(i64, String, bool, Option<UserId>)> =
             sqlx::query_as("SELECT id, path, resolved, resolved_by FROM review_threads WHERE pull_id = $1 ORDER BY created_at, id")
                 .bind(issue.id)
@@ -331,6 +356,7 @@ impl Core {
                 continue;
             }
             let outdated = comments.first().is_some_and(|c| c.comment.outdated);
+            let path = if hidden { String::new() } else { path };
             out.push(ThreadView { id, path, resolved, resolved_by: by.and_then(|u| refs.get(&u).cloned()), outdated, comments });
         }
         Ok(out)
@@ -368,12 +394,22 @@ impl Core {
         let rows = sqlx::query_as::<_, CommentRow>(&sql).bind(repo).bind(since).bind(limit).bind(offset).fetch_all(self.db()).await?;
         let pulls: Vec<IssueId> = rows.iter().map(|r| r.pull_id).collect();
         let numbers = self.issue_numbers_of(&pulls).await?;
+        // Asked once per pull request, not once per comment.
+        let mut hidden: HashMap<IssueId, bool> = HashMap::new();
+        for id in pulls.iter().copied().collect::<HashSet<_>>() {
+            let issue = self.issue_row_by_id(id).await?;
+            hidden.insert(id, self.pull_hidden_from(actor, &issue).await?);
+        }
         Ok(self
             .comment_views_for(rows)
             .await?
             .into_iter()
-            .map(|v| {
-                let n = numbers.get(&IssueId(v.comment.pull_id.0)).copied().unwrap_or_default();
+            .map(|mut v| {
+                let id = IssueId(v.comment.pull_id.0);
+                if hidden.get(&id).copied().unwrap_or(true) {
+                    Self::withhold_code(&mut v);
+                }
+                let n = numbers.get(&id).copied().unwrap_or_default();
                 (v, n)
             })
             .collect())
@@ -382,9 +418,14 @@ impl Core {
     // ------------------------------------------------------------ placing comments
 
     /// Checks each new comment against the diff of the pull request and builds the hunk.
-    async fn place_comments(&self, issue: &IssueRow, pull: &PullRow, comments: &[NewReviewComment]) -> Result<Vec<Placed>> {
+    async fn place_comments(&self, actor: &Actor, issue: &IssueRow, pull: &PullRow, comments: &[NewReviewComment]) -> Result<Vec<Placed>> {
         if comments.is_empty() {
             return Ok(Vec::new());
+        }
+        // A line comment copies a piece of the diff into the comment. Someone who cannot read the
+        // head repository of a withheld head cannot see that diff, so cannot comment on it.
+        if self.head_hidden_from(actor, issue, pull).await? {
+            return Err(Error::forbidden("You cannot read the repository this pull request came from, so you cannot comment on its lines"));
         }
         if comments.len() > 100 {
             return Err(Error::invalid("PullRequestReview", "comments", "A review can hold at most 100 inline comments at once"));
@@ -561,7 +602,7 @@ impl Core {
         }
         let (issue, pull) = self.pull_pair(repo, number).await?;
         let body = util::body("PullRequestReview", "body", body)?;
-        let placed = self.place_comments(&issue, &pull, &comments).await?;
+        let placed = self.place_comments(actor, &issue, &pull, &comments).await?;
         if state != ReviewState::Pending {
             // A pending review of the caller's own is finished by this call, so its comments count.
             let existing: i64 = sqlx::query_scalar(
@@ -786,7 +827,7 @@ impl Core {
         if issue.locked && perm < Permission::Triage {
             return Err(Error::forbidden("This conversation is locked"));
         }
-        let placed = self.place_comments(&issue, &pull, std::slice::from_ref(&comment)).await?;
+        let placed = self.place_comments(actor, &issue, &pull, std::slice::from_ref(&comment)).await?;
         let p = placed.first().ok_or(Error::NotFound)?;
         let mut tx = self.db().begin().await?;
         if let Some(rid) = review {
