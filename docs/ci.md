@@ -95,6 +95,73 @@ protocol. `crates/ch-ci/tests/support/mod.rs` is the harness. `ch-ci` uses runti
 `sqlx::query` rather than `query!`, so it adds nothing to `.sqlx/`; the tests run every query against
 the real schema.
 
+### Reusable workflows
+
+A workflow that says `on: workflow_call` (with `inputs`, `secrets` and `outputs`, as on GitHub) can be
+called by a job of another workflow: `uses: ./.codehaven/workflows/build.yml` for a file in the same
+repository (read at the run's own commit), or `uses: haven_owner/repo/.codehaven/workflows/build.yml@ref`
+for one in another repository on this instance (`.github/workflows` works in both). The `haven_` marks
+a repository here; workflows are never fetched from GitHub. Such a job takes only `name`, `needs`,
+`if`, `uses`, `with`, `secrets` and `permissions`.
+
+A call is inlined when the run is made (ch-ctk.7). The called workflow's jobs take the calling job's
+place in the same run, named `caller / called` on the run page, and a re-run builds exactly what ran.
+Two jobs the server finishes itself sit around them: `caller (start)`, which stands for the caller's
+`needs` and `if`, and `caller`, which waits for every called job and gives back the call's result and
+`outputs`, so `needs.caller.result` and `needs.caller.outputs.x` mean what they mean on GitHub. They
+have no runner and no check run.
+
+What a called job may see is decided when the run is made, so it never sees what it was not given:
+
+- `inputs.x` becomes what the caller passed (or the input's default). `with:` values and `secrets:`
+  values may read `github`, `inputs` and `vars` only (not `needs`, `matrix`, `env`, `steps`), because they
+  are pasted into jobs that are not the caller. `with:` may not read `secrets`.
+- `secrets.X` becomes what the caller passed under that name, or an empty string. `secrets: inherit`
+  passes every secret. `GITHUB_TOKEN` is always the job's own. A called job that reads the whole
+  `secrets` context is refused unless the caller used `inherit`.
+- Its token may only be narrower than the caller's `permissions:`: each scope is the lower of the two.
+- The called workflow's `env` and `defaults` apply to its jobs under the job's own. Its workflow-level
+  `concurrency` is ignored. The caller's workflow-level `env` and `defaults` do not reach a called job
+  (on GitHub they do not either), so a secret the caller keeps in its own `env` is not passed on.
+
+A file in another repository is used only when the run may use that repository: it is the caller's own,
+or public, or has the same owner and is at least as visible and the person who started the run can read
+it. A pull request from a fork and a scheduled run (nobody behind it) get public repositories only. A
+repository the run may not use looks exactly like one that does not exist. Only a branch, a tag or a
+commit one of them reaches is followed (never `refs/pull`), and the site's rule for `haven_` repositories
+in the Actions policy applies. Calls nest 4 deep, a run may call 20 workflows and make 200 jobs this way
+(counted before anything is built, so a call that fans out is refused at once), the text the calls paste
+in is capped (64 KB for one value, 8 MB for a run), and a workflow that calls itself is refused. A call that cannot be made shows as a failed run with the
+reason, like a workflow file that does not parse.
+
+Not supported yet: `strategy` on a calling job (one call per matrix cell), `needs` outputs inside `with:`,
+`concurrency` on a calling job, and `workflow_run`.
+
+### A private NuGet feed
+
+`/nuget/{owner}/index.json` is a NuGet v3 feed for one account (ch-ctk.13): push, restore, search and
+unlist. It is for people and tokens signed in here only. A signed-out request gets a Basic challenge,
+the same for a feed that exists and one that does not, and there is no public feed.
+
+```sh
+dotnet nuget add source https://HOST/nuget/OWNER/index.json -n codehaven -u USER -p TOKEN --store-password-in-clear-text
+dotnet nuget push pkg.1.0.0.nupkg -s codehaven -k TOKEN      # the key goes in X-NuGet-ApiKey
+dotnet nuget delete Pkg 1.0.0 -s codehaven -k TOKEN          # unlists, never removes
+```
+
+A package is an `owner/id` in the same table as images and follows the same rules. A token needs
+`read:packages` to restore and `write:packages` to push. A package with no repository belongs to its
+owner (for an organization, members read and owners write). A package linked to a repository follows
+that repository: read to restore, write to push or unlist. A workflow job pushes with `GITHUB_TOKEN` as
+the key when its `packages: write` allows it, to a package of its own repository, and never creates
+one for a public repository (the first push would publish it); a job with `packages: read` restores
+those of its own repository. A person's first push makes the package the owner's alone.
+
+A version is written once. `1.0` and `1.0.0` are the same version, and a second push of it is a `409`.
+The server reads the zip's directory and the one top-level `.nuspec` (512 KiB at most, no DOCTYPE or
+entity) and unpacks nothing. A package is at most 250 MiB and a package holds at most 5000 versions.
+Unlisting hides a version from search; asking for it by version still restores it.
+
 ### Limits and things to know
 
 - `POST /register` is public, so failed attempts are throttled per client address (10 per 10

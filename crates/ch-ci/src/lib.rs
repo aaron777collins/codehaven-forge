@@ -22,6 +22,7 @@ pub mod live;
 pub mod logs;
 pub mod payload;
 pub mod rest;
+pub mod reusable;
 pub mod runner_api;
 pub mod runs;
 pub mod secrets;
@@ -31,6 +32,7 @@ pub mod source;
 pub mod spec;
 pub mod store;
 pub mod toolkit;
+pub mod toolkit_artifacts;
 pub mod triggers;
 pub mod web;
 pub mod workers;
@@ -51,6 +53,13 @@ pub fn api_routes() -> Router<AppState> {
 /// a signed-out request only to `POST /register`.
 pub fn runner_routes() -> Router<AppState> {
     runner_api::routes().merge(toolkit::routes())
+}
+
+/// Mounted at the root: the artifact service the toolkit finds at the origin of
+/// `ACTIONS_RESULTS_URL` (`/twirp/...`). It needs a job's runtime token or job token, like every
+/// runner route, so the gate treats the path as one.
+pub fn twirp_routes() -> Router<AppState> {
+    toolkit_artifacts::routes()
 }
 
 /// Event consumer `ci-triggers`, the scheduler, lease reaper, log and artifact retention.

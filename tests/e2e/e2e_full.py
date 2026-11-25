@@ -212,7 +212,10 @@ def step1():
              ("/signup", 303, "page"), ("/metrics", 303, "page"), ("/readyz", 303, "page"),
              ("/api/v3/user", 401, "api"), ("/api/v3/meta", 401, "api"), ("/api/v3/repos/x/y", 401, "api"),
              ("/x/y.git/info/refs?service=git-upload-pack", 401, "git"), ("/v2/", 401, "registry"),
-             ("/api/runner/v1/jobs/request", 401, "runner")]
+             ("/api/runner/v1/jobs/request", 401, "runner"),
+             # C9: the artifact service, and the private NuGet feed (a Basic challenge, nothing public).
+             ("/twirp/github.actions.results.api.v1.ArtifactService/ListArtifacts", 401, "runner"),
+             ("/nuget/x/index.json", 401, "git"), ("/nuget/x/query", 401, "git"), ("/nuget/x/flatcontainer/y/index.json", 401, "git")]
     bodies = {}
     for path, status, kind in cases:
         r = c.get(path, cookies=False)
@@ -1210,6 +1213,185 @@ def step24():
     check(str(body["remaining"]) == rl.h("x-ratelimit-remaining") and str(body["limit"]) == rl.h("x-ratelimit-limit"), f"rate limit: {body}")
 
 
+C9_CALLER = """name: callit
+on: push
+env:
+  CALLER_ENV: caller-env-value
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo prep
+  build:
+    needs: prep
+    uses: ./.codehaven/workflows/build.yml
+    with:
+      version: '1.2'
+    secrets:
+      token: ${{ secrets.NOT_SET }}
+  after:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo got ${{ needs.build.outputs.artifact }}
+          echo "after_env=[${CALLER_ENV}]"
+"""
+
+C9_CALLEE = """name: build
+on:
+  workflow_call:
+    inputs:
+      version: {type: string, required: true}
+    secrets:
+      token: {required: false}
+    outputs:
+      artifact:
+        value: ${{ jobs.pack.outputs.name }}
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.p.outputs.name }}
+    steps:
+      - id: p
+        run: |
+          echo "version=${{ inputs.version }}"
+          echo "callee_sees_caller_env=[${CALLER_ENV}]"
+          echo "name=dist.zip" >> "$GITHUB_OUTPUT"
+"""
+
+
+def step25():
+    """Batch C9 on a real runner: a workflow calls a reusable workflow in its own repository, the
+    called job runs with the input pasted in, and its output reaches the job after the call."""
+    a, tok = Client("10.9.2.4"), S["alice_token"]
+    r = a.api("POST", "/user/repos", js={"name": "c9", "private": True}, auth=tok)
+    check(r.status == 201, f"create c9: {r.status} {r.text[:200]}")
+    wd = os.path.join(WORK, "c9")
+    os.makedirs(os.path.join(wd, ".codehaven/workflows"))
+    open(os.path.join(wd, ".codehaven/workflows/call.yml"), "w").write(C9_CALLER)
+    open(os.path.join(wd, ".codehaven/workflows/build.yml"), "w").write(C9_CALLEE)
+    git(["init", "-q", "-b", "main"], wd)
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "C9 reusable workflow"], wd)
+    git(["push", http_url("alice", tok, "alice/c9"), "main"], wd, env=gitenv("10.9.2.4"))
+    sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    run_, deadline = None, time.time() + 400
+    while time.time() < deadline:
+        r = a.api("GET", "/repos/alice/c9/actions/runs", auth=tok)
+        if r.status == 200:
+            rs = [x for x in r.json().get("workflow_runs", []) if x.get("head_sha") == sha and x.get("name") == "callit"]
+            if rs and rs[0]["status"] == "completed":
+                run_ = rs[0]
+                break
+        time.sleep(3)
+    check(run_, "the run that calls a reusable workflow did not finish")
+    check(run_.get("conclusion") == "success", f"the run did not succeed: {run_.get('conclusion')}")
+    jobs = a.api("GET", f"/repos/alice/c9/actions/runs/{run_['id']}/jobs", auth=tok).json().get("jobs", [])
+    names = [j["name"] for j in jobs]
+    check("build / pack" in names, f"the called job is not in the run: {names}")
+    pack = [j for j in jobs if j["name"] == "build / pack"][0]
+    after = [j for j in jobs if j["name"] == "after"][0]
+    log = a.req("GET", f"/api/v3/repos/alice/c9/actions/jobs/{pack['id']}/logs", auth=tok)
+    check(log.status == 200 and "version=1.2" in log.text, f"the input did not reach the called job: {log.text[:300]}")
+    # The caller's workflow-level env does not reach the called job, and still reaches the caller's own.
+    check("callee_sees_caller_env=[]" in log.text and "caller-env-value" not in log.text, f"the caller's env reached the called job: {log.text[:300]}")
+    log = a.req("GET", f"/api/v3/repos/alice/c9/actions/jobs/{after['id']}/logs", auth=tok)
+    check("after_env=[caller-env-value]" in log.text, f"the caller's own job lost its workflow env: {log.text[:300]}")
+    check(log.status == 200 and "got dist.zip" in log.text, f"the called workflow's output did not reach the next job: {log.text[:300]}")
+    nuget_feed()
+
+
+def nuget_feed():
+    """The private NuGet feed through the real gate: a signed-out stranger gets a Basic challenge, a
+    token with the packages scope pushes with X-NuGet-ApiKey (as `dotnet nuget push -k` does) and
+    restores with Basic credentials, and a token without the scope is refused."""
+    import zipfile, io
+    alice = S["alice"]
+    r = alice.req("POST", "/settings/tokens", form={"_csrf": alice.csrf("/settings/tokens"), "name": "nuget", "scopes": ["write:packages", "read:packages"], "expires_in_days": "30"})
+    m = re.search(r"chp_[A-Za-z0-9]{40}", r.text)
+    check(r.status == 200 and m, f"packages token: {r.status}")
+    pk = m.group(0)
+    spec = ('<?xml version="1.0"?><package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"><metadata>'
+            '<id>Probe.Pkg</id><version>1.0.0</version><authors>e2e</authors><description>probe</description></metadata></package>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("Probe.Pkg.nuspec", spec)
+        z.writestr("lib/net8.0/Probe.Pkg.dll", b"MZ")
+    nupkg = buf.getvalue()
+    b = "----e2eboundary"
+    body = (f"--{b}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"package.nupkg\"\r\n"
+            f"Content-Type: application/octet-stream\r\n\r\n").encode() + nupkg + f"\r\n--{b}--\r\n".encode()
+    c = Client("10.9.2.4")
+    stranger = c.req("PUT", "/nuget/alice/push", body=body, headers={"Content-Type": f"multipart/form-data; boundary={b}"}, cookies=False)
+    check(stranger.status == 401 and stranger.h("www-authenticate").lower().startswith("basic"), f"a stranger's push: {stranger.status}")
+    push = c.req("PUT", "/nuget/alice/push", body=body, headers={"Content-Type": f"multipart/form-data; boundary={b}", "X-NuGet-ApiKey": pk}, cookies=False)
+    check(push.status == 201, f"push with X-NuGet-ApiKey: {push.status} {push.text[:200]}")
+    basic = "Basic " + base64.b64encode(f"alice:{pk}".encode()).decode()
+    v = c.req("GET", "/nuget/alice/flatcontainer/probe.pkg/index.json", auth=basic, cookies=False)
+    check(v.status == 200 and v.json().get("versions") == ["1.0.0"], f"restore versions: {v.status} {v.text[:200]}")
+    f = c.req("GET", "/nuget/alice/flatcontainer/probe.pkg/1.0.0/probe.pkg.1.0.0.nupkg", auth=basic, cookies=False)
+    check(f.status == 200 and f.body == nupkg, f"restore file: {f.status}")
+    again = c.req("PUT", "/nuget/alice/push", body=body, headers={"Content-Type": f"multipart/form-data; boundary={b}", "X-NuGet-ApiKey": pk}, cookies=False)
+    check(again.status == 409, f"a second push of the same version: {again.status}")
+    # The repo-only token from step 4 has no package scope.
+    other = c.req("GET", "/nuget/alice/index.json", auth="Basic " + base64.b64encode(f"alice:{S['alice_token']}".encode()).decode(), cookies=False)
+    check(other.status == 403, f"a token without the packages scope: {other.status}")
+    # Bob cannot read Alice's unlinked package.
+    bob_tok = S["bob"].req("POST", "/settings/tokens", form={"_csrf": S["bob"].csrf("/settings/tokens"), "name": "nuget", "scopes": ["read:packages"], "expires_in_days": "30"})
+    bk = re.search(r"chp_[A-Za-z0-9]{40}", bob_tok.text).group(0)
+    nope = c.req("GET", "/nuget/alice/flatcontainer/probe.pkg/index.json", auth="Basic " + base64.b64encode(f"bob:{bk}".encode()).decode(), cookies=False)
+    check(nope.status == 404, f"another account reading it: {nope.status}")
+
+
+def step26():
+    """ch-d9s: a repository holding the whole Codehaven source runs `make ci` on a runner through
+    its own workflow (.codehaven/workflows/ci.yml). Slow (a full workspace build inside the runner's
+    Docker daemon), so it only runs when asked for: E2E_STEPS=0-4,26 with E2E_SOURCE_DIR set to a
+    checkout, and the builder image and postgres loaded into the runner's daemon (shots.sh does it
+    with SHOTS_DOGFOOD=1)."""
+    src = os.environ.get("E2E_SOURCE_DIR", "")
+    check(src and os.path.isdir(os.path.join(src, ".codehaven/workflows")), "set E2E_SOURCE_DIR to a Codehaven checkout")
+    a, tok = Client("10.9.2.4"), S["alice_token"]
+    r = a.api("POST", "/user/repos", js={"name": "codehaven", "private": True}, auth=tok)
+    check(r.status == 201, f"create codehaven: {r.status} {r.text[:200]}")
+    wd = os.path.join(WORK, "codehaven")
+    os.makedirs(wd)
+    run(["rsync", "-a", "--exclude", "target/", "--exclude", ".git", "--exclude", ".worktrees/", "--exclude", ".beads*",
+         "--exclude", "*.env", "--exclude", ".env", src.rstrip("/") + "/", wd + "/"], timeout=600)
+    git(["init", "-q", "-b", "main"], wd)
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "Codehaven source"], wd)
+    git(["push", http_url("alice", tok, "alice/codehaven"), "main"], wd, env=gitenv("10.9.2.4"), check_rc=True)
+    sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    deadline = time.time() + int(os.environ.get("E2E_DOGFOOD_MINUTES", "150")) * 60
+    run_, last = None, ""
+    while time.time() < deadline:
+        r = a.api("GET", "/repos/alice/codehaven/actions/runs", auth=tok)
+        if r.status == 200:
+            rs = [x for x in r.json().get("workflow_runs", []) if x.get("head_sha") == sha and x.get("name") == "ci"]
+            if rs:
+                state = f"{rs[0]['status']}/{rs[0].get('conclusion')}"
+                if state != last:
+                    print(f"         dogfood run {rs[0]['id']}: {state}", flush=True)
+                    last = state
+                if rs[0]["status"] == "completed":
+                    run_ = rs[0]
+                    break
+        time.sleep(20)
+    check(run_, "the workflow run of the Codehaven source did not finish in time")
+    jobs = a.api("GET", f"/repos/alice/codehaven/actions/runs/{run_['id']}/jobs", auth=tok).json().get("jobs", [])
+    log = ""
+    for j in jobs:
+        lg = a.req("GET", f"/api/v3/repos/alice/codehaven/actions/jobs/{j['id']}/logs", auth=tok)
+        log += lg.text if lg.status == 200 else ""
+    tail = "\n".join(log.splitlines()[-40:])
+    check(run_.get("conclusion") == "success", f"make ci did not succeed on the runner ({run_.get('conclusion')}). Log tail:\n{tail}")
+    check("tests run:" in log and "passed" in log, f"no test summary in the log. Log tail:\n{tail}")
+    print("         " + [ln for ln in log.splitlines() if "tests run:" in ln][-1].strip(), flush=True)
+
+
 ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1), (2, "first admin and two-factor", step2),
        (3, "invites", step3), (4, "token and ssh key", step4), (5, "rate limit and lockout", step5), (6, "create repo", step6),
        (7, "push over HTTP", step7), (8, "push over SSH", step8), (9, "collaborator and clone", step9),
@@ -1218,7 +1400,8 @@ ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1)
        (16, "review", step16), (17, "squash merge", step17), (18, "push to main runs again, green; release file; org repository runs; job isolation", step18), (19, "audit log", step19),
        (20, "leave data for the screenshots", step20), (21, "live job log in a browser", step21),
        (22, "workspace in a browser", step22), (23, "terminal in a browser", step23),
-       (24, "batch C3 on a real runner", step24)]
+       (24, "batch C3 on a real runner", step24), (25, "batch C9: a reusable workflow on a real runner", step25),
+       (26, "ch-d9s: make ci of the Codehaven source on its own runner (slow, ask for it)", step26)]
 
 
 THROWAWAY_PROJECT = re.compile(r"^(test|e2e|shots|tmp)-[a-z0-9][a-z0-9-]*$")

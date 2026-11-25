@@ -136,12 +136,14 @@ never block.
 - **Import from a URL.** It needs a fetcher that cannot be pointed at a private address
   (resolve, refuse private addresses, refuse redirects, pin the address). Without that it is a
   server-side request forgery hole, so it is not built.
-- **`gix` for reads.** See ARCHITECTURE.md 6.1. Plumbing first.
+- **`gix` for reads.** Dropped for now: git's own plumbing does every read and no behaviour depends on
+  the choice. See ARCHITECTURE.md 6.1.
 - **Re-parenting a fork network** so a root with forks can be deleted. Deleting such a root is
   refused with a message.
 - **Mergeability recompute.** It reads pull request rows, so it belongs to collab; `test_merge`
   is the building block.
-- **Range requests on blob downloads, Docker schema 1, the catalog endpoint.**
+- **Docker schema 1.** Dropped: no client has sent it since 2017. Range requests on blob downloads
+  (`crates/ch-registry/src/range.rs`) and the catalog endpoint (`catalog.rs`) are built.
 - **Queries are `sqlx::query` with `FromRow`, not `query!`.** The citext columns and the joins make
   offline metadata awkward, and every query is exercised by the tests. Moving them to `query!`
-  later is mechanical.
+  later is mechanical, and nothing needs it: dropped.

@@ -252,6 +252,11 @@ pub async fn create_run(ctx: &Ctx, n: NewRun) -> Result<Created> {
         problem: None,
     };
     let vars = load_vars(ctx, n.repo_id.0, n.fork).await?;
+    // Jobs that call a reusable workflow are replaced by the called jobs before anything is
+    // planned or stored, so what a re-run builds is exactly what ran (ch-ctk.7).
+    let workflow =
+        crate::reusable::inline_calls(ctx, n.repo_id, &n.head_sha, &n.workflow_path, n.fork, n.actor.as_ref().map(|a| a.0), &n.workflow)
+            .await?;
 
     let mut tx = ctx.db.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(0x0c1_0000_0000_0000_i64 | n.repo_id.0).execute(&mut *tx).await?;
@@ -315,7 +320,7 @@ pub async fn create_run(ctx: &Ctx, n: NewRun) -> Result<Created> {
             .execute(&mut *tx)
             .await?;
     }
-    let planned = plan::plan(&n.workflow, &bctx).map_err(|d| {
+    let planned = plan::plan(&workflow, &bctx).map_err(|d| {
         Error::Validation(d.iter().map(|d| ch_core::FieldError::custom("Workflow", &n.workflow_path, d.to_string())).collect())
     })?;
     let mut fx = Effects::default();
@@ -428,6 +433,10 @@ async fn insert_job(
             .bind(step_name(spec, i).chars().take(200).collect::<String>())
             .execute(&mut **tx)
             .await?;
+    }
+    // The server's own jobs for a reusable workflow call have no runner and no check of their own.
+    if spec.job.call_role.is_some() {
+        return Ok(job_id);
     }
     let cname = check_name(at.workflow_name, name);
     let details = format!("{}/{}/actions/runs/{}/jobs/{job_id}", at.base, at.repository, at.run_id);
@@ -677,6 +686,38 @@ async fn flag_cancel(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, job: &mut J
 /// Moves the run forward as far as it can go: cancels what must stop, promotes jobs whose
 /// needs are done, skips jobs whose `if:` is false, and rolls the jobs up into the run.
 /// Safe to call at any time and any number of times.
+/// What the server's job for a reusable workflow call concludes and gives back. The entry job
+/// succeeds (it was only started because the caller would have run). The exit job is skipped when
+/// the entry was, otherwise it fails if any called job failed, is cancelled if one was, is skipped
+/// if every one was, and succeeds otherwise; its outputs are the called workflow's `outputs:`
+/// worked out from the called jobs.
+fn call_result(job: &ch_workflow::Job, needs: &[String], jobs: &[JobRow], cx: &Context<'_>) -> (&'static str, BTreeMap<String, String>) {
+    if job.call_role != Some(ch_workflow::CallRole::Exit) {
+        return ("success", BTreeMap::new());
+    }
+    let results: Vec<&'static str> = needs.iter().map(|k| aggregate(jobs, k).0).collect();
+    // The first need is the entry job.
+    let (entry, called) = results.split_first().map(|(e, c)| (*e, c)).unwrap_or(("skipped", &[]));
+    let conclusion = if entry == "skipped" {
+        "skipped"
+    } else if entry == "cancelled" || called.contains(&"cancelled") {
+        "cancelled"
+    } else if called.contains(&"failure") || entry == "failure" {
+        "failure"
+    } else if !called.is_empty() && called.iter().all(|r| *r == "skipped") {
+        "skipped"
+    } else {
+        "success"
+    };
+    let mut outputs = BTreeMap::new();
+    if conclusion != "skipped" {
+        for (name, value) in &job.outputs {
+            outputs.insert(name.clone(), expr::interpolate(value, cx).unwrap_or_default());
+        }
+    }
+    (conclusion, outputs)
+}
+
 pub async fn advance_run(ctx: &Ctx, run_id: i64) -> Result<()> {
     let mut tx = ctx.db.begin().await?;
     let Some(run) = sqlx::query_as::<_, RunRow>(&format!("SELECT {RUN_COLS} FROM workflow_runs WHERE id = $1 FOR UPDATE"))
@@ -870,6 +911,18 @@ pub async fn advance_run(ctx: &Ctx, run_id: i64) -> Result<()> {
                                 transition(&mut tx, &run, &mut j, "completed", Some("failure"), &mut fx).await?;
                             }
                         }
+                    }
+                    Ok(true) if spec.job.call_role.is_some() => {
+                        // The server's own job for a reusable workflow call: it has no runner. Its
+                        // result and outputs come from the jobs it stands for (ch-ctk.7).
+                        let (conclusion, outputs) = call_result(&spec.job, &needs, &jobs, &cx);
+                        sqlx::query("UPDATE workflow_jobs SET outputs = $2 WHERE id = $1")
+                            .bind(j.id)
+                            .bind(json!(outputs))
+                            .execute(&mut *tx)
+                            .await?;
+                        j.outputs = json!(outputs);
+                        transition(&mut tx, &run, &mut j, "completed", Some(conclusion), &mut fx).await?;
                     }
                     Ok(true) => {
                         if let Some(mp) = spec.max_parallel {

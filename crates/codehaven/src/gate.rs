@@ -53,7 +53,7 @@ pub async fn gate(State(state): State<AppState>, mut req: Request, next: Next) -
     // anything more than "authentication required", and only after the right password.
     let mut hint: Option<String> = None;
     let mut session_hash: Option<Vec<u8>> = None;
-    let actor = match resolve_actor(&state, &method, req.headers(), &client, &mut session_hash).await {
+    let actor = match resolve_actor(&state, &method, req.headers(), &client, &mut session_hash, path.starts_with("/nuget/")).await {
         Ok(a) => a,
         Err(Error::RateLimited { retry_after_secs }) => return Error::RateLimited { retry_after_secs }.into_response(),
         // Bad credentials count as no credentials.
@@ -282,9 +282,20 @@ async fn resolve_actor(
     headers: &HeaderMap,
     client: &ClientInfo,
     session_hash: &mut Option<Vec<u8>>,
+    nuget_feed: bool,
 ) -> Result<Actor, Error> {
     if is_anonymous_bearer(headers) {
         return Ok(Actor::Anonymous);
+    }
+    // `dotnet nuget push -k <key>` sends the key as `X-NuGet-ApiKey` and nothing in
+    // `Authorization`. On the NuGet feed that header is the same as a bearer token, so a personal
+    // access token or a job's `GITHUB_TOKEN` pushes (ch-ctk.13). Nowhere else is it read.
+    if nuget_feed
+        && !headers.contains_key(header::AUTHORIZATION)
+        && let Some(key) =
+            headers.get("x-nuget-apikey").and_then(|v| v.to_str().ok()).map(str::trim).filter(|k| !k.is_empty() && k.len() <= 512)
+    {
+        return state.authn.from_bearer(key, client).await;
     }
     if let Some(auth) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
         let (scheme, rest) = auth.split_once(' ').unwrap_or((auth, ""));

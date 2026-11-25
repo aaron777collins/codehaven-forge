@@ -1060,10 +1060,16 @@ pub fn has_expression(s: &str) -> bool {
 
 /// Checks every expression in a string parses, without evaluating anything.
 pub fn check_template(s: &str) -> Result<(), ExprError> {
+    check_template_with(s, &[])
+}
+
+/// `check_template`, also accepting the context names in `extra` (the `jobs` context of a
+/// reusable workflow's outputs).
+pub fn check_template_with(s: &str, extra: &[&str]) -> Result<(), ExprError> {
     for seg in segments(s)? {
         if let Segment::Expr(src) = seg {
             let e = parse_expr(&src)?;
-            check_names(&e)?;
+            check_names_with(&e, extra)?;
         }
     }
     Ok(())
@@ -1075,21 +1081,25 @@ pub fn check_expr_source(src: &str) -> Result<(), ExprError> {
 }
 
 fn check_names(e: &Expr) -> Result<(), ExprError> {
+    check_names_with(e, &[])
+}
+
+fn check_names_with(e: &Expr, extra: &[&str]) -> Result<(), ExprError> {
     match e {
         Expr::Name(n) => {
-            if KNOWN_CONTEXTS.iter().any(|k| k.eq_ignore_ascii_case(n)) {
+            if KNOWN_CONTEXTS.iter().chain(extra.iter()).any(|k| k.eq_ignore_ascii_case(n)) {
                 Ok(())
             } else {
                 Err(ExprError::new(format!("Unrecognized named-value: '{n}'")))
             }
         }
         Expr::Literal(_) => Ok(()),
-        Expr::Prop(b, _) | Expr::Star(b) | Expr::Not(b) => check_names(b),
+        Expr::Prop(b, _) | Expr::Star(b) | Expr::Not(b) => check_names_with(b, extra),
         Expr::Index(a, b) | Expr::Cmp(_, a, b) | Expr::And(a, b) | Expr::Or(a, b) => {
-            check_names(a)?;
-            check_names(b)
+            check_names_with(a, extra)?;
+            check_names_with(b, extra)
         }
-        Expr::Call(_, args) => args.iter().try_for_each(check_names),
+        Expr::Call(_, args) => args.iter().try_for_each(|a| check_names_with(a, extra)),
     }
 }
 

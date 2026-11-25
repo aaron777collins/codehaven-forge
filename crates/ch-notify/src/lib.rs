@@ -67,9 +67,10 @@ pub fn workers(state: &AppState) -> Vec<Worker> {
     v.push(Worker::new("webhook-queue", move |stop| async move {
         let pool = s.db.clone();
         let cfg = s.config.clone();
+        let authz = s.authz.clone();
         consume(&s, "webhooks", stop, |ev| {
-            let (pool, cfg) = (pool.clone(), cfg.clone());
-            async move { webhooks::enqueue_event(&pool, &cfg, &ev).await.map(|_| ()) }
+            let (pool, cfg, authz) = (pool.clone(), cfg.clone(), authz.clone());
+            async move { webhooks::enqueue_event_for(&pool, &cfg, Some(authz.as_ref()), &ev).await.map(|_| ()) }
         })
         .await
     }));

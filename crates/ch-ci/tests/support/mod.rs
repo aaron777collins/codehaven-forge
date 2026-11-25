@@ -468,6 +468,7 @@ impl World {
         let router = Router::new()
             .nest("/api/v3", ch_ci::api_routes())
             .nest("/api/runner/v1", ch_ci::runner_routes())
+            .merge(ch_ci::twirp_routes())
             .with_state(state.clone())
             .layer(middleware::from_fn_with_state(pool, fake_gate));
         let ctx = Ctx::from_state(&state);

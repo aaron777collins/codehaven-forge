@@ -22,7 +22,7 @@ pub const MAX_FILE_BYTES: usize = 512 * 1024;
 /// them. Real workflows rarely go past 8.
 pub const MAX_NESTING: usize = 50;
 
-pub const SUPPORTED_EVENTS: &[&str] = &["push", "pull_request", "workflow_dispatch", "schedule", "release"];
+pub const SUPPORTED_EVENTS: &[&str] = &["push", "pull_request", "workflow_dispatch", "schedule", "release", "workflow_call"];
 
 /// Parses and validates. Every problem found is in the error, in file order.
 pub fn parse(src: &str) -> Result<Workflow, Vec<Diagnostic>> {
@@ -618,7 +618,7 @@ impl P {
                 }
                 t.release = Some(r);
             }
-            "workflow_call" => self.err(at, "reusable workflows (`workflow_call`) are not supported in this version"),
+            "workflow_call" => t.workflow_call = Some(self.workflow_call(body)),
             "pull_request_target" => self.err(
                 at,
                 "`pull_request_target` is not supported: it would run code from a pull request with the base repository's secrets",
@@ -758,6 +758,113 @@ impl P {
         d
     }
 
+    /// `on: workflow_call` with its `inputs`, `secrets` and `outputs`.
+    fn workflow_call(&mut self, body: Option<&Node>) -> WorkflowCall {
+        let mut wc = WorkflowCall::default();
+        let Some(b) = body else { return wc };
+        for (k, v) in self.entries(b, "workflow_call") {
+            match k.as_str() {
+                "inputs" => {
+                    for (name, spec) in self.entries(v, "workflow_call.inputs") {
+                        let line = kpos(name).0;
+                        let mut input = CallInput {
+                            name: name.as_str().to_string(),
+                            description: String::new(),
+                            required: false,
+                            kind: CallInputType::String,
+                            default: None,
+                            line,
+                        };
+                        let mut typed = false;
+                        for (ik, iv) in self.entries(spec, "an input") {
+                            match ik.as_str() {
+                                "description" => input.description = self.text(iv, "description").unwrap_or_default(),
+                                "required" => input.required = matches!(iv, Node::Scalar(s) if s.as_bool() == Some(true)),
+                                "default" => input.default = Some(node_to_json(iv)),
+                                "type" => {
+                                    typed = true;
+                                    input.kind = match self.text(iv, "type").unwrap_or_default().as_str() {
+                                        "string" => CallInputType::String,
+                                        "boolean" => CallInputType::Boolean,
+                                        "number" => CallInputType::Number,
+                                        other => {
+                                            self.err(
+                                                pos(iv),
+                                                format!("input type `{other}` is not supported. Use string, boolean or number"),
+                                            );
+                                            CallInputType::String
+                                        }
+                                    }
+                                }
+                                _ => self.unknown_key(ik, "an input", &["description", "required", "default", "type"]),
+                            }
+                        }
+                        if !typed {
+                            self.err((line, 1), format!("input `{}` needs a `type` (string, boolean or number)", input.name));
+                        }
+                        wc.inputs.push(input);
+                    }
+                }
+                "secrets" => {
+                    for (name, spec) in self.entries(v, "workflow_call.secrets") {
+                        let mut secret = CallSecret { name: name.as_str().to_string(), required: false, line: kpos(name).0 };
+                        if !is_null(spec) {
+                            for (sk, sv) in self.entries(spec, "a secret") {
+                                match sk.as_str() {
+                                    "required" => secret.required = matches!(sv, Node::Scalar(s) if s.as_bool() == Some(true)),
+                                    "description" => {
+                                        let _ = self.text(sv, "description");
+                                    }
+                                    _ => self.unknown_key(sk, "a secret", &["description", "required"]),
+                                }
+                            }
+                        }
+                        wc.secrets.push(secret);
+                    }
+                }
+                "outputs" => {
+                    for (name, spec) in self.entries(v, "workflow_call.outputs") {
+                        let mut out = CallOutput {
+                            name: name.as_str().to_string(),
+                            description: String::new(),
+                            value: String::new(),
+                            line: kpos(name).0,
+                        };
+                        for (ok, ov) in self.entries(spec, "an output") {
+                            match ok.as_str() {
+                                "description" => out.description = self.text(ov, "description").unwrap_or_default(),
+                                "value" => {
+                                    out.value = self.text(ov, "value").unwrap_or_default();
+                                    if let Err(e) = expr::check_template_with(&out.value, &["jobs"]) {
+                                        self.err(pos(ov), format!("in `value`: {}", e.message));
+                                    }
+                                }
+                                _ => self.unknown_key(ok, "an output", &["description", "value"]),
+                            }
+                        }
+                        if out.value.trim().is_empty() {
+                            self.err((out.line, 1), format!("output `{}` needs a `value`", out.name));
+                        }
+                        wc.outputs.push(out);
+                    }
+                }
+                _ => self.unknown_key(k, "`workflow_call`", &["inputs", "secrets", "outputs"]),
+            }
+        }
+        for (kind, names) in [
+            ("input", wc.inputs.iter().map(|i| i.name.clone()).collect::<Vec<_>>()),
+            ("secret", wc.secrets.iter().map(|i| i.name.clone()).collect()),
+            ("output", wc.outputs.iter().map(|i| i.name.clone()).collect()),
+        ] {
+            for n in &names {
+                if n.is_empty() || n.len() > 64 || !n.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
+                    self.err((0, 0), format!("{kind} name `{n}` may use letters, digits, `_` and `-`"));
+                }
+            }
+        }
+        wc
+    }
+
     // ------------------------------------------------------------------ jobs
 
     fn jobs(&mut self, n: &Node, wf: &mut Workflow) {
@@ -804,8 +911,14 @@ impl P {
             concurrency: None,
             permissions: None,
             services: BTreeMap::new(),
+            call: None,
+            call_role: None,
+            called: false,
             steps: Vec::new(),
         };
+        let mut call_uses: Option<(String, (u32, u32))> = None;
+        let mut call_with = BTreeMap::new();
+        let mut call_secrets = CallSecrets::Map(BTreeMap::new());
         let mut have_runs_on = false;
         let mut have_steps = false;
         const KNOWN: &[&str] = &[
@@ -823,6 +936,9 @@ impl P {
             "continue-on-error",
             "concurrency",
             "permissions",
+            "uses",
+            "with",
+            "secrets",
         ];
         for (k, v) in m.iter() {
             match k.as_str() {
@@ -850,9 +966,35 @@ impl P {
                 "environment" => {
                     self.err(kpos(k), "`environment:` (deployment environments and approvals) is not supported in this version")
                 }
-                "uses" | "with" | "secrets" => self.err(kpos(k), "reusable workflows (`uses:` on a job) are not supported in this version"),
+                "uses" => call_uses = self.text(v, "uses").map(|u| (u, pos(v))),
+                "with" => call_with = self.string_map(v, "with"),
+                "secrets" => match v {
+                    Node::Scalar(s) if s.as_str().trim() == "inherit" => call_secrets = CallSecrets::Inherit,
+                    Node::Mapping(_) => call_secrets = CallSecrets::Map(self.string_map(v, "secrets")),
+                    _ => self.err(pos(v), "`secrets` must be `inherit` or a mapping of names to values"),
+                },
                 _ => self.unknown_key(k, &format!("job `{key}`"), KNOWN),
             }
+        }
+        if let Some((uses, at)) = call_uses {
+            // A job that calls a reusable workflow has the called workflow's jobs in its place, so
+            // nothing that belongs to a job of its own may sit beside `uses`.
+            for (k, _) in m.iter() {
+                if !matches!(k.as_str(), "name" | "needs" | "if" | "uses" | "with" | "secrets" | "permissions") {
+                    self.err(
+                        kpos(k),
+                        format!("`{}` cannot be used on job `{key}`, which calls a reusable workflow. Only name, needs, if, uses, with, secrets and permissions can", k.as_str()),
+                    );
+                }
+            }
+            if let Err(e) = crate::reusable::parse_call_uses(&uses) {
+                self.err(at, format!("job `{key}`: {e}"));
+            }
+            job.call = Some(Call { uses, with: call_with, secrets: call_secrets, line });
+            return Some(job);
+        }
+        if !call_with.is_empty() || matches!(call_secrets, CallSecrets::Inherit) {
+            self.err((line, 1), format!("job `{key}`: `with` and `secrets` belong to a job that calls a reusable workflow with `uses`"));
         }
         if !have_runs_on {
             self.err((line, 1), format!("job `{key}`: `runs-on` is required"));

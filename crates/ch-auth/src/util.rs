@@ -54,6 +54,8 @@ const RESERVED: &[&str] = &[
     // The package pages live at /packages and /nuget (ch-2fc).
     "packages",
     "nuget",
+    // The Actions artifact service answers at /twirp (ch-ctk.6).
+    "twirp",
     "undefined",
 ];
 

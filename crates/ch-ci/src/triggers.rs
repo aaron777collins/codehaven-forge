@@ -214,27 +214,9 @@ fn event_repo(ev: &DomainEvent) -> Option<RepoId> {
 }
 
 /// A personal private fork whose owner cannot see one of the private repositories it was forked
-/// from any more.
+/// from any more (`ch_db::fork_lock`).
 pub async fn fork_locked(ctx: &Ctx, repo: RepoId) -> Result<bool> {
-    let rows: Vec<(i64, i64)> = sqlx::query_as(
-        "WITH RECURSIVE chain (id, parent, depth) AS (
-             SELECT r.id, r.fork_parent_id, 0 FROM repositories r JOIN users o ON o.id = r.owner_id
-              WHERE r.id = $1 AND r.fork_parent_id IS NOT NULL AND r.access_tier = 'private' AND o.kind = 'user'
-             UNION ALL
-             SELECT p.id, p.fork_parent_id, c.depth + 1 FROM repositories p JOIN chain c ON p.id = c.parent WHERE c.depth < 64)
-         SELECT c.id, (SELECT owner_id FROM repositories WHERE id = $1) FROM chain c JOIN repositories a ON a.id = c.id
-          WHERE c.depth > 0 AND a.access_tier = 'private'",
-    )
-    .bind(repo.0)
-    .fetch_all(&ctx.db)
-    .await?;
-    for (ancestor, owner) in rows {
-        let who = Actor::User { id: UserId(owner), is_admin: false, has_2fa: false, via: AuthVia::Session };
-        if ctx.authz.repo_permission(&who, RepoId(ancestor)).await? < Permission::View {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    ch_db::fork_lock::is_locked(&ctx.db, ctx.authz.as_ref(), repo).await
 }
 
 /// True for the reserved account workflow jobs write as.

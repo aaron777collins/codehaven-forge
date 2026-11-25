@@ -139,6 +139,18 @@ Any other `uses:` is fetched (ch-ctk.4, ch-ctk.5):
   its own ref, then a pull request's base, then the default branch, and writes only its own.
   The toolkit downloads an archive with no credential, so the lookup answers with a link this
   server signed for that one entry, which stops working after an hour.
+- The same token opens the artifact service, so an action that bundles `@actions/artifact` (v4
+  artifacts) works: `ACTIONS_RESULTS_URL` is the server's address, and the toolkit calls
+  `/twirp/github.actions.results.api.v1.ArtifactService/` there (CreateArtifact,
+  FinalizeArtifact, ListArtifacts, GetSignedArtifactURL, DeleteArtifact). The upload is a signed
+  link the toolkit writes blocks to and the download is another, both made by this server for one
+  upload or one artifact and good for an hour, because the toolkit sends no credential with them
+  (the one public route, `/api/runner/v1/toolkit/blobs/{grant}`, now also takes PUT; anything
+  without a good link is a plain 404). A job reads the artifacts of its own run and writes only
+  its own; a pull request from a fork reads and never writes. As on GitHub, a name is written once
+  per run: delete it to write it again. Artifacts stay the built-in action's 2 GiB, 100 per run,
+  90 days at most. Blocks that are never joined go with the upload, after an hour or when the job
+  ends.
 
 ### Services
 

@@ -94,6 +94,13 @@ async fn step1(c: &Ctx) -> Result<()> {
             status: 404,
             kind: "link",
         },
+        // C9: the artifact service answers a job's runtime token and nothing else.
+        Case { path: "/twirp/github.actions.results.api.v1.ArtifactService/ListArtifacts", status: 401, kind: "runner" },
+        Case {
+            path: "/api/runner/v1/toolkit/blobs/a.1.9999999999.0000000000000000000000000000000000000000000000000000000000000000",
+            status: 404,
+            kind: "link",
+        },
     ];
     for case in &cases {
         let r = c.get(case.path).await?;
@@ -132,6 +139,16 @@ async fn step1(c: &Ctx) -> Result<()> {
         ensure!(r.headers().contains_key(*name), "/login is missing the {name} header");
     }
     ensure!(r.headers().get("server").is_none(), "the Server header must not be set");
+
+    // An upload link someone made up is a plain 404 too, and an upload to anything else is refused.
+    let r = c
+        .send(
+            Method::PUT,
+            "/api/runner/v1/toolkit/blobs/u.1.9999999999.0000000000000000000000000000000000000000000000000000000000000000?comp=block&blockid=AAAA",
+            None,
+        )
+        .await?;
+    ensure!(r.status() == 404, "a made-up upload link returned {}", r.status());
 
     // No sign-up route exists, whatever the method.
     for m in [Method::GET, Method::POST, Method::PUT] {

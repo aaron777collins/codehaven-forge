@@ -8,6 +8,8 @@
 #   CODEHAVEN_BACKUP_KEEP_WEEKLY  distinct ISO weeks whose newest archive is kept (default 4)
 #   CODEHAVEN_BACKUP_MIN_FREE_MB  free MB the backup disk must have at least (default 2048)
 #   CH_BACKUP_CMD                 the backup command (default: backup.sh in this checkout)
+#   CODEHAVEN_BACKUP_OFFSITE      where an encrypted copy of each archive is sent (empty: nowhere)
+#   CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE  the root-only passphrase file that copy needs
 #
 # Nothing runs when the disk behind CODEHAVEN_BACKUP_DIR is too full, and nothing is pruned
 # after a backup that failed.
@@ -66,5 +68,18 @@ pruned="$(python3 "$dir/deploy/prod/backup-prune.py" \
 for name in $pruned; do
   say "pruned: $name"
 done
+
+# The optional copy off the host (deploy/prod/backup-offsite.sh): nothing runs, and nothing
+# lands in the log, unless CODEHAVEN_BACKUP_OFFSITE names a destination. It runs after the
+# archive and the prune, so a failed send never costs the local backup.
+if [ -n "${CODEHAVEN_BACKUP_OFFSITE:-}" ]; then
+  if offsite_out="$(bash "$dir/deploy/prod/backup-offsite.sh" "$out_path" 2>&1)"; then
+    say "OFFSITE OK: $(printf '%s\n' "$offsite_out" | tail -n 1)"
+  else
+    say "OFFSITE FAILED: the local backup is fine, the copy off the host was not made. Last lines:"
+    printf '%s\n' "$offsite_out" | tail -n 5 | while IFS= read -r line; do say "$line"; done
+    exit 1
+  fi
+fi
 
 exit 0

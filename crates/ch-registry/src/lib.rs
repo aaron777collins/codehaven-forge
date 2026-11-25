@@ -20,6 +20,7 @@ pub mod error;
 pub mod gc;
 pub mod manifests;
 pub mod names;
+pub mod nuget;
 pub mod range;
 
 use access::{Access, authorize};
@@ -48,6 +49,7 @@ pub fn registry_routes() -> Router<AppState> {
         .route("/v2/", get(api_root))
         .route("/v2/token", get(token))
         .route("/v2/{*rest}", any(dispatch))
+        .merge(nuget::routes())
 }
 
 /// Upload cleanup and blob garbage collection, once an hour.

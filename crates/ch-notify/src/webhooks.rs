@@ -362,10 +362,26 @@ impl Webhooks for WebhooksService {
 /// Turns one domain event into deliveries for every hook that wants it. Returns how many were
 /// queued. Builds the payload once, when the event is handled.
 pub async fn enqueue_event(pool: &PgPool, config: &Config, ev: &DomainEvent) -> Result<usize> {
+    enqueue_event_for(pool, config, None, ev).await
+}
+
+/// `enqueue_event`, and with an `authz` it sends nothing for a locked fork: a personal private fork
+/// whose owner lost access to a private repository it was forked from (ch-4pn.16).
+pub async fn enqueue_event_for(
+    pool: &PgPool,
+    config: &Config,
+    authz: Option<&dyn ch_core::services::Authz>,
+    ev: &DomainEvent,
+) -> Result<usize> {
     let base = config.server.external_url.trim_end_matches('/').to_string();
     let cx = Ctx { pool, base: &base, ssh: &config.ssh.external };
     let Some(built) = payload::build(&cx, ev).await? else { return Ok(0) };
     let Some(repo) = built.repo_id else { return Ok(0) };
+    if let Some(a) = authz
+        && ch_db::fork_lock::is_locked(pool, a, repo).await?
+    {
+        return Ok(0);
+    }
     let hooks: Vec<(i64, Vec<String>)> = sqlx::query_as(
         "SELECT id, events FROM webhooks WHERE active AND ((scope = 'repo' AND repo_id = $1) OR (scope = 'org' AND org_id = (SELECT owner_id FROM repositories WHERE id = $1)))",
     )

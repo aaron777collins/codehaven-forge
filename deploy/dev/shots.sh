@@ -48,6 +48,14 @@ export CODEHAVEN_TAG="$tag" CODEHAVEN_E2E_SUBNET CODEHAVEN_SHOTS_RUNNERS_SUBNET
 export HOST_PUBLIC_IPS="$(bash "$dir/deploy/prod/host-ips.sh")"
 export WEBHOOK_BLOCKED_IPS="$(bash "$dir/deploy/prod/host-ips.sh" --json)"
 compose=(docker compose -p "$project" -f "$dir/deploy/compose.shots.yml")
+public=https://shots.example.invalid
+if [ -n "${SHOTS_DOGFOOD:-}" ]; then
+  # The server's own fixed address on the runners network, which jobs use to reach it.
+  SHOTS_SERVER_RUNNERS_IP="$(python3 -c 'import ipaddress,sys; print(list(ipaddress.ip_network(sys.argv[1]).hosts())[99])' "$CODEHAVEN_SHOTS_RUNNERS_SUBNET")"
+  export SHOTS_SERVER_RUNNERS_IP
+  compose+=(-f "$dir/deploy/compose.shots-dogfood.yml")
+  public="http://$SHOTS_SERVER_RUNNERS_IP:3200"
+fi
 
 # Tears the whole project down. Safe when nothing was started, and never fails the script.
 cleanup() {
@@ -76,6 +84,16 @@ for _ in $(seq 1 60); do "${compose[@]}" exec -T dind docker info >/dev/null 2>&
 
 docker save codehaven-job:trixie | "${compose[@]}" exec -T dind docker load
 
+# SHOTS_DOGFOOD=1 (ch-d9s): also the builder image and Postgres for Codehaven's own workflow, which
+# the harness's step 26 pushes the source of this checkout to and waits for. A few GiB in dind.
+if [ -n "${SHOTS_DOGFOOD:-}" ]; then
+  builder="$(bash "$dir/deploy/dev/builder-image.sh")"
+  docker image inspect postgres:17-alpine >/dev/null 2>&1 || docker pull -q postgres:17-alpine >/dev/null
+  docker save "$builder" | "${compose[@]}" exec -T dind docker load
+  docker save postgres:17-alpine | "${compose[@]}" exec -T dind docker load
+  export E2E_SOURCE_DIR="$dir"
+fi
+
 # A fresh database knows no runner. The registration token comes from the server's own CLI and
 # goes through the environment only, so it never lands in `ps` or the log.
 tok=$("${compose[@]}" exec -T server codehaven admin runner-token | tail -1)
@@ -95,12 +113,14 @@ printf '{"name":"shots","private":true,"type":"module"}\n' > "$work/package.json
 
 # The host is the gateway of the `shots` subnet, which the server trusts.
 gateway=$(python3 -c 'import ipaddress,sys; print(next(ipaddress.ip_network(sys.argv[1]).hosts()))' "$CODEHAVEN_E2E_SUBNET")
-export E2E_BASE="http://$server_ip:3200" E2E_PUBLIC=https://shots.example.invalid E2E_SSH="$server_ip:2222"
+export E2E_BASE="http://$server_ip:3200" E2E_PUBLIC="$public" E2E_SSH="$server_ip:2222"
 export E2E_HOST_IP="$gateway" E2E_STEPS="${SHOTS_STEPS:-0-20}" E2E_TRACE=1 E2E_SHOTS="$work/session.json" E2E_PROJECT="$project"
-export E2E_CLI="docker compose -p $project -f $dir/deploy/compose.shots.yml exec -T server codehaven"
+export E2E_CLI="docker compose -p $project -f $dir/deploy/compose.shots.yml ${SHOTS_DOGFOOD:+-f $dir/deploy/compose.shots-dogfood.yml} exec -T server codehaven"
 rc=0
 python3 "$work/e2e_full.py" || rc=$?
 [ "$rc" = 0 ] || exit "$rc"
+# SHOTS_NO_SHOTS=1: the steps were the point, there is nothing to photograph.
+[ -z "${SHOTS_NO_SHOTS:-}" ] || exit 0
 
 rm -rf "$out"/*.png "$out/results.json"
 # shoot.mjs exits non-zero when it finds problems in the pages it shot: keep that exit code, but

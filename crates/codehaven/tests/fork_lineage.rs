@@ -102,3 +102,66 @@ async fn a_private_fork_is_closed_to_those_the_parent_is_closed_to(pool: PgPool)
     h.s.repos.set_collaborator(&alice.1, parent, bob.0, Permission::Read, &c()).await.unwrap();
     assert!(!ch_ci::triggers::fork_locked(&ctx, fork).await.unwrap(), "let back in, it runs again");
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_locked_fork_sends_no_webhook_and_its_deploy_key_opens_nothing(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let bob = user(&h, "bob").await;
+    let new = |name: &str| NewRepo {
+        owner_id: alice.0,
+        name: name.into(),
+        description: String::new(),
+        visibility: Visibility::Private,
+        default_branch: None,
+        auto_init: true,
+    };
+    let parent = h.s.repos.create(&alice.1, new("secret"), &c()).await.unwrap().id;
+    h.s.repos.set_collaborator(&alice.1, parent, bob.0, Permission::Read, &c()).await.unwrap();
+    let fork = h.s.repos.fork(&bob.1, parent, bob.0, &c()).await.unwrap().id;
+    // A hook and a deploy key on Bob's fork.
+    sqlx::query("INSERT INTO webhooks (scope, repo_id, url, events) VALUES ('repo', $1, 'https://hooks.example.org/x', '{push}')")
+        .bind(fork.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHIzrFktyI9MkcRsBc8oM1OR/rHUuvLeg/hMMYkyIir5 second@codehaven";
+    let parsed = ch_auth::sshkeys::parse_public_key(key).unwrap();
+    sqlx::query("INSERT INTO deploy_keys (repo_id, title, public_key, fingerprint, read_only) VALUES ($1, 'ci', $2, $3, true)")
+        .bind(fork.0)
+        .bind(&parsed.normalized)
+        .bind(&parsed.fingerprint)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let push = ch_core::events::DomainEvent::Push {
+        repo_id: fork,
+        git_ref: "refs/heads/main".into(),
+        before: "0".repeat(40),
+        after: "b".repeat(40),
+        pusher: Some(bob.0),
+        forced: false,
+        app: None,
+        server_built: false,
+    };
+    let sent = |pool: PgPool, h: &H, push: &ch_core::events::DomainEvent| {
+        let (cfg, authz, push) = (h.s.config.clone(), h.s.authz.clone(), push.clone());
+        async move { ch_notify::webhooks::enqueue_event_for(&pool, &cfg, Some(authz.as_ref()), &push).await.unwrap() }
+    };
+    let opens = |h: &H| {
+        let authn = h.s.authn.clone();
+        let fp = parsed.fingerprint.clone();
+        async move { authn.from_ssh_key(&fp).await.unwrap().is_some() }
+    };
+    // Open: both work.
+    assert_eq!(sent(pool.clone(), &h, &push).await, 1);
+    assert!(opens(&h).await);
+    // Alice shuts Bob out of the original: the fork is his, but it is locked.
+    h.s.repos.remove_collaborator(&alice.1, parent, bob.0, &c()).await.unwrap();
+    assert_eq!(sent(pool.clone(), &h, &push).await, 0, "no webhook leaves a locked fork");
+    assert!(!opens(&h).await, "its deploy key opens nothing");
+    // Let back in, both work again.
+    h.s.repos.set_collaborator(&alice.1, parent, bob.0, Permission::Read, &c()).await.unwrap();
+    assert_eq!(sent(pool.clone(), &h, &push).await, 1);
+    assert!(opens(&h).await);
+}

@@ -404,13 +404,60 @@ fn rank(v: Visibility) -> u8 {
 
 /// Who a run acts for: a pull request from a fork, and the person who started it (none for a
 /// scheduled run).
-struct Who {
-    fork: bool,
-    actor: Option<ch_core::UserId>,
+pub(crate) struct Who {
+    pub fork: bool,
+    pub actor: Option<ch_core::UserId>,
+}
+
+/// May a run in `caller` use code from `target` on this instance? It is the caller's own
+/// repository, or public, or has the same owner and is at least as visible as the caller and is
+/// readable by whoever started the run: a member of an organization does not get a repository's
+/// code by naming it in a workflow when they cannot read it themselves. A pull request from a fork
+/// runs code nobody here vouched for, so it gets public repositories only; so does a scheduled run,
+/// which has no person behind it. Used for actions and for reusable workflows.
+pub(crate) async fn may_use_repo(ctx: &Ctx, caller: &ch_core::model::Repo, who: &Who, target: &ch_core::model::Repo) -> Result<bool> {
+    let public_now = ctx.authz.repo_permission(&Actor::Anonymous, target.id).await? >= Permission::View;
+    let own = target.id == caller.id;
+    Ok(if who.fork {
+        public_now
+    } else {
+        own || public_now || {
+            let same = target.owner_id == caller.owner_id && rank(target.visibility) >= rank(caller.visibility);
+            let readable = match who.actor {
+                Some(u) => {
+                    let person = Actor::User { id: u, is_admin: false, has_2fa: false, via: ch_core::AuthVia::Session };
+                    ctx.authz.repo_permission(&person, target.id).await? >= Permission::Read
+                }
+                None => false,
+            };
+            same && readable
+        }
+    })
+}
+
+/// The commit a branch, tag or full SHA names in `target`, never one only a fork's pull request
+/// has: `refs/pull/*` and bare commits that no branch or tag reaches do not count.
+pub(crate) async fn commit_of_ref(ctx: &Ctx, target: RepoId, full: &str, git_ref: &str) -> Result<String> {
+    if is_full_sha(git_ref) {
+        let sha = git_ref.to_ascii_lowercase();
+        if !ctx.git.reachable(target, &sha).await.unwrap_or(false) {
+            return Err(not_in_repo(full, &sha));
+        }
+        return Ok(sha);
+    }
+    for r in [format!("refs/tags/{git_ref}"), format!("refs/heads/{git_ref}")] {
+        if ctx.source.exact_ref(target, &r).await?.is_some() {
+            return ctx.source.resolve(target, &format!("{r}^{{commit}}")).await;
+        }
+    }
+    Err(Error::invalid(
+        "Actions",
+        "uses",
+        format!("{full} has no tag or branch named {git_ref}. Use a tag, a branch or a full commit SHA."),
+    ))
 }
 
 async fn haven(ctx: &Ctx, job: &JobRow, who: &Who, owner: &str, repo: &str, git_ref: &str) -> Result<(String, String)> {
-    let fork = who.fork;
     let full = format!("haven_{owner}/{repo}");
     let missing = || Error::invalid("Actions", "uses", format!("{full} was not found on this instance."));
     let target = match ctx.repos.get_by_name(&Actor::System, owner, repo).await {
@@ -419,57 +466,12 @@ async fn haven(ctx: &Ctx, job: &JobRow, who: &Who, owner: &str, repo: &str, git_
         Err(e) => return Err(e),
     };
     let caller = ctx.repos.get(&Actor::System, RepoId(job.repo_id)).await?;
-    let public_now = ctx.authz.repo_permission(&Actor::Anonymous, target.id).await? >= Permission::View;
-    let own = target.id == caller.id;
-    let allowed = if fork {
-        // A pull request from a fork runs code nobody here vouched for: public actions only.
-        public_now
-    } else {
-        own || public_now || {
-            // Same owner and at least as visible, and readable by whoever started the run: a
-            // member of an organization does not get a repository's code by naming it in a
-            // workflow when they cannot read it themselves.
-            let same = target.owner_id == caller.owner_id && rank(target.visibility) >= rank(caller.visibility);
-            let readable = match who.actor {
-                Some(u) => {
-                    let person = Actor::User { id: u, is_admin: false, has_2fa: false, via: ch_core::AuthVia::Session };
-                    ctx.authz.repo_permission(&person, target.id).await? >= Permission::Read
-                }
-                // A scheduled run has no person behind it, and whoever pushed its workflow may not
-                // be able to read that repository: nothing but its own and public ones.
-                None => false,
-            };
-            same && readable
-        }
-    };
     // A repository the job may not use looks exactly like one that does not exist.
-    if !allowed {
+    if !may_use_repo(ctx, &caller, who, &target).await? {
         return Err(missing());
     }
-
     // Only a branch or tag of that repository: never refs/pull, never a commit only a fork has.
-    let sha = if is_full_sha(git_ref) {
-        let sha = git_ref.to_ascii_lowercase();
-        if !ctx.git.reachable(target.id, &sha).await.unwrap_or(false) {
-            return Err(not_in_repo(&full, &sha));
-        }
-        sha
-    } else {
-        let mut found = None;
-        for r in [format!("refs/tags/{git_ref}"), format!("refs/heads/{git_ref}")] {
-            if ctx.source.exact_ref(target.id, &r).await?.is_some() {
-                found = Some(ctx.source.resolve(target.id, &format!("{r}^{{commit}}")).await?);
-                break;
-            }
-        }
-        found.ok_or_else(|| {
-            Error::invalid(
-                "Actions",
-                "uses",
-                format!("{full} has no tag or branch named {git_ref}. Use a tag, a branch or a full commit SHA."),
-            )
-        })?
-    };
+    let sha = commit_of_ref(ctx, target.id, &full, git_ref).await?;
     let key = format!("{owner}/{repo}").to_ascii_lowercase();
     if let Some(blob) = known_archive(ctx, "haven", &key, &sha).await? {
         return Ok((sha, blob));

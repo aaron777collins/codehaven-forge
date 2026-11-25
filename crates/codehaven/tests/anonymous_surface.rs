@@ -120,6 +120,8 @@ fn probes() -> Router<AppState> {
         .route("/owner/repo.git/info/refs", get(|| async { "SECRET-GIT" }))
         .route("/v2/secret", get(|| async { "SECRET-REGISTRY" }))
         .route("/api/runner/v1/secret", any(|| async { "SECRET-RUNNER" }))
+        .route("/nuget/secret", any(|| async { "SECRET-NUGET" }))
+        .route("/twirp/secret/Method", any(|| async { "SECRET-TWIRP" }))
 }
 
 fn app(cfg: Config, fake_auth: bool) -> Router {
@@ -492,6 +494,10 @@ async fn each_credential_opens_only_its_own_kind_of_route() {
     let git = "/owner/repo.git/info/refs";
     let registry = "/v2/secret";
     let runner_api = "/api/runner/v1/secret";
+    // C9: the NuGet feed answers like git (Basic, tokens, jobs, never a browser session) and the
+    // artifact service like the runner API (a job's credential and a runner's).
+    let nuget = "/nuget/secret";
+    let twirp = "/twirp/secret/Method";
     let cases: Vec<(&str, &str, &[(&str, &str)], bool)> = vec![
         (page, "session", &session, true),
         (page, "basic", &basic, false),
@@ -519,6 +525,16 @@ async fn each_credential_opens_only_its_own_kind_of_route() {
         (runner_api, "token", &token, false),
         (runner_api, "job", &job, true),
         (runner_api, "runner", &runner, true),
+        (nuget, "session", &session, false),
+        (nuget, "basic", &basic, true),
+        (nuget, "token", &token, true),
+        (nuget, "job", &job, true),
+        (nuget, "runner", &runner, false),
+        (twirp, "session", &session, false),
+        (twirp, "basic", &basic, false),
+        (twirp, "token", &token, false),
+        (twirp, "job", &job, true),
+        (twirp, "runner", &runner, true),
     ];
     for (path, name, creds, allowed) in cases {
         let r = send(&app, Method::GET, path, creds, None).await;
@@ -528,6 +544,25 @@ async fn each_credential_opens_only_its_own_kind_of_route() {
             assert!(r.status == StatusCode::SEE_OTHER || r.status == StatusCode::UNAUTHORIZED);
         }
     }
+}
+
+#[tokio::test]
+async fn the_nuget_api_key_header_signs_in_on_the_feed_and_nowhere_else() {
+    let app = app(config(&[]), true);
+    let key = [("x-nuget-apikey", "chp_good")];
+    let on_feed = send(&app, Method::PUT, "/nuget/secret", &key, None).await;
+    assert!(on_feed.body.starts_with("SECRET-"), "{} {}", on_feed.status, on_feed.body);
+    for path in ["/api/v3/secret", "/v2/secret", "/api/runner/v1/secret", "/secret/page", "/twirp/secret/Method"] {
+        let r = send(&app, Method::GET, path, &key, None).await;
+        assert!(!r.body.starts_with("SECRET-"), "the key header opened {path}");
+    }
+    // A bad key and an Authorization header that is not a credential are no credential.
+    let bad = send(&app, Method::PUT, "/nuget/secret", &[("x-nuget-apikey", "nope")], None).await;
+    assert_eq!(bad.status, StatusCode::UNAUTHORIZED);
+    assert!(bad.headers.get("www-authenticate").and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("Basic")));
+    // With an Authorization header present, the key is ignored.
+    let both = send(&app, Method::PUT, "/nuget/secret", &[("authorization", "Bearer nope"), ("x-nuget-apikey", "chp_good")], None).await;
+    assert!(!both.body.starts_with("SECRET-"));
 }
 
 #[tokio::test]

@@ -247,3 +247,4 @@ POST /oauth/token
 POST /password/forgot
 POST /password/{token}
 POST /{owner}/{repo}/git-upload-pack
+PUT /api/runner/v1/toolkit/blobs/{grant}

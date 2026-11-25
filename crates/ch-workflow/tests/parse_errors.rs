@@ -84,10 +84,36 @@ fn services_parse_and_bad_ones_are_named() {
 fn unsupported_features_are_named() {
     let job = |extra: &str| format!("on: push\njobs:\n  a:\n    runs-on: x\n{extra}    steps:\n      - run: x\n");
     expect(&job("    environment: prod\n"), 5, "`environment:`");
-    expect("on: push\njobs:\n  a:\n    uses: ./.github/workflows/x.yml\n", 4, "reusable workflows");
-    expect(&format!("on:\n  workflow_call:\n{OK_JOBS}"), 2, "`workflow_call`");
     expect(&format!("on:\n  pull_request_target:\n{OK_JOBS}"), 2, "pull_request_target");
     expect(&format!("on:\n  issues:\n{OK_JOBS}"), 2, "event `issues` is not supported");
+}
+
+#[test]
+fn reusable_workflows_parse_and_bad_calls_are_named() {
+    // The called side.
+    let w = parse(&format!(
+        "on:\n  workflow_call:\n    inputs:\n      v: {{type: string, required: true}}\n      n: {{type: number, default: 3}}\n    secrets:\n      t: {{required: true}}\n    outputs:\n      o:\n        value: ${{{{ jobs.j.outputs.x }}}}\n{OK_JOBS}"
+    ))
+    .unwrap();
+    let wc = w.triggers.workflow_call.unwrap();
+    assert_eq!((wc.inputs.len(), wc.secrets.len(), wc.outputs.len()), (2, 1, 1));
+    assert!(wc.inputs[0].required && wc.secrets[0].required);
+    assert_eq!(wc.outputs[0].value, "${{ jobs.j.outputs.x }}");
+    expect(&format!("on:\n  workflow_call:\n    inputs:\n      v: {{required: true}}\n{OK_JOBS}"), 4, "needs a `type`");
+    expect(&format!("on:\n  workflow_call:\n    outputs:\n      o: {{description: d}}\n{OK_JOBS}"), 4, "needs a `value`");
+    expect(&format!("on:\n  workflow_call:\n    nope: 1\n{OK_JOBS}"), 3, "unknown key `nope`");
+    // The calling side.
+    let call = |extra: &str| format!("on: push\njobs:\n  a:\n    uses: ./.github/workflows/x.yml\n{extra}");
+    let w = parse(&call("    with:\n      v: 1\n    secrets: inherit\n")).unwrap();
+    let c = w.jobs[0].call.clone().unwrap();
+    assert_eq!((c.uses.as_str(), c.with["v"].as_str(), c.secrets), ("./.github/workflows/x.yml", "1", ch_workflow::CallSecrets::Inherit));
+    assert!(w.jobs[0].steps.is_empty() && w.jobs[0].runs_on.is_empty());
+    expect(&call("    runs-on: x\n"), 5, "cannot be used on job `a`");
+    expect(&call("    steps:\n      - run: x\n"), 5, "cannot be used on job `a`");
+    expect(&call("    strategy:\n      matrix:\n        a: [1]\n"), 5, "cannot be used on job `a`");
+    expect("on: push\njobs:\n  a:\n    uses: ./x.yml\n", 4, "is not a workflow file");
+    expect("on: push\njobs:\n  a:\n    uses: octo/r/.github/workflows/x.yml@v1\n", 4, "haven_owner/repo");
+    expect("on: push\njobs:\n  a:\n    runs-on: x\n    with:\n      v: 1\n    steps:\n      - run: x\n", 3, "belong to a job that calls");
 }
 
 #[test]

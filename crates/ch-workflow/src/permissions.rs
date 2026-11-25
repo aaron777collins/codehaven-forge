@@ -169,6 +169,11 @@ impl TokenPermissions {
         copy.get_mut(scope).map(|l| *l).unwrap_or(Level::None)
     }
 
+    /// The same permissions as a `permissions:` block that names every scope a token can have.
+    pub fn to_declared(&self) -> Declared {
+        Declared::Scopes(self.describe().into_iter().map(|(s, l)| (s.to_string(), l)).collect())
+    }
+
     /// The scopes as GitHub names them with their level, for the job's log.
     pub fn describe(&self) -> Vec<(&'static str, Level)> {
         MAX.iter().map(|(s, _)| (*s, self.clone_level(s))).collect()

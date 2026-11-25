@@ -26,6 +26,7 @@ use axum::Json;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::handler::Handler;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -39,9 +40,9 @@ use serde_json::json;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 /// How long an archive link works.
-const GRANT_SECONDS: i64 = 3600;
+pub(crate) const GRANT_SECONDS: i64 = 3600;
 /// The most one upload range may carry.
-const MAX_RANGE: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_RANGE: u64 = 64 * 1024 * 1024;
 /// How many ranges one job may have open at once. The toolkit sends four at a time.
 pub const MAX_JOB_RANGES: usize = 8;
 /// How many caches one job may be saving at once.
@@ -49,7 +50,7 @@ pub const MAX_JOB_RESERVATIONS: i64 = 20;
 /// How many ranges the whole server takes at once, over every job.
 pub const MAX_SERVER_RANGES: usize = 32;
 /// How long a range may go without sending a byte before it is dropped.
-const RANGE_IDLE: std::time::Duration = std::time::Duration::from_secs(60);
+pub(crate) const RANGE_IDLE: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Who has a range open, so a burst of them cannot tie the server up. Ranges are written to the
 /// disk as they arrive, so one costs a read buffer and a file handle, never its 64 MiB; this
@@ -89,7 +90,7 @@ impl Drop for RangeSlot {
     }
 }
 
-fn range_slots() -> &'static std::sync::Arc<RangeSlots> {
+pub(crate) fn range_slots() -> &'static std::sync::Arc<RangeSlots> {
     static SLOTS: std::sync::OnceLock<std::sync::Arc<RangeSlots>> = std::sync::OnceLock::new();
     SLOTS.get_or_init(Default::default)
 }
@@ -103,12 +104,15 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/toolkit/_apis/artifactcache/cache", get(lookup))
         .route("/toolkit/_apis/artifactcache/caches", post(reserve))
-        .route("/toolkit/blobs/{grant}", get(download))
+        .route(
+            "/toolkit/blobs/{grant}",
+            get(download).put(crate::toolkit_artifacts::put_blob.layer(DefaultBodyLimit::max(MAX_RANGE as usize + 1024))),
+        )
         .merge(ranges)
 }
 
 /// The job behind the runtime token, still running.
-async fn job(ctx: &Ctx, actor: &Actor) -> Result<JobRow> {
+pub(crate) async fn job(ctx: &Ctx, actor: &Actor) -> Result<JobRow> {
     let Actor::Job { job_id, .. } = actor else { return Err(Error::NotFound) };
     sqlx::query_as::<_, JobRow>(&format!("SELECT {JOB_COLS} FROM workflow_jobs WHERE id = $1 AND status = 'in_progress'"))
         .bind(job_id.0)
@@ -129,7 +133,7 @@ pub fn tmp_dir(ctx: &Ctx) -> std::path::PathBuf {
 
 /// What the uploads waiting in `dir` hold now. A file's length, which is what it takes on disk
 /// at most.
-async fn inflight_bytes(dir: &std::path::Path) -> u64 {
+pub(crate) async fn inflight_bytes(dir: &std::path::Path) -> u64 {
     let Ok(mut rd) = tokio::fs::read_dir(dir).await else { return 0 };
     let mut total = 0u64;
     while let Ok(Some(e)) = rd.next_entry().await {
@@ -155,6 +159,7 @@ pub async fn drop_abandoned_uploads(ctx: &Ctx) -> Result<u64> {
     let dir = tmp_dir(ctx);
     for id in &ids {
         let _ = tokio::fs::remove_file(dir.join(format!("cache-{id}.part"))).await;
+        crate::toolkit_artifacts::remove_upload_files(&dir, *id).await;
     }
     // A file with no reservation. A reservation is made before its first byte is written, so a
     // file this old with none was left behind.
@@ -163,7 +168,7 @@ pub async fn drop_abandoned_uploads(ctx: &Ctx) -> Result<u64> {
         sqlx::query_scalar("SELECT id FROM toolkit_uploads").fetch_all(&ctx.db).await?.into_iter().collect();
     while let Ok(Some(e)) = rd.next_entry().await {
         let name = e.file_name().to_string_lossy().to_string();
-        let id = name.strip_prefix("cache-").and_then(|n| n.strip_suffix(".part")).and_then(|n| n.parse::<i64>().ok());
+        let id = upload_id_of(&name);
         let old = e
             .metadata()
             .await
@@ -178,7 +183,17 @@ pub async fn drop_abandoned_uploads(ctx: &Ctx) -> Result<u64> {
     Ok(ids.len() as u64)
 }
 
-fn may_write(actor: &Actor) -> Result<()> {
+/// The upload a file in the toolkit's temporary directory belongs to: `cache-<id>.part`,
+/// `art-<id>.part`, `art-<id>.joining` or `art-<id>-<block>.blk`.
+fn upload_id_of(name: &str) -> Option<i64> {
+    if let Some(n) = name.strip_prefix("cache-").and_then(|n| n.strip_suffix(".part")) {
+        return n.parse().ok();
+    }
+    let n = name.strip_prefix("art-")?;
+    n.split(['.', '-']).next()?.parse().ok()
+}
+
+pub(crate) fn may_write(actor: &Actor) -> Result<()> {
     match actor {
         Actor::Job { perms, .. } if perms.runtime_write() => Ok(()),
         _ => Err(Error::forbidden("A pull request from a fork may read caches but not save them.")),
@@ -201,7 +216,7 @@ pub fn grant(ctx: &Ctx, kind: &str, id: i64) -> String {
 }
 
 /// The id a grant is for, when it is this server's, of this kind, and not expired.
-fn check_grant(ctx: &Ctx, g: &str, want: &str) -> Option<i64> {
+pub(crate) fn check_grant(ctx: &Ctx, g: &str, want: &str) -> Option<i64> {
     let mut p = g.split('.');
     let (kind, id, exp, sig) = (p.next()?, p.next()?, p.next()?, p.next()?);
     if p.next().is_some() || kind != want || sig.len() != 64 {
@@ -419,6 +434,10 @@ async fn commit(
 /// The archive behind a signed link. Anything wrong with the link is a plain 404.
 async fn download(State(state): State<AppState>, Path(g): Path<String>) -> Response {
     let ctx = Ctx::from_state(&state);
+    // An artifact's zip (the artifact service) or a cache archive.
+    if g.starts_with("a.") {
+        return crate::toolkit_artifacts::download(&ctx, &g).await.unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
+    }
     let Some(id) = check_grant(&ctx, &g, "c") else { return StatusCode::NOT_FOUND.into_response() };
     let row: Option<(String, i64)> =
         match sqlx::query_as("UPDATE caches SET last_used_at = now() WHERE id = $1 RETURNING blob_sha256, size")

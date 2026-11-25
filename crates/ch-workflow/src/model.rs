@@ -35,6 +35,10 @@ pub struct Triggers {
     pub workflow_dispatch: Option<Dispatch>,
     pub schedule: Vec<ScheduleTrigger>,
     pub release: Option<ReleaseTrigger>,
+    /// `on: workflow_call`: this file is a reusable workflow (ch-ctk.7). It starts no run of its
+    /// own; a job of another workflow calls it with `uses:`.
+    #[serde(default)]
+    pub workflow_call: Option<WorkflowCall>,
 }
 
 impl Triggers {
@@ -44,6 +48,7 @@ impl Triggers {
             && self.workflow_dispatch.is_none()
             && self.schedule.is_empty()
             && self.release.is_none()
+            && self.workflow_call.is_none()
     }
 
     /// Names of the events this workflow listens to, in a stable order.
@@ -64,8 +69,86 @@ impl Triggers {
         if self.release.is_some() {
             v.push("release");
         }
+        if self.workflow_call.is_some() {
+            v.push("workflow_call");
+        }
         v
     }
+}
+
+/// What a reusable workflow takes and gives back (`on.workflow_call`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowCall {
+    pub inputs: Vec<CallInput>,
+    pub secrets: Vec<CallSecret>,
+    pub outputs: Vec<CallOutput>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CallInputType {
+    String,
+    Boolean,
+    Number,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallInput {
+    pub name: String,
+    pub description: String,
+    pub required: bool,
+    pub kind: CallInputType,
+    pub default: Option<Json>,
+    pub line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallSecret {
+    pub name: String,
+    pub required: bool,
+    pub line: u32,
+}
+
+/// An output of a reusable workflow. `value` is an expression over its jobs, such as
+/// `${{ jobs.build.outputs.version }}`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallOutput {
+    pub name: String,
+    pub description: String,
+    pub value: String,
+    pub line: u32,
+}
+
+/// The secrets a calling job passes on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CallSecrets {
+    /// `secrets: inherit`: every secret of the calling repository.
+    Inherit,
+    /// `secrets: {name: ${{ secrets.OTHER }}}`: only these, by the called workflow's names.
+    Map(BTreeMap<String, String>),
+}
+
+/// The part a server-side job plays for an inlined reusable workflow call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallRole {
+    /// Stands for the calling job's `needs` and `if`: the called jobs wait for it, and it
+    /// succeeds when the caller would have run, or is skipped when it would not.
+    Entry,
+    /// Takes the calling job's key, waits for every called job, and gives the call's result and
+    /// outputs to the jobs that need the caller.
+    Exit,
+}
+
+/// A job that calls a reusable workflow (`uses:` on the job, ch-ctk.7). It has no steps and no
+/// runner of its own: the run inlines the called workflow's jobs in its place.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Call {
+    /// `./.codehaven/workflows/x.yml` or `haven_owner/repo/.codehaven/workflows/x.yml@ref`.
+    pub uses: String,
+    pub with: BTreeMap<String, String>,
+    pub secrets: CallSecrets,
+    pub line: u32,
 }
 
 /// Branch, tag and path filters. `None` means the key was not written, which is different from
@@ -201,6 +284,17 @@ pub struct Job {
     pub permissions: Option<crate::permissions::Declared>,
     #[serde(default)]
     pub services: BTreeMap<String, Service>,
+    /// Set when this job calls a reusable workflow. Such a job has no `runs_on` and no steps.
+    #[serde(default)]
+    pub call: Option<Call>,
+    /// Set on the two jobs the server makes in place of a call (`reusable::expand`): they have no
+    /// steps and no runner, and the server finishes them itself.
+    #[serde(default)]
+    pub call_role: Option<CallRole>,
+    /// Set on a job that came from a called workflow (`reusable::expand`). The caller's
+    /// workflow-level `env` and `defaults` do not reach it.
+    #[serde(default)]
+    pub called: bool,
     pub steps: Vec<Step>,
 }
 

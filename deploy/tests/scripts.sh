@@ -708,6 +708,172 @@ check 'G: ci-up register --replace takes the name from the env' g_line 'haven-ru
 cp "$T/g-compose.sh" "$TREE/deploy/compose.sh"
 cp "$T/g-diskcheck.sh" "$TREE/deploy/dev/diskcheck.sh"
 
+# --- section H: the optional off-site copy ---------------------------------------------------
+# backup-offsite.sh sends nothing, and prints nothing, until CODEHAVEN_BACKUP_OFFSITE names
+# a destination; the passphrase file must be root-only; the archive is encrypted with
+# openssl before it leaves and only the .enc file is sent. It needs no root, so nothing here
+# skips itself and backup-daily.sh is never run. The senders are fakes that record their
+# arguments one per line; the rsync one also copies the file it was handed, so the
+# encryption itself is checked for real with openssl.
+
+if command -v openssl >/dev/null 2>&1; then
+  # The minimal env file, like the F tests: no off-site setting in it.
+  printf 'CODEHAVEN_PROJECT=test-x\nCODEHAVEN_BACKUP_DIR=%s\n' "$T/h-backups" > "$T/h.env"
+
+  # The archive and the root-only passphrase the tests share.
+  printf 'PLAINTEXT-MARKER secret master key\n' > "$T/h-archive"
+  printf 'correct horse\n' > "$T/h-pass"
+  chmod 600 "$T/h-pass"
+
+  # A fake rsync: it records its arguments and copies its second to last argument (the local
+  # file, after the -e option). An executable file, so the hook is a plain path and the
+  # script needs no word splitting to run it.
+  cat > "$T/h-fakersync.sh" <<FAKE
+#!/usr/bin/env bash
+printf '%s\n' "\$@" >> "$T/h-rsync.calls"
+shift \$((\$# - 2))
+cp "\$1" "$T/h-sent.enc"
+FAKE
+  chmod +x "$T/h-fakersync.sh"
+
+  # A fake aws: it only records its arguments.
+  cat > "$T/h-fakeaws.sh" <<FAKE
+#!/usr/bin/env bash
+printf '%s\n' "\$@" >> "$T/h-aws.calls"
+FAKE
+  chmod +x "$T/h-fakeaws.sh"
+
+  # A sender that always fails.
+  printf 'exit 1\n' > "$T/h-fail.sh"
+  chmod +x "$T/h-fail.sh"
+
+  # h_run <archive> [KEY=value...]: backup-offsite.sh on the scratch tree, clean environment,
+  # the env file above, then the listed variables set. Output lands in $T/h.out, the exit
+  # status in $h_rc.
+  h_run() {
+    local archive="$1" kv k v; shift
+    : > "$T/h.out"
+    (
+      unset_test_env
+      CH_ENV_FILE="$T/h.env"
+      export CH_ENV_FILE
+      for kv in "$@"; do
+        k="${kv%%=*}"; v="${kv#*=}"
+        export "$k=$v"
+      done
+      bash "$TREE/deploy/prod/backup-offsite.sh" "$archive" > "$T/h.out" 2>&1
+    )
+    h_rc=$?
+  }
+
+  # h_last <prefix>: the last line of $T/h.out starts with <prefix>.
+  h_last() {
+    local line
+    line=$(tail -n 1 "$T/h.out")
+    case "$line" in "$1"*) return 0 ;; *) return 1 ;; esac
+  }
+
+  # H1: with no destination named, the script exits 0 having printed nothing.
+  h_run "$T/h-archive"
+  if [ "$h_rc" = 0 ] && [ ! -s "$T/h.out" ]; then
+    ok 'H: with no destination set nothing is sent and nothing is printed'
+  else
+    bad 'H: with no destination set nothing is sent and nothing is printed'
+  fi
+
+  # H2: the passphrase file is refused when it is readable by others, missing or empty.
+  printf 'correct horse\n' > "$T/h-pass644"
+  chmod 644 "$T/h-pass644"
+  : > "$T/h-passempty"
+  chmod 600 "$T/h-passempty"
+  h2() {
+    local name="$1" file="$2"
+    h_run "$T/h-archive" \
+      CODEHAVEN_BACKUP_OFFSITE=rsync:backup@example.invalid:/srv/b \
+      CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE="$file"
+    if [ "$h_rc" != 0 ] && grep -q CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE "$T/h.out"; then
+      ok "$name"
+    else
+      bad "$name"
+    fi
+  }
+  h2 'H: a passphrase file readable by others is refused' "$T/h-pass644"
+  h2 'H: a missing passphrase file is refused' "$T/h-pass-missing"
+  h2 'H: an empty passphrase file is refused' "$T/h-passempty"
+
+  # H3: the rsync form sends one encrypted copy that decrypts back to the archive.
+  : > "$T/h-rsync.calls"
+  rm -f "$T/h-sent.enc" "$T/h-dec"
+  h_run "$T/h-archive" \
+    CODEHAVEN_BACKUP_OFFSITE=rsync:backup@example.invalid:/srv/b \
+    CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE="$T/h-pass" \
+    CH_OFFSITE_RSYNC="$T/h-fakersync.sh"
+  if [ "$h_rc" = 0 ] \
+    && [ "$(grep -c '^backup@example.invalid:/srv/b/$' "$T/h-rsync.calls" || true)" = 1 ] \
+    && [ -f "$T/h-sent.enc" ] \
+    && ! grep -q PLAINTEXT-MARKER "$T/h-sent.enc" \
+    && openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass "file:$T/h-pass" \
+         -in "$T/h-sent.enc" -out "$T/h-dec" \
+    && cmp -s "$T/h-archive" "$T/h-dec" \
+    && h_last 'offsite: backup@example.invalid:/srv/b/h-archive.enc'; then
+    ok 'H: rsync sends one encrypted copy that decrypts back'
+  else
+    bad 'H: rsync sends one encrypted copy that decrypts back'
+  fi
+
+  # H4: the s3 form, with and without an endpoint.
+  : > "$T/h-aws.calls"
+  h_run "$T/h-archive" \
+    CODEHAVEN_BACKUP_OFFSITE=s3://bucket/prefix \
+    CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE="$T/h-pass" \
+    CODEHAVEN_BACKUP_OFFSITE_ENDPOINT=https://s3.example.invalid \
+    CH_OFFSITE_AWS="$T/h-fakeaws.sh"
+  if [ "$h_rc" = 0 ] \
+    && grep -q '^s3$' "$T/h-aws.calls" \
+    && grep -q '^cp$' "$T/h-aws.calls" \
+    && grep -q '^s3://bucket/prefix/$' "$T/h-aws.calls" \
+    && grep -A1 '^--endpoint-url$' "$T/h-aws.calls" | grep -q '^https://s3.example.invalid$'; then
+    ok 'H: the s3 form uses aws s3 cp and the endpoint'
+  else
+    bad 'H: the s3 form uses aws s3 cp and the endpoint'
+  fi
+  : > "$T/h-aws.calls"
+  h_run "$T/h-archive" \
+    CODEHAVEN_BACKUP_OFFSITE=s3://bucket/prefix \
+    CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE="$T/h-pass" \
+    CH_OFFSITE_AWS="$T/h-fakeaws.sh"
+  if [ "$h_rc" = 0 ] \
+    && grep -q '^s3://bucket/prefix/$' "$T/h-aws.calls" \
+    && ! grep -q '^--endpoint-url$' "$T/h-aws.calls"; then
+    ok 'H: with no endpoint set, no --endpoint-url is passed'
+  else
+    bad 'H: with no endpoint set, no --endpoint-url is passed'
+  fi
+
+  # H5: any other form is refused.
+  h_run "$T/h-archive" \
+    CODEHAVEN_BACKUP_OFFSITE=ftp://x \
+    CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE="$T/h-pass"
+  if [ "$h_rc" != 0 ]; then
+    ok 'H: an unknown destination form is refused'
+  else
+    bad 'H: an unknown destination form is refused'
+  fi
+
+  # H6: a failing sender fails the run.
+  h_run "$T/h-archive" \
+    CODEHAVEN_BACKUP_OFFSITE=rsync:backup@example.invalid:/srv/b \
+    CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE="$T/h-pass" \
+    CH_OFFSITE_RSYNC="$T/h-fail.sh"
+  if [ "$h_rc" != 0 ]; then
+    ok 'H: a failing sender fails the run'
+  else
+    bad 'H: a failing sender fails the run'
+  fi
+else
+  skip 'H: openssl is missing'
+fi
+
 # --- the count -----------------------------------------------------------------------------
 
 printf '\n# %d passed, %d failed, %d skipped\n' "$passed" "$failed" "$skipped"

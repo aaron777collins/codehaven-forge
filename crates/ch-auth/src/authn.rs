@@ -313,7 +313,14 @@ impl Authn for AuthnService {
             .bind(fingerprint)
             .fetch_optional(&self.core.db)
             .await?;
-        Ok(deploy.map(|(repo_id, read_only)| SshIdentity::Deploy { repo_id: RepoId(repo_id), read_only }))
+        let Some((repo_id, read_only)) = deploy else { return Ok(None) };
+        // A key on a locked fork opens nothing: the fork's owner lost access to a repository it
+        // was forked from, and a key must not outlast that (ch-4pn.16).
+        let authz = crate::authz::AuthzService::new(self.core.clone());
+        if ch_db::fork_lock::is_locked(&self.core.db, &authz, RepoId(repo_id)).await? {
+            return Ok(None);
+        }
+        Ok(Some(SshIdentity::Deploy { repo_id: RepoId(repo_id), read_only }))
     }
 
     async fn recheck(&self, credential: &Credential) -> Result<Option<Actor>> {

@@ -1,0 +1,15 @@
+# Added to deploy/compose.shots.yml by deploy/dev/shots.sh when SHOTS_DOGFOOD=1 (ch-d9s). The jobs
+# of the stack must reach its server, which has no public https name here, so the server gets a
+# fixed address on the runners network, names itself by it, and dind's guard lets jobs open
+# connections to that one address and port. Nothing else about the guard changes.
+services:
+  server:
+    environment:
+      CODEHAVEN__SERVER__EXTERNAL_URL: http://${SHOTS_SERVER_RUNNERS_IP:?set by deploy/dev/shots.sh}:3200
+    networks:
+      shots: {}
+      runners:
+        ipv4_address: ${SHOTS_SERVER_RUNNERS_IP:?set by deploy/dev/shots.sh}
+  dind:
+    environment:
+      GUARD_ALLOW: ${SHOTS_SERVER_RUNNERS_IP:?set by deploy/dev/shots.sh}:3200

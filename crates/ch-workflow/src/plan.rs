@@ -271,7 +271,7 @@ pub fn plan_cell(
         // The labels may read `matrix`, which does not exist yet. They are worked out per cell.
         runs_on = job.runs_on.clone();
         diags.retain(|d| !d.message.contains("`runs-on`"));
-    } else if runs_on.is_empty() && diags.is_empty() {
+    } else if runs_on.is_empty() && diags.is_empty() && job.call_role.is_none() {
         diags.push(fail("`runs-on` has no label once its expressions are filled in".into()));
     }
     let eval_bool = |raw: &Option<String>| -> Result<bool, String> {

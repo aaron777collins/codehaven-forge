@@ -24,6 +24,8 @@ pub mod parse;
 pub mod permissions;
 pub mod plan;
 pub mod refs;
+pub mod reusable;
+pub mod rewrite;
 pub mod schedule;
 pub mod trigger;
 pub mod uses;

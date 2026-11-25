@@ -65,6 +65,28 @@ impl Rig {
     }
 }
 
+/// Polls `cond` every 20 ms until it is true or `limit` passes. Panics with `what` on timeout.
+async fn wait_until(limit: Duration, what: &str, mut cond: impl FnMut() -> bool) {
+    let start = Instant::now();
+    while !cond() {
+        assert!(start.elapsed() < limit, "timed out waiting for: {what}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// When the job's only step started and ended, as nanosecond timestamps read from its log.
+fn span(server: &FakeServer, id: i64) -> (u128, u128) {
+    let log = server.step_log(id, 1);
+    let stamp = |prefix: &str| {
+        log.lines()
+            .find(|l| l.starts_with(prefix))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|f| f.parse::<u128>().ok())
+            .unwrap_or_else(|| panic!("job {id}: no {:?} timestamp in the step log:\n{log}", prefix.trim()))
+    };
+    (stamp(&format!("start-{id} ")), stamp(&format!("end-{id} ")))
+}
+
 #[tokio::test]
 async fn the_runner_picks_up_queued_jobs_and_reports_them() {
     let rig = rig(&["ubuntu-latest", "linux"], |_| {}).await;
@@ -101,21 +123,25 @@ async fn jobs_run_in_parallel_up_to_the_concurrency_limit() {
     });
     // Each job holds its slot for about a second and records when it started and ended.
     for id in 1..=4 {
-        let mut j = TestJob::new(id)
-            .run(&format!("date +%s.%N > \"$RUNNER_TEMP/../../../start-{id}\" 2>/dev/null; echo start-{id}; sleep 1; echo end-{id}"))
-            .build();
+        let mut j = TestJob::new(id).run(&format!("echo \"start-{id} $(date +%s%N)\"; sleep 1; echo \"end-{id} $(date +%s%N)\"")).build();
         j.runs_on = vec!["linux".into()];
         rig.server.enqueue(j);
     }
-    let t0 = Instant::now();
     for id in 1..=4 {
         rig.server.wait_complete(id, Duration::from_secs(30)).await;
     }
-    let took = t0.elapsed();
     shutdown.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(10), task).await;
-    assert!(took >= Duration::from_millis(1900), "four 1 s jobs on two slots cannot finish in {took:?}");
-    assert!(took < Duration::from_millis(3900), "two slots should overlap jobs, took {took:?}");
+    // Two slots means some pair of jobs shared a moment, and never three at once.
+    let spans: Vec<(u128, u128)> = (1..=4).map(|id| span(&rig.server, id)).collect();
+    assert!(
+        spans.iter().enumerate().any(|(i, a)| { spans.iter().enumerate().any(|(j, b)| i != j && a.0 < b.1 && b.0 < a.1) }),
+        "two slots should run jobs in parallel, spans: {spans:?}"
+    );
+    for &(start, _) in &spans {
+        let running = spans.iter().filter(|&&(s, e)| s <= start && start < e).count();
+        assert!(running <= 2, "never three jobs at once, but {running} were running at {start}, spans: {spans:?}");
+    }
 }
 
 #[tokio::test]
@@ -127,14 +153,15 @@ async fn one_slot_runs_jobs_one_at_a_time() {
         async move { r.run().await }
     });
     for id in 1..=2 {
-        let mut j = TestJob::new(id).run("sleep 1").build();
+        let mut j = TestJob::new(id).run(&format!("echo \"start-{id} $(date +%s%N)\"; sleep 1; echo \"end-{id} $(date +%s%N)\"")).build();
         j.runs_on = vec!["linux".into()];
         rig.server.enqueue(j);
     }
-    let t0 = Instant::now();
     rig.server.wait_complete(1, Duration::from_secs(20)).await;
     rig.server.wait_complete(2, Duration::from_secs(20)).await;
-    assert!(t0.elapsed() >= Duration::from_millis(1900), "{:?}", t0.elapsed());
+    let (s1, e1) = span(&rig.server, 1);
+    let (s2, e2) = span(&rig.server, 2);
+    assert!(e1 <= s2 || e2 <= s1, "one slot must run the jobs one at a time, spans: ({s1}, {e1}), ({s2}, {e2})");
     shutdown.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(10), task).await;
 }
@@ -154,7 +181,8 @@ async fn a_runner_only_takes_jobs_its_labels_cover() {
     rig.server.enqueue(gpu);
     rig.server.enqueue(ok);
     rig.server.wait_complete(2, Duration::from_secs(20)).await;
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let polls = rig.server.requests_to("jobs/request");
+    wait_until(Duration::from_secs(20), "two more polls after the cpu job", || rig.server.requests_to("jobs/request") >= polls + 2).await;
     assert!(rig.server.completed(1).is_none(), "the gpu job is not this runner's");
     shutdown.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(10), task).await;
@@ -303,7 +331,7 @@ async fn leftover_job_directories_are_removed_at_startup() {
         let r = runner.clone();
         async move { r.run().await }
     });
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    wait_until(Duration::from_secs(20), "the stale job directory to be removed", || !stale.exists()).await;
     assert!(!stale.exists(), "a stale job directory is removed");
     assert!(keep.exists(), "only job-* directories are touched");
     shutdown.cancel();

@@ -48,6 +48,7 @@ pub fn routes(config: &Config) -> Router<AppState> {
         .merge(crate::meta::public_routes())
         .nest("/api/v3", api)
         .nest("/api/runner/v1", ch_ci::runner_routes())
+        .merge(ch_ci::twirp_routes())
         .merge(ch_registry::registry_routes())
         .merge(ch_git::http_routes())
         .merge(ch_auth::oauth_routes(config))

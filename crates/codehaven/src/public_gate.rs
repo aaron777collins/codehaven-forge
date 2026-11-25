@@ -349,3 +349,81 @@ pub fn finish(mut resp: Response) -> Response {
     resp.headers_mut().remove(header::SET_COOKIE);
     resp
 }
+
+/// The flood test of epic ch-4pn (A20): the signed-out caps hold as measured, with the starting
+/// values the instance ships with, however many addresses ask.
+#[cfg(test)]
+mod flood {
+    use super::*;
+
+    fn limits() -> PublicLimits {
+        PublicLimits::new(&PublicAccessConfig::default())
+    }
+
+    /// How many requests of `cost` get in when `addrs` addresses each ask `each` times and hold
+    /// whatever they are given.
+    fn admitted(l: &PublicLimits, cost: Cost, addrs: usize, each: usize) -> usize {
+        let mut held = Vec::new();
+        for a in 0..addrs {
+            for _ in 0..each {
+                if let Ok(p) = l.take(cost, &format!("198.51.100.{a}")) {
+                    held.push(p);
+                }
+            }
+        }
+        held.len()
+    }
+
+    #[test]
+    fn one_address_gets_its_own_share_and_no_more() {
+        for (cost, per_address) in [(Cost::Heavy, 2), (Cost::Git, 2), (Cost::Archive, 1), (Cost::Raw, 4)] {
+            assert_eq!(admitted(&limits(), cost, 1, 50), per_address, "{cost:?}");
+        }
+    }
+
+    #[test]
+    fn a_flood_of_addresses_is_held_to_the_instance_caps() {
+        // A thousand addresses, each asking eight times and never finishing.
+        for (cost, instance) in [(Cost::Heavy, 4), (Cost::Git, 3), (Cost::Archive, 2), (Cost::Raw, 10)] {
+            assert_eq!(admitted(&limits(), cost, 1000, 8), instance, "{cost:?}");
+        }
+        // Light requests carry no concurrency cap here: they are bounded by the rate below.
+    }
+
+    #[test]
+    fn capacity_comes_back_when_a_request_ends_and_nothing_is_left_behind() {
+        let l = limits();
+        let first: Vec<_> = (0..3).filter_map(|a| l.take(Cost::Git, &format!("203.0.113.{a}")).ok()).collect();
+        assert_eq!(first.len(), 3);
+        assert!(l.take(Cost::Git, "203.0.113.9").is_err(), "the instance is full");
+        drop(first);
+        assert!(l.take(Cost::Git, "203.0.113.9").is_ok(), "a finished clone gives its place back");
+        // Taking and giving back from many addresses leaves no record of any of them.
+        for a in 0..60_000 {
+            drop(l.take(Cost::Raw, &format!("a{a}")));
+        }
+        assert!(l.held.lock().unwrap_or_else(|e| e.into_inner()).is_empty());
+    }
+
+    #[test]
+    fn clones_and_archives_are_also_limited_by_the_minute() {
+        let l = limits();
+        let (mut ok_git, mut ok_archive) = (0, 0);
+        for _ in 0..200 {
+            ok_git += usize::from(l.take(Cost::Git, "192.0.2.1").is_ok());
+            ok_archive += usize::from(l.take(Cost::Archive, "192.0.2.2").is_ok());
+        }
+        assert_eq!((ok_git, ok_archive), (30, 6), "30 clones and 6 archives a minute from one address");
+        // Another address is not slowed by it.
+        assert!(l.take(Cost::Git, "192.0.2.3").is_ok());
+        let wait = l.take(Cost::Git, "192.0.2.1").err().unwrap_or(0);
+        assert!(wait >= 1, "a refusal says when to come back");
+    }
+
+    #[test]
+    fn the_whole_instance_has_a_request_rate_whatever_the_addresses() {
+        let l = limits();
+        let ok = (0..5000).filter(|a| l.take(Cost::Light, &format!("10.{}.{}.1", a / 250, a % 250)).is_ok()).count();
+        assert_eq!(ok, 600, "600 requests a minute for the whole instance");
+    }
+}

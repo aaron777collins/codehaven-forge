@@ -80,14 +80,15 @@ async fn owner_kind(state: &AppState, owner: &str) -> RegResult<Option<(i64, Str
     Ok(row)
 }
 
-async fn find(state: &AppState, owner: &str, image: &str) -> RegResult<Option<Package>> {
+async fn find(state: &AppState, kind: &str, owner: &str, image: &str) -> RegResult<Option<Package>> {
     let row: Option<PackageRow> = sqlx::query_as(
         "SELECT p.id, p.owner_id, p.repo_id, u.username::text AS owner_name, p.name::text AS name, p.orphaned \
          FROM packages p JOIN users u ON u.id = p.owner_id \
-         WHERE u.username = $1::citext AND p.kind = 'container' AND p.name = $2::citext",
+         WHERE u.username = $1::citext AND p.kind = $3 AND p.name = $2::citext",
     )
     .bind(owner)
     .bind(image)
+    .bind(kind)
     .fetch_optional(&state.db)
     .await?;
     Ok(row.map(|r| Package {
@@ -142,6 +143,12 @@ fn as_person(actor: &Actor) -> Actor {
         Actor::Token { user_id, .. } => Actor::User { id: *user_id, is_admin: false, has_2fa: false, via: ch_core::AuthVia::Basic },
         other => other.clone(),
     }
+}
+
+/// May this credential push packages at all? Asked before an upload is read, so one that can
+/// never succeed costs nothing.
+pub fn may_push(actor: &Actor) -> bool {
+    scope_allows(actor, Access::Push)
 }
 
 /// Does the credential carry any package access at all? The catalog asks this once before it
@@ -205,6 +212,22 @@ pub async fn authorize(
     _client: &ClientInfo,
 ) -> RegResult<Package> {
     let (owner, image) = split_name(full_name).ok_or_else(|| RegError::name_invalid("use owner/image with a lowercase image name"))?;
+    authorize_kind(state, actor, "container", owner, image, access, create).await
+}
+
+/// `authorize` for any kind of package: `container` (an image) or `nuget` (a NuGet package id).
+/// A job creates a `container` only under its repository's name; a `nuget` package of its own
+/// repository under any id, never for a public repository. A person's first push of a `nuget`
+/// package makes it the owner's alone: it is not linked to a repository until someone does so.
+pub async fn authorize_kind(
+    state: &AppState,
+    actor: &Actor,
+    kind: &str,
+    owner: &str,
+    image: &str,
+    access: Access,
+    create: bool,
+) -> RegResult<Package> {
     if !scope_allows(actor, access) {
         return Err(if access == Access::Push {
             RegError::denied("this token needs the write:packages scope")
@@ -212,11 +235,11 @@ pub async fn authorize(
             RegError::denied("this token needs the read:packages scope")
         });
     }
-    let Some((owner_id, kind, owner_name)) = owner_kind(state, owner).await? else { return Err(RegError::name_unknown()) };
-    let is_org = kind == "org";
+    let Some((owner_id, owner_kind_str, owner_name)) = owner_kind(state, owner).await? else { return Err(RegError::name_unknown()) };
+    let is_org = owner_kind_str == "org";
 
     let person = as_person(actor);
-    if let Some(pkg) = find(state, owner, image).await? {
+    if let Some(pkg) = find(state, kind, owner, image).await? {
         if let Some(ok) = job_allows(actor, pkg.repo_id) {
             return if ok { Ok(pkg) } else { Err(RegError::name_unknown()) };
         }
@@ -255,17 +278,20 @@ pub async fn authorize(
             .fetch_optional(&state.db)
             .await?;
         return match own {
-            Some((o, name, tier)) if o == owner_id && name.eq_ignore_ascii_case(image.split('/').next().unwrap_or(image)) => {
+            Some((o, name, tier))
+                if o == owner_id && (kind != "container" || name.eq_ignore_ascii_case(image.split('/').next().unwrap_or(image))) =>
+            {
                 if tier == "public" {
                     return Err(RegError::denied("a workflow cannot create an image for a public repository; push it once yourself"));
                 }
                 let inserted: (i64, Option<i64>) = sqlx::query_as(
-                    "INSERT INTO packages (owner_id, repo_id, kind, name) VALUES ($1, $2, 'container', $3) \
+                    "INSERT INTO packages (owner_id, repo_id, kind, name) VALUES ($1, $2, $4, $3) \
                      ON CONFLICT (owner_id, kind, name) DO UPDATE SET name = packages.name RETURNING id, repo_id",
                 )
                 .bind(owner_id)
                 .bind(repo_id.0)
                 .bind(image)
+                .bind(kind)
                 .fetch_one(&state.db)
                 .await?;
                 // Someone else made it first: it is theirs, and this job is held to the usual rule.
@@ -289,23 +315,27 @@ pub async fn authorize(
     // A repository with the same name as the image is linked, so its permissions apply, but
     // only when the pusher can write to it, and never when it is public: a first push must not
     // publish an image by itself (ch-4pn.13). Such an image starts as its owner's alone.
-    let linked: Option<(i64,)> =
+    let linked: Option<(i64,)> = if kind == "container" {
         sqlx::query_as("SELECT id FROM repositories WHERE owner_id = $1 AND name = $2::citext AND access_tier <> 'public'")
             .bind(owner_id)
             .bind(image)
             .fetch_optional(&state.db)
-            .await?;
+            .await?
+    } else {
+        None
+    };
     let repo_id = match linked {
         Some((id,)) if state.authz.require(&person, RepoId(id), Permission::Write).await.is_ok() => Some(id),
         _ => None,
     };
     let inserted: (i64,) = sqlx::query_as(
-        "INSERT INTO packages (owner_id, repo_id, kind, name) VALUES ($1, $2, 'container', $3) \
+        "INSERT INTO packages (owner_id, repo_id, kind, name) VALUES ($1, $2, $4, $3) \
          ON CONFLICT (owner_id, kind, name) DO UPDATE SET name = packages.name RETURNING id",
     )
     .bind(owner_id)
     .bind(repo_id)
     .bind(image)
+    .bind(kind)
     .fetch_one(&state.db)
     .await?;
     Ok(Package { id: inserted.0, owner_id, repo_id, owner_name, name: image.to_string(), orphaned: false })

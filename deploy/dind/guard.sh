@@ -21,6 +21,10 @@
 # The host's public addresses are not local to dind, so they need no INPUT rule: a job's packets
 # to them are forwarded (DOCKER-USER) and the daemon's own are outgoing (OUTPUT).
 #
+# A throwaway stack (deploy/compose.shots-dogfood.yml) may set GUARD_ALLOW="<ip>:<port> ..." so its
+# jobs can reach the throwaway server they belong to, which has no public https name. Nothing in
+# the production compose file passes it, and each entry must be a plain address and a port.
+#
 # Jobs cannot undo this: container.options has no --privileged, --network or --cap-add.
 # The rules are checked again every 30 seconds in case dockerd rebuilds its chains.
 set -eu
@@ -64,6 +68,13 @@ apply() {
         ensure iptables OUTPUT -d "$ip" -p tcp --dport 443 -j ACCEPT
         ;;
     esac
+  done
+  # Last, so these end up above the drops.
+  for hp in ${GUARD_ALLOW:-}; do
+    case "$hp" in
+      *[!0-9.:]*|*:*:*|:*|*:|"") continue ;;
+    esac
+    ensure iptables DOCKER-USER -d "${hp%:*}" -p tcp --dport "${hp##*:}" -j RETURN
   done
 }
 

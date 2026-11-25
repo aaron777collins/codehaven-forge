@@ -38,3 +38,4 @@ POST /oauth/revoke
 POST /oauth/token
 POST /password/forgot
 POST /password/{token}
+PUT /api/runner/v1/toolkit/blobs/{grant}

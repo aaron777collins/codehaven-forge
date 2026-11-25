@@ -91,9 +91,9 @@ pub const PUBLIC_ROUTES: &[PublicRoute] = &[
         why: "Rejects anything without an admin-issued registration token",
     },
     PublicRoute {
-        methods: &["GET"],
+        methods: &["GET", "PUT"],
         pattern: "/api/runner/v1/toolkit/blobs/{grant}",
-        why: "A cache archive for the Actions toolkit, which downloads with no credential: a one-hour link this server signed for one entry. Anything else is a 404",
+        why: "The Actions toolkit's cache archive and artifact zip (GET) and artifact upload (PUT), which the toolkit moves with no credential: a one-hour link this server signed for one entry or one open upload. Anything else is a 404",
     },
     // The five below exist only while `mcp.enabled` is true. Each is static or answers only for
     // a code or token made at the consent page. There is no client registration route.
@@ -550,7 +550,7 @@ pub fn classify(path: &str) -> RouteKind {
     if matches!(path, WELL_KNOWN_RESOURCE_MCP | WELL_KNOWN_RESOURCE | WELL_KNOWN_AUTH_SERVER | OAUTH_TOKEN_PATH | OAUTH_REVOKE_PATH) {
         return RouteKind::OAuth;
     }
-    if path == "/api/runner/v1" || path.starts_with("/api/runner/") {
+    if path == "/api/runner/v1" || path.starts_with("/api/runner/") || path.starts_with("/twirp/") {
         return RouteKind::Runner;
     }
     if path == "/api/v3" || path.starts_with("/api/v3/") {
@@ -558,6 +558,10 @@ pub fn classify(path: &str) -> RouteKind {
     }
     if path == "/v2" || path.starts_with("/v2/") {
         return RouteKind::Registry;
+    }
+    // The private NuGet feed (ch-ctk.13): NuGet clients answer a Basic challenge, not a Bearer one.
+    if path.starts_with("/nuget/") {
+        return RouteKind::GitHttp;
     }
     if is_git_http_path(path) {
         return RouteKind::GitHttp;
@@ -889,7 +893,17 @@ mod tests {
         assert_ne!(address_key(a), address_key(b), "the /64 key still tells them apart");
         assert_eq!(wide_address_key(std::net::IpAddr::from([192, 0, 2, 1])), "192.0.2.1");
         assert!(is_public(&Method::GET, "/api/runner/v1/toolkit/blobs/c.1.2.abc"));
-        assert!(!is_public(&Method::PUT, "/api/runner/v1/toolkit/blobs/c.1.2.abc"), "a link only reads");
+        assert!(is_public(&Method::PUT, "/api/runner/v1/toolkit/blobs/u.1.2.abc"), "an artifact upload link writes");
+        assert!(!is_public(&Method::POST, "/api/runner/v1/toolkit/blobs/u.1.2.abc"), "and only with PUT");
+        assert!(!is_public(&Method::DELETE, "/api/runner/v1/toolkit/blobs/u.1.2.abc"));
+        assert!(
+            !is_public(&Method::POST, "/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact"),
+            "the artifact service needs the runtime token"
+        );
+        assert_eq!(classify("/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact"), RouteKind::Runner);
+        assert_eq!(classify("/nuget/alice/index.json"), RouteKind::GitHttp, "the feed asks for Basic credentials");
+        assert!(!is_public(&Method::GET, "/nuget/alice/index.json"), "there is no public feed");
+        assert!(!is_public(&Method::PUT, "/nuget/alice/push"));
         assert!(!is_public(&Method::GET, "/api/runner/v1/toolkit/_apis/artifactcache/cache"), "the cache API needs the runtime token");
         assert!(is_public(&Method::GET, "/login/oidc/github/callback"));
     }

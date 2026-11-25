@@ -116,6 +116,25 @@ on a build host. Once, on the instance that should run it:
 5. The push starts the `ci` workflow on the instance's runner. Later pushes and pull requests
    run it again.
 
+The job takes the source from the instance, so its address must be one a job may reach: the
+public https name does (the runner's Docker daemon lets jobs open tcp/443 to it and nothing else on
+the host). The Postgres service image is pulled from Docker Hub by that daemon the first time.
+
+Proof, on a throwaway stack (no account, repository or token of a real instance was used): the e2e
+harness's step 26 creates a repository, pushes the whole source of a checkout, and waits for this
+workflow to finish on the stack's own runner. On 2026-11-25 it took 13.7 minutes and `make ci`
+passed, 2135 of 2135 tests:
+
+```sh
+bash deploy/dev/host.sh <stream> 'CH_STREAM=<stream> bash deploy/dev/release.sh shots-mine'
+bash deploy/dev/host.sh <stream> 'SHOTS_STEPS=0-4,26 SHOTS_DOGFOOD=1 SHOTS_NO_SHOTS=1 bash deploy/dev/shots.sh --tag shots-mine'
+```
+
+`SHOTS_DOGFOOD=1` loads the builder and Postgres images into the stack's daemon, gives the server a
+fixed address on the runners network (`deploy/compose.shots-dogfood.yml`) and tells the daemon's
+guard (`GUARD_ALLOW`, never set by the production compose file) to let jobs reach that one address
+and port, because a throwaway server has no public https name.
+
 ## Backups
 
 ```sh
@@ -165,8 +184,36 @@ The timer runs a copy of `deploy/` taken at install time, kept under
 what runs at night. Run `install` again after updating the checkout to refresh the copy.
 `remove` uninstalls the timer and keeps every archive already taken.
 
-These archives stay on the same disk as the instance, so they do not survive losing that
-disk. Copy them off the host, encrypted, as well.
+### A copy off the host (optional)
+
+Off by default: nothing is sent anywhere until `CODEHAVEN_BACKUP_OFFSITE` in the env file
+names a destination. When it does, the daily run encrypts each archive with openssl
+AES-256 and sends only the encrypted `.enc` file, because the archive holds the instance's
+master key. Two forms:
+
+- `rsync:<destination>`, for example `rsync:backup@example.com:/srv/codehaven-backups/`.
+  Root's ssh key must already be trusted by the destination: the copy goes over BatchMode
+  ssh, which never prompts for a password.
+- `s3://<bucket>/<prefix>`, for any S3-compatible store. The `aws` CLI needs its own
+  credentials for root; Codehaven never reads or stores them. When the store is not AWS's
+  own S3, set `CODEHAVEN_BACKUP_OFFSITE_ENDPOINT` to its endpoint URL.
+
+The passphrase lives in the file named by `CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE`:
+root-only, mode 600, one passphrase. Write it once and keep a copy of it somewhere other
+than this host, because without it the off-site copies cannot be opened. To open one on
+another machine:
+
+```sh
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass file:/path/to/passphrase \
+  -in <name>.tar.gz.enc -out <name>.tar.gz
+```
+
+Codehaven never prunes the remote side: what the destination keeps is the operator's
+retention policy. When a send fails, the run writes `OFFSITE FAILED` to `backup-daily.log`
+and exits non-zero, while the local backup and its prune have already happened.
+
+These archives otherwise stay on the same disk as the instance, so they do not survive
+losing that disk, and a copy off the host is the way to change that.
 
 ## Restoring
 

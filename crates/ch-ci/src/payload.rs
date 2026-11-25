@@ -8,7 +8,7 @@ use crate::ctx::Ctx;
 use crate::discovery::repo_ci;
 use crate::runs::{JobRow, RunRow, aggregate, base_context, fetch_jobs, fetch_run, github_context};
 use crate::secrets::{resolve_for_job, resolve_vars_for_job};
-use crate::spec::split_payload;
+use crate::spec::{RunMeta, split_payload};
 use ch_api_types::runner as rn;
 use ch_core::Result;
 use ch_workflow::expr::{self, Value};
@@ -33,6 +33,25 @@ fn eval_minutes(raw: Option<&str>, cx: &expr::Context<'_>) -> Option<u32> {
     (n.is_finite() && n >= 1.0).then(|| (n as u32).min(ch_workflow::plan::MAX_TIMEOUT_MINUTES))
 }
 
+/// The workflow-level `env` and `defaults` a job starts from.
+///
+/// A job from a called workflow (ch-ctk.7) starts from none: the caller's `env` may hold a secret
+/// the caller did not pass on, and may belong to a workflow in another repository. The called
+/// workflow's own `env` and `defaults` were put under its jobs when the call was inlined.
+fn workflow_level(meta: &RunMeta, called: bool) -> Workflow {
+    let (env, defaults) = if called { Default::default() } else { (meta.workflow_env.clone(), meta.workflow_defaults.clone()) };
+    Workflow {
+        name: Some(meta.workflow_name.clone()),
+        run_name: None,
+        triggers: Default::default(),
+        env,
+        defaults,
+        concurrency: None,
+        permissions: None,
+        jobs: vec![],
+    }
+}
+
 pub async fn build_payload(ctx: &Ctx, job: &JobRow, token: String) -> Result<rn::JobPayload> {
     let run: RunRow = fetch_run(ctx, job.run_id).await?;
     let (event, meta) = split_payload(&run.event_payload);
@@ -41,16 +60,7 @@ pub async fn build_payload(ctx: &Ctx, job: &JobRow, token: String) -> Result<rn:
     let base = ctx.base_url();
 
     // Which secrets and variables does this job read?
-    let shell = Workflow {
-        name: Some(meta.workflow_name.clone()),
-        run_name: None,
-        triggers: Default::default(),
-        env: meta.workflow_env.clone(),
-        defaults: meta.workflow_defaults.clone(),
-        concurrency: None,
-        permissions: None,
-        jobs: vec![],
-    };
+    let shell = workflow_level(&meta, spec.job.called);
     let refs = job_refs(&shell, &spec.job);
     let secrets = resolve_for_job(ctx, job.repo_id, &refs.secrets, refs.all_secrets, meta.fork).await?;
     let vars = resolve_vars_for_job(ctx, job.repo_id, &refs.vars, refs.all_vars, meta.fork).await?;
@@ -89,7 +99,7 @@ pub async fn build_payload(ctx: &Ctx, job: &JobRow, token: String) -> Result<rn:
         })
         .collect();
 
-    let mut env = meta.workflow_env.clone();
+    let mut env = shell.env.clone();
     env.extend(spec.job.env.clone());
 
     let container =
@@ -130,8 +140,8 @@ pub async fn build_payload(ctx: &Ctx, job: &JobRow, token: String) -> Result<rn:
             api_url: format!("{base}/api/v3"),
             event,
         },
-        default_shell: spec.job.defaults.shell.clone().or(meta.workflow_defaults.shell.clone()),
-        default_working_directory: spec.job.defaults.working_directory.clone().or(meta.workflow_defaults.working_directory.clone()),
+        default_shell: spec.job.defaults.shell.clone().or(shell.defaults.shell.clone()),
+        default_working_directory: spec.job.defaults.working_directory.clone().or(shell.defaults.working_directory.clone()),
         timeout_minutes: spec.timeout_minutes,
         token,
         lease_seconds: LEASE_SECONDS,
@@ -148,4 +158,33 @@ pub async fn build_payload(ctx: &Ctx, job: &JobRow, token: String) -> Result<rn:
             })
             .collect(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ch_workflow::Defaults;
+
+    fn meta() -> RunMeta {
+        RunMeta {
+            workflow_env: BTreeMap::from([("CALLER_ENV".to_string(), "${{ secrets.TOPSECRET }}".to_string())]),
+            workflow_defaults: Defaults { shell: Some("bash".into()), working_directory: Some("sub".into()) },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_job_of_the_caller_inherits_the_workflow_env_and_defaults() {
+        let w = workflow_level(&meta(), false);
+        assert_eq!(w.env["CALLER_ENV"], "${{ secrets.TOPSECRET }}");
+        assert_eq!(w.defaults.shell.as_deref(), Some("bash"));
+    }
+
+    #[test]
+    fn a_called_job_inherits_nothing_from_the_caller_workflow() {
+        // The caller's `env` may hold a secret the caller did not pass on (ch-ctk.7).
+        let w = workflow_level(&meta(), true);
+        assert!(w.env.is_empty());
+        assert_eq!(w.defaults, Defaults::default());
+    }
 }

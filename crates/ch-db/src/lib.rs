@@ -7,6 +7,7 @@
 pub mod audit;
 pub mod blobs;
 pub mod ci_auth;
+pub mod fork_lock;
 pub mod jobs;
 pub mod outbox;
 pub mod sealing;
