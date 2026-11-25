@@ -12,6 +12,7 @@ const RESERVED: &[&str] = &[
     "about",
     "blog",
     "codehaven",
+    "codehaven-actions",
     "dashboard",
     "explore",
     "favicon",

@@ -11,6 +11,11 @@ fn errs(src: &str) -> Vec<Diagnostic> {
 }
 
 /// The file must be refused with a message containing `msg` on line `line`.
+fn mentions(src: &str, msg: &str) {
+    let e = errs(src);
+    assert!(e.iter().any(|d| d.message.contains(msg)), "wanted {msg:?}, got:\n{}", ch_workflow::diag::render(&e));
+}
+
 fn expect(src: &str, line: u32, msg: &str) {
     let e = errs(src);
     assert!(
@@ -47,9 +52,9 @@ jobs:
     runs-on: x
     steps:
       - run: echo ok
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@-v4
 ";
-    expect(src, 8, "not supported");
+    expect(src, 8, "not a valid action reference");
     let src = "on: push
 jobs:
   a:
@@ -63,9 +68,21 @@ jobs:
 }
 
 #[test]
+fn services_parse_and_bad_ones_are_named() {
+    let job = |extra: &str| format!("on: push\njobs:\n  a:\n    runs-on: x\n{extra}    steps:\n      - run: x\n");
+    let w = parse(&job("    services:\n      postgres:\n        image: postgres:17\n        env:\n          POSTGRES_PASSWORD: ${{ secrets.PW }}\n        ports:\n          - 5432:5432\n          - 6379\n        options: >-\n          --health-cmd pg_isready --health-interval 10s --health-retries 5\n")).unwrap();
+    let svc = &w.jobs[0].services["postgres"];
+    assert_eq!(svc.ports, vec![5432, 6379]);
+    assert_eq!(svc.env["POSTGRES_PASSWORD"], "${{ secrets.PW }}");
+    mentions(&job("    services:\n      db:\n        env: {}\n"), "`services.db.image` is required");
+    mentions(&job("    services:\n      db:\n        image: pg\n        options: --privileged\n"), "`services.db.options`");
+    mentions(&job("    services:\n      db:\n        image: pg\n        volumes: [/:/h]\n"), "cannot mount volumes");
+    mentions(&job("    services:\n      db:\n        image: pg\n        ports: [http]\n"), "is not a port");
+}
+
+#[test]
 fn unsupported_features_are_named() {
     let job = |extra: &str| format!("on: push\njobs:\n  a:\n    runs-on: x\n{extra}    steps:\n      - run: x\n");
-    expect(&job("    services:\n      db:\n        image: pg\n"), 5, "`services:` is not supported");
     expect(&job("    environment: prod\n"), 5, "`environment:`");
     expect("on: push\njobs:\n  a:\n    uses: ./.github/workflows/x.yml\n", 4, "reusable workflows");
     expect(&format!("on:\n  workflow_call:\n{OK_JOBS}"), 2, "`workflow_call`");
@@ -74,11 +91,15 @@ fn unsupported_features_are_named() {
 }
 
 #[test]
-fn actions_that_are_not_built_in_are_refused() {
+fn actions_from_github_and_here_parse_and_bad_references_are_refused() {
     let step = |u: &str| format!("on: push\njobs:\n  a:\n    runs-on: x\n    steps:\n      - uses: {u}\n");
-    expect(&step("actions/setup-python@v5"), 6, "not supported");
-    expect(&step("docker/build-push-action@v6"), 6, "not supported");
-    expect(&step("./local-action"), 6, "composite");
+    // Not built in: fetched when the job runs, if the site's policy allows it (ch-ctk.5).
+    for ok in ["actions/setup-python@v5", "docker/build-push-action@v6", "./local-action", "haven_aaron/tool@v1", "o/r/sub@main"] {
+        assert!(parse(&step(ok)).is_ok(), "{ok}");
+    }
+    expect(&step("o_x/r@v1"), 6, "not a valid action reference");
+    expect(&step("./a/../b"), 6, "not a valid action reference");
+    expect(&step("setup-python"), 6, "not supported");
     expect(&step("actions/cache@v4"), 6, "needs `with: key`");
     expect(&step("actions/upload-artifact@v4"), 6, "needs `with: path`");
     assert!(parse(&step("actions/checkout@v4")).is_ok());

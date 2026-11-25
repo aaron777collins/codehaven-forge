@@ -48,6 +48,7 @@ pub async fn build_payload(ctx: &Ctx, job: &JobRow, token: String) -> Result<rn:
         env: meta.workflow_env.clone(),
         defaults: meta.workflow_defaults.clone(),
         concurrency: None,
+        permissions: None,
         jobs: vec![],
     };
     let refs = job_refs(&shell, &spec.job);
@@ -134,5 +135,17 @@ pub async fn build_payload(ctx: &Ctx, job: &JobRow, token: String) -> Result<rn:
         timeout_minutes: spec.timeout_minutes,
         token,
         lease_seconds: LEASE_SECONDS,
+        services: spec
+            .job
+            .services
+            .iter()
+            .map(|(id, s)| rn::ServiceSpec {
+                id: id.clone(),
+                image: s.image.clone(),
+                env: s.env.clone(),
+                ports: s.ports.clone(),
+                options: s.options.clone(),
+            })
+            .collect(),
     })
 }

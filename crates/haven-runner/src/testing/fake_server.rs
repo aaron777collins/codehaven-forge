@@ -47,6 +47,8 @@ struct Inner {
     fail: HashMap<String, VecDeque<u16>>,
     log_posts: u32,
     requests: Vec<String>,
+    /// `uses` -> (commit, archive sha256, tar.gz), what the server would have fetched.
+    actions: HashMap<String, (String, String, Vec<u8>)>,
 }
 
 type Shared = Arc<Mutex<Inner>>;
@@ -100,6 +102,8 @@ impl FakeServer {
             .route("/api/runner/v1/jobs/{id}/artifacts/{name}", put(put_artifact).get(get_artifact))
             .route("/api/runner/v1/cache/lookup", post(cache_lookup))
             .route("/api/runner/v1/cache/{key}", put(cache_put).get(cache_get))
+            .route("/api/runner/v1/jobs/{id}/actions/resolve", post(resolve_actions))
+            .route("/api/runner/v1/jobs/{id}/actions/archive/{archive}", get(action_archive))
             .with_state(inner.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind a local port");
         let addr: SocketAddr = listener.local_addr().expect("local addr");
@@ -111,6 +115,28 @@ impl FakeServer {
 
     fn g(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().expect("fake server state")
+    }
+
+    /// Serves an action as the server would after fetching it: `files` are (path, body, mode)
+    /// under one top folder, the way a git archive has them.
+    pub fn add_action(&self, uses: &str, files: &[(&str, &str, u32)]) {
+        use sha2::Digest;
+        let mut tgz = Vec::new();
+        {
+            let gz = flate2::write::GzEncoder::new(&mut tgz, flate2::Compression::fast());
+            let mut tar = tar::Builder::new(gz);
+            for (path, body, mode) in files {
+                let mut h = tar::Header::new_gnu();
+                h.set_size(body.len() as u64);
+                h.set_mode(*mode);
+                h.set_cksum();
+                tar.append_data(&mut h, format!("action/{path}"), body.as_bytes()).expect("tar entry");
+            }
+            tar.into_inner().expect("tar").finish().expect("gzip");
+        }
+        let archive = hex::encode(sha2::Sha256::digest(&tgz));
+        let sha = hex::encode(&sha2::Sha256::digest(uses.as_bytes())[..20]);
+        self.g().actions.insert(uses.to_string(), (sha, archive, tgz));
     }
 
     pub fn add_registration_token(&self, t: &str) {
@@ -510,6 +536,59 @@ async fn cache_put(
     g.next_id += 1;
     g.caches.push(CacheRec { id, key, version, data: body.to_vec() });
     StatusCode::CREATED.into_response()
+}
+
+async fn resolve_actions(
+    State(st): State<Shared>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(req): Json<ch_api_types::runner::ActionResolveRequest>,
+) -> Response {
+    if let Some(r) = injected(&st, "actions") {
+        return r;
+    }
+    if !job_token_ok(&st, Some(id), &headers) {
+        return err(StatusCode::UNAUTHORIZED, "bad job token");
+    }
+    let g = st.lock().expect("state");
+    let actions = req
+        .actions
+        .iter()
+        .map(|u| {
+            let path = match ch_workflow::uses::parse_uses(u) {
+                Ok(ch_workflow::uses::Uses::Repo { path, .. }) => path,
+                _ => String::new(),
+            };
+            match g.actions.get(u) {
+                Some((sha, archive, _)) => ch_api_types::runner::ActionResolution {
+                    uses: u.clone(),
+                    sha: Some(sha.clone()),
+                    archive: Some(archive.clone()),
+                    path,
+                    error: None,
+                },
+                None => ch_api_types::runner::ActionResolution {
+                    uses: u.clone(),
+                    sha: None,
+                    archive: None,
+                    path,
+                    error: Some(format!("{u} is not allowed on this instance. A site admin can allow it in Site admin > Actions.")),
+                },
+            }
+        })
+        .collect();
+    Json(ch_api_types::runner::ActionResolveResponse { actions }).into_response()
+}
+
+async fn action_archive(State(st): State<Shared>, headers: HeaderMap, Path((id, archive)): Path<(i64, String)>) -> Response {
+    if !job_token_ok(&st, Some(id), &headers) {
+        return err(StatusCode::UNAUTHORIZED, "bad job token");
+    }
+    let g = st.lock().expect("state");
+    match g.actions.values().find(|(_, a, _)| *a == archive) {
+        Some((_, _, data)) => ([(header::CONTENT_TYPE, "application/gzip")], data.clone()).into_response(),
+        None => err(StatusCode::NOT_FOUND, "no such archive"),
+    }
 }
 
 async fn cache_get(State(st): State<Shared>, headers: HeaderMap, Path(id): Path<i64>) -> Response {

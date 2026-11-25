@@ -111,6 +111,10 @@ pub struct Shared {
     key: OnceLock<MasterKey>,
     clock: RwLock<Arc<dyn Clock>>,
     source: RwLock<Option<Arc<dyn WorkflowSource>>>,
+    /// Where GitHub actions are fetched from instead of github.com. Tests only.
+    github: RwLock<Option<String>>,
+    /// Signs the toolkit's archive links. Made at start: a link outlives no restart.
+    toolkit_key: OnceLock<[u8; 32]>,
 }
 
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Arc<Shared>>>> = LazyLock::new(Default::default);
@@ -126,12 +130,29 @@ pub fn shared_for(config: &Config) -> Arc<Shared> {
                 key: OnceLock::new(),
                 clock: RwLock::new(Arc::new(SystemClock)),
                 source: RwLock::new(None),
+                github: RwLock::new(None),
+                toolkit_key: OnceLock::new(),
             })
         })
         .clone()
 }
 
 impl Shared {
+    pub fn toolkit_key(&self) -> [u8; 32] {
+        *self.toolkit_key.get_or_init(|| {
+            let mut k = [0u8; 32];
+            rand::Rng::fill(&mut rand::rng(), &mut k);
+            k
+        })
+    }
+
+    /// Tests: fetch "GitHub" actions from local repositories under this directory.
+    pub fn set_github_base(&self, base: Option<String>) {
+        *self.github.write().unwrap_or_else(|e| e.into_inner()) = base;
+    }
+    pub fn github_base(&self) -> Option<String> {
+        self.github.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
     /// The master key, read from `data/secrets/master.key` on first use.
     pub fn key(&self, config: &Config) -> Result<&MasterKey> {
         if let Some(k) = self.key.get() {

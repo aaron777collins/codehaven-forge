@@ -26,6 +26,12 @@ pub struct ContainerSpec {
     pub shm_size: u64,
     pub entrypoint: Option<Vec<String>>,
     pub cmd: Option<Vec<String>>,
+    /// A service container (ch-ctk.7) joins this container's network instead of getting one of
+    /// its own, so the job reaches it on `localhost`.
+    pub network_of: Option<String>,
+    /// `name:address` lines for the container's `/etc/hosts`: a service's id points at the
+    /// job's own loopback, which it shares.
+    pub extra_hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

@@ -203,9 +203,72 @@ fn repo_json(info: &RepoCi) -> Json {
     json!({ "full_name": info.full_name(), "name": info.name, "owner": { "login": info.owner_name }, "default_branch": info.default_branch })
 }
 
+fn event_repo(ev: &DomainEvent) -> Option<RepoId> {
+    match ev {
+        DomainEvent::Push { repo_id, .. }
+        | DomainEvent::PrOpened { repo_id, .. }
+        | DomainEvent::PrSynchronized { repo_id, .. }
+        | DomainEvent::ReleasePublished { repo_id, .. } => Some(*repo_id),
+        _ => None,
+    }
+}
+
+/// A personal private fork whose owner cannot see one of the private repositories it was forked
+/// from any more.
+pub async fn fork_locked(ctx: &Ctx, repo: RepoId) -> Result<bool> {
+    let rows: Vec<(i64, i64)> = sqlx::query_as(
+        "WITH RECURSIVE chain (id, parent, depth) AS (
+             SELECT r.id, r.fork_parent_id, 0 FROM repositories r JOIN users o ON o.id = r.owner_id
+              WHERE r.id = $1 AND r.fork_parent_id IS NOT NULL AND r.access_tier = 'private' AND o.kind = 'user'
+             UNION ALL
+             SELECT p.id, p.fork_parent_id, c.depth + 1 FROM repositories p JOIN chain c ON p.id = c.parent WHERE c.depth < 64)
+         SELECT c.id, (SELECT owner_id FROM repositories WHERE id = $1) FROM chain c JOIN repositories a ON a.id = c.id
+          WHERE c.depth > 0 AND a.access_tier = 'private'",
+    )
+    .bind(repo.0)
+    .fetch_all(&ctx.db)
+    .await?;
+    for (ancestor, owner) in rows {
+        let who = Actor::User { id: UserId(owner), is_admin: false, has_2fa: false, via: AuthVia::Session };
+        if ctx.authz.repo_permission(&who, RepoId(ancestor)).await? < Permission::View {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// True for the reserved account workflow jobs write as.
+async fn is_actions_bot(ctx: &Ctx, user: UserId) -> Result<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND kind = 'bot' AND username = 'codehaven-actions')",
+    )
+    .bind(user.0)
+    .fetch_one(&ctx.db)
+    .await?)
+}
+
 /// Handles one event from the outbox. Events this consumer has no use for do nothing.
 pub async fn handle_event(ctx: &Ctx, ev: &StoredEvent) -> Result<Vec<RunId>> {
     let trigger_id = format!("evt:{}", ev.id);
+    // What a workflow job did with its own token starts no workflow, so a job cannot start
+    // itself again (ch-ctk.8). A job's changes are recorded as the `codehaven-actions` bot.
+    let by = match &ev.event {
+        DomainEvent::Push { pusher, .. } | DomainEvent::PrOpened { pusher, .. } | DomainEvent::PrSynchronized { pusher, .. } => *pusher,
+        DomainEvent::ReleasePublished { actor, .. } => Some(*actor),
+        _ => None,
+    };
+    if let Some(u) = by
+        && is_actions_bot(ctx, u).await?
+    {
+        return Ok(Vec::new());
+    }
+    // A private fork whose owner can no longer see what it was forked from is locked: it keeps
+    // its code, and runs nothing (ch-4pn.16).
+    if let Some(repo) = event_repo(&ev.event)
+        && fork_locked(ctx, repo).await?
+    {
+        return Ok(Vec::new());
+    }
     match &ev.event {
         DomainEvent::Push { repo_id, git_ref, before, after, pusher, forced, app, server_built } => {
             if zero_sha(after) {
@@ -229,6 +292,10 @@ pub async fn handle_event(ctx: &Ctx, ev: &StoredEvent) -> Result<Vec<RunId>> {
                 "pusher": { "name": login },
                 "sender": { "login": login },
                 "head_commit": head.as_ref().map(|c| json!({ "id": c.id, "message": c.message, "author": { "name": c.author_name, "email": c.author_email } })),
+                // GitHub-shaped (ch-ctk.7): the compare link, and the head commit as the one
+                // commit listed (a push of several lists only its tip here).
+                "compare": format!("{}/{}/compare/{}...{}", ctx.base_url(), info.full_name(), before, after),
+                "commits": head.as_ref().map(|c| vec![json!({ "id": c.id, "message": c.message, "author": { "name": c.author_name, "email": c.author_email } })]).unwrap_or_default(),
             });
             let title = head.as_ref().and_then(|c| c.message.lines().next()).unwrap_or("").to_string();
             // A push made by a connected app without the workflows permission starts a run that

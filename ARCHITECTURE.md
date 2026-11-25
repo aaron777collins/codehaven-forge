@@ -948,12 +948,15 @@ jobs:
         with: { name: report, path: target/report }
 ```
 
-Not supported in v1, each with a clear validation error that names the line:
-JavaScript actions from a marketplace, `services:`, reusable workflows
-(`workflow_call`), `environment:` approvals, `pull_request_target` (it would run a
-fork's code with the base repository's secrets), YAML anchors and aliases, and a
-matrix axis written as an expression (the whole matrix may be one, see below).
-Composite actions from the same repo (`uses: ./path`) are a later item.
+Since C8, other actions are fetched and run: JavaScript and composite actions from GitHub
+(`owner/repo@ref`), from this instance (`haven_owner/repo@ref`) or from the workspace
+(`./path`), under the site's Actions policy, and `services:` start beside the job
+(`docs/runner.md`). Still not supported, each with a clear validation error that names
+the line: reusable workflows (`workflow_call`), `environment:` approvals,
+`pull_request_target` (it would run a fork's code with the base repository's secrets),
+YAML anchors and aliases, a matrix axis written as an expression (the whole matrix may be
+one, see below). Docker container actions fail when the job runs, with what to use
+instead: they need a Docker daemon, which jobs do not have.
 
 `strategy.matrix` may be `${{ fromJSON(needs.setup.outputs.m) }}`. Such a job is planned
 as one placeholder and expanded into its cells when the jobs it needs have finished.
@@ -1451,9 +1454,8 @@ reviewed before merge.
 
 ## 17. Not in v1
 
-GraphQL, a wiki, project boards, Git LFS, pull mirrors, JavaScript actions from
-a marketplace, service containers, reusable workflows, environments with
-approval, WebAuthn, more than one server instance, S3 storage. Each fits behind
+GraphQL, a wiki, project boards, Git LFS, pull mirrors, reusable workflows,
+environments with approval, WebAuthn, more than one server instance, S3 storage. Each fits behind
 an existing boundary and is listed in `ROADMAP.md` under later work.
 
 Never, by design: open sign-up, anonymous writes, anonymous reads of anything

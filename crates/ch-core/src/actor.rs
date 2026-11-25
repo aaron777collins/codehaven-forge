@@ -51,13 +51,74 @@ impl Scopes {
     }
 }
 
-/// What a CI job token may do, always on its own repo only.
+/// What a CI job token may do, always on its own repo only. Each scope is `None`, `Read` or
+/// `Write` (the workflow's `permissions:`, capped by the repository's ceiling and, for a pull
+/// request from a fork, down to reading contents). Other levels are never stored here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobPerms {
-    /// Read repository contents.
-    pub contents_read: bool,
-    /// Write statuses, checks, artifacts and caches. False for fork pull request jobs.
-    pub write_checks: bool,
+    pub contents: Permission,
+    pub packages: Permission,
+    pub checks: Permission,
+    pub statuses: Permission,
+    pub issues: Permission,
+    pub pull_requests: Permission,
+    pub actions: Permission,
+    /// A pull request from a fork: the job may not write artifacts or caches.
+    pub fork: bool,
+    /// The reserved `codehaven-actions` account a job's changes are recorded as.
+    pub bot: Option<UserId>,
+}
+
+impl JobPerms {
+    /// GitHub's restricted default: read contents and packages, nothing else.
+    pub fn default_token(fork: bool) -> Self {
+        JobPerms {
+            contents: Permission::Read,
+            packages: if fork { Permission::None } else { Permission::Read },
+            checks: Permission::None,
+            statuses: Permission::None,
+            issues: Permission::None,
+            pull_requests: Permission::None,
+            actions: Permission::None,
+            fork,
+            bot: None,
+        }
+    }
+    /// What the runtime token an action receives carries: no scope at all. On GitHub that token
+    /// reaches the cache and artifact services and nothing else, so a third-party action that was
+    /// never handed the job token cannot write a status, an issue or a release with it. Only
+    /// `fork` is kept, because the toolkit service still refuses a fork's saves.
+    pub fn runtime_only(fork: bool) -> Self {
+        JobPerms {
+            contents: Permission::None,
+            packages: Permission::None,
+            checks: Permission::None,
+            statuses: Permission::None,
+            issues: Permission::None,
+            pull_requests: Permission::None,
+            actions: Permission::None,
+            fork,
+            bot: None,
+        }
+    }
+    pub fn contents_read(&self) -> bool {
+        self.contents >= Permission::Read
+    }
+    /// Artifacts and caches of its own run. Every job but a fork's.
+    pub fn runtime_write(&self) -> bool {
+        !self.fork
+    }
+    /// May open and comment on issues and pull requests. Codehaven treats `issues` and
+    /// `pull-requests` as one scope for this.
+    pub fn contribute(&self) -> bool {
+        self.issues >= Permission::Write || self.pull_requests >= Permission::Write
+    }
+    /// Anything at all on its repository: metadata is always readable to its own job.
+    pub fn any(&self) -> bool {
+        [self.contents, self.packages, self.checks, self.statuses, self.issues, self.pull_requests, self.actions]
+            .iter()
+            .any(|p| *p >= Permission::Read)
+    }
 }
 
 /// A set of repositories a connected app was given: every repository the person can reach, now
@@ -161,6 +222,8 @@ impl Actor {
     pub fn author_id(&self) -> Option<UserId> {
         match self {
             Actor::App { user_id, .. } => Some(*user_id),
+            // A job's changes are the `codehaven-actions` account's, never a person's.
+            Actor::Job { perms, .. } => perms.bot,
             other => other.user_id(),
         }
     }

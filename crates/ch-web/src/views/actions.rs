@@ -384,6 +384,14 @@ pub struct ArtifactRow {
     pub expired: bool,
 }
 
+pub struct ActionUsedRow {
+    pub name: String,
+    pub requested: String,
+    /// The first 12 characters of the commit.
+    pub short: String,
+    pub sha: String,
+}
+
 #[derive(Template)]
 #[template(path = "actions/run.html")]
 struct RunPage {
@@ -412,6 +420,7 @@ struct RunPage {
     columns: Vec<JobCol>,
     has_graph: bool,
     artifacts: Vec<ArtifactRow>,
+    actions_used: Vec<ActionUsedRow>,
 }
 
 pub struct StepView {
@@ -479,6 +488,7 @@ struct SecretsPage {
     vars: Vec<VarRow>,
     error: String,
     name_value: String,
+    token_ceiling: String,
 }
 
 pub struct RunnerRow {
@@ -722,6 +732,7 @@ pub async fn run_get(ctx: Ctx, Path((owner, name, run)): Path<(String, String, i
     let info = ctx.state.ci.get_run(&ctx.actor, rc.id(), RunId(run)).await?;
     let jobs = ctx.state.pipelines.jobs(&ctx.actor, rc.id(), RunId(run)).await?;
     let artifacts = ctx.state.pipelines.artifacts(&ctx.actor, rc.id(), RunId(run)).await?;
+    let used = ctx.state.pipelines.run_actions(&ctx.actor, rc.id(), RunId(run)).await.unwrap_or_default();
     let active = fmt::is_active(&info.status);
     let can_write = rc.perm.allows(Permission::Write) && !rc.repo.archived;
 
@@ -787,6 +798,15 @@ pub async fn run_get(ctx: Ctx, Path((owner, name, run)): Path<(String, String, i
                 when: fmt::time(a.created_at),
                 href: format!("{base}/actions/runs/{run}/artifacts/{}", a.id),
                 expired: a.expired,
+            })
+            .collect(),
+        actions_used: used
+            .iter()
+            .map(|a| ActionUsedRow {
+                name: a.name.clone(),
+                requested: a.requested.clone(),
+                short: a.sha.chars().take(12).collect(),
+                sha: a.sha.clone(),
             })
             .collect(),
     })
@@ -1036,6 +1056,7 @@ pub async fn job_stream(
 async fn secrets_page(ctx: &Ctx, rc: &RepoCtx, error: &str, name_value: &str, status: StatusCode) -> WebResult<Response> {
     let secrets = ctx.state.pipelines.secrets(&ctx.actor, rc.id()).await?;
     let vars = ctx.state.pipelines.variables(&ctx.actor, rc.id()).await?;
+    let token_ceiling = ctx.state.pipelines.token_ceiling(&ctx.actor, rc.id()).await.unwrap_or_else(|_| "write".to_string());
     let base = rc.base();
     let c = rc.chrome(ctx, "Secrets and variables", "settings").await;
     ctx.page_status(
@@ -1063,6 +1084,7 @@ async fn secrets_page(ctx: &Ctx, rc: &RepoCtx, error: &str, name_value: &str, st
                 .collect(),
             error: error.to_string(),
             name_value: name_value.to_string(),
+            token_ceiling,
         },
     )
 }
@@ -1080,8 +1102,18 @@ pub async fn secrets_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>,
     let kind = form.get("kind");
     let name_in = form.get("name").trim().to_string();
     let value = form.get("value");
-    if !matches!(kind, "secret" | "variable") {
+    if !matches!(kind, "secret" | "variable" | "token") {
         return Err(WebError::bad("That form is not one we know."));
+    }
+    if kind == "token" {
+        let v = form.get("ceiling");
+        return match ctx.state.pipelines.set_token_ceiling(&ctx.actor, rc.id(), v, &ctx.client).await {
+            Ok(()) => Ok(ctx.redirect_flash(&format!("{}/settings/secrets", rc.base()), "ok", "Saved the workflow permissions.")),
+            Err(e) => match FieldErrors::from_error(&e) {
+                Some(_) => secrets_page(&ctx, &rc, "Choose read or write.", "", StatusCode::UNPROCESSABLE_ENTITY).await,
+                None => Err(e.into()),
+            },
+        };
     }
     if value.len() > MAX_VALUE_LEN {
         return secrets_page(&ctx, &rc, "That value is too long. Keep it under 64 KB.", &name_in, StatusCode::UNPROCESSABLE_ENTITY).await;

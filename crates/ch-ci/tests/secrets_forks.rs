@@ -271,9 +271,11 @@ async fn run_is_fork(w: &World, run: i64) -> bool {
 async fn a_same_repo_pull_request_gets_a_job_token_that_can_write(pool: PgPool) {
     // ch-x12 regression: ch-collab stores a branch of the same repository with no head
     // repository (NULL), and that is not a fork. bob has write access and opens a pull request
-    // from a branch of alice/demo: its job uploads artifacts, saves caches and posts statuses.
+    // from a branch of alice/demo: its job uploads artifacts, saves caches and posts statuses
+    // (which the workflow has to ask for, ch-ctk.8).
     let w = World::new(pool).await;
-    let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, NEEDS_SECRET)]).await;
+    let wf = NEEDS_SECRET.replace("jobs:\n", "permissions:\n  statuses: write\njobs:\n");
+    let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, &wf)]).await;
     w.env.collaborator(repo, w.bob, "write").await;
     put_secret(&w, "/api/v3/repos/alice/demo/actions/secrets/DEPLOY_KEY", &Who::User(w.alice), "hunter2").await;
     open_pull(&w, repo, None, w.bob, &git.head()).await;
@@ -393,7 +395,7 @@ async fn the_job_token_lookup_reads_the_fork_flag_join_payload_writes(pool: PgPo
             .await
             .unwrap();
         let (_, _, perms) = ch_db::ci_auth::job_from_token(&w.env.pool, secret).await.unwrap().unwrap();
-        assert!(perms.contents_read);
-        assert_eq!(perms.write_checks, !fork, "fork={fork}");
+        assert!(perms.contents_read());
+        assert_eq!(perms.runtime_write(), !fork, "fork={fork}");
     }
 }

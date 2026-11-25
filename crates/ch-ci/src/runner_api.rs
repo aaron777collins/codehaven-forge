@@ -44,6 +44,8 @@ pub fn routes() -> Router<AppState> {
         .route("/jobs/{id}/artifacts/{name}", get(get_artifact))
         .route("/cache/lookup", post(cache_lookup))
         .route("/cache/{key}", get(cache_get))
+        .route("/jobs/{id}/actions/resolve", post(resolve_actions))
+        .route("/jobs/{id}/actions/archive/{archive}", get(action_archive))
         .merge(uploads)
 }
 
@@ -75,7 +77,7 @@ async fn token_job(ctx: &Ctx, actor: &Actor, path_job: i64, write: bool) -> Resu
     if job_id.0 != path_job {
         return Err(Error::NotFound);
     }
-    if write && !perms.write_checks {
+    if write && !perms.runtime_write() {
         return Err(Error::forbidden("This job may not write artifacts or caches."));
     }
     sqlx::query_as::<_, JobRow>(&format!("SELECT {JOB_COLS} FROM workflow_jobs WHERE id = $1 AND status = 'in_progress'"))
@@ -310,7 +312,7 @@ async fn step(
         "in_progress" => {
             let r = sqlx::query("UPDATE workflow_steps SET status = 'in_progress', started_at = COALESCE(started_at, now()) WHERE job_id = $1 AND number = $2").bind(id).bind(n).execute(&ctx.db).await?;
             if r.rows_affected() == 0 {
-                return Err(Error::NotFound);
+                add_runner_step(&ctx, id, n, u.name.as_deref()).await?;
             }
         }
         "completed" => {
@@ -331,6 +333,35 @@ async fn step(
         _ => return Err(Error::invalid("Step", "status", "Use in_progress or completed.")),
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The most steps a runner may add to a job while it runs (an action's post step each).
+const MAX_RUNNER_STEPS: i64 = 100;
+
+/// A step the runner adds, such as `Post Run actions/setup-node@v4`. It comes after every step
+/// the job already has, with a name, and only so many per job.
+async fn add_runner_step(ctx: &Ctx, job: i64, n: i32, name: Option<&str>) -> Result<()> {
+    let Some(name) = name.map(str::trim).filter(|s| !s.is_empty()) else { return Err(Error::NotFound) };
+    let name: String = name.chars().filter(|c| !c.is_control()).take(200).collect();
+    let r = sqlx::query(
+        "INSERT INTO workflow_steps (job_id, number, name, status, started_at)
+         SELECT $1, $2, $3, 'in_progress', now()
+         WHERE $2 > (SELECT COALESCE(MAX(number), 0) FROM workflow_steps WHERE job_id = $1)
+           AND $2 <= (SELECT COALESCE(MAX(number), 0) FROM workflow_steps WHERE job_id = $1) + 10
+           AND (SELECT count(*) FROM workflow_steps WHERE job_id = $1 AND number > jsonb_array_length(
+                    COALESCE((SELECT spec->'job'->'steps' FROM workflow_jobs WHERE id = $1), '[]'::jsonb))) < $4
+         ON CONFLICT (job_id, number) DO NOTHING",
+    )
+    .bind(job)
+    .bind(n)
+    .bind(&name)
+    .bind(MAX_RUNNER_STEPS)
+    .execute(&ctx.db)
+    .await?;
+    if r.rows_affected() == 0 {
+        return Err(Error::NotFound);
+    }
+    Ok(())
 }
 
 /// Job outputs are small strings. These limits keep a hostile job from filling the database.
@@ -414,6 +445,37 @@ async fn list_artifacts(
     Ok(Json(ArtifactsResponse { total_count: artifacts.len() as u32, artifacts }))
 }
 
+// ---------------------------------------------------------------------------- actions
+
+/// The actions a job names, checked against the site's policy and pinned to its run.
+async fn resolve_actions(
+    State(state): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Path(id): Path<i64>,
+    Json(req): Json<rn::ActionResolveRequest>,
+) -> Result<Json<rn::ActionResolveResponse>> {
+    let ctx = Ctx::from_state(&state);
+    let job = token_job(&ctx, &actor, id, false).await?;
+    let actions = crate::action_fetch::resolve_for_job(&ctx, &job, &req.actions).await?;
+    Ok(Json(rn::ActionResolveResponse { actions }))
+}
+
+/// One archive the job's run resolved, and no other.
+async fn action_archive(
+    State(state): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Path((id, archive)): Path<(i64, String)>,
+) -> Result<Response> {
+    let ctx = Ctx::from_state(&state);
+    let job = token_job(&ctx, &actor, id, false).await?;
+    if archive.len() != 64 || !archive.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(Error::NotFound);
+    }
+    crate::action_fetch::archive_for_job(&ctx, &job, &archive).await?;
+    let body = store::blob_body(&ctx, &archive).await?;
+    Ok(([(axum::http::header::CONTENT_TYPE, "application/gzip")], body).into_response())
+}
+
 // ---------------------------------------------------------------------------- cache
 
 fn job_of(actor: &Actor) -> Result<(i64, i64)> {
@@ -426,7 +488,7 @@ fn job_of(actor: &Actor) -> Result<(i64, i64)> {
 /// The refs whose caches a job may read, as on GitHub, most preferred first: its run's own ref,
 /// then for a pull request the branch it targets, then the default branch. Never another
 /// branch's (ch-3xn).
-async fn cache_refs(ctx: &Ctx, job: &JobRow) -> Result<Vec<String>> {
+pub(crate) async fn cache_refs(ctx: &Ctx, job: &JobRow) -> Result<Vec<String>> {
     let run = runs::fetch_run(ctx, job.run_id).await?;
     let info = crate::discovery::repo_ci(ctx, ch_core::RepoId(job.repo_id)).await?;
     let (_, meta) = crate::spec::split_payload(&run.event_payload);

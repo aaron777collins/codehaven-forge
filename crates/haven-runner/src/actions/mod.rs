@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 pub mod artifact;
 pub mod cache;
 pub mod checkout;
+pub mod remote;
 
 /// What a `uses:` string names.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +26,11 @@ pub enum Builtin {
     DownloadArtifact,
     /// `docker://image`: run a container image once with the step's `args`.
     Docker(String),
+    /// `owner/repo[/path]@ref` from GitHub or `haven_owner/repo[/path]@ref` from this instance,
+    /// fetched through the server (ch-ctk.5) and run by the runner (ch-ctk.4).
+    Remote(String),
+    /// `./path`: an action in the job's own workspace.
+    Local(String),
     /// Something we do not run, with the reason to show.
     Unsupported(String),
 }
@@ -46,8 +52,14 @@ pub fn resolve(uses: &str) -> Builtin {
             Builtin::Docker(image.to_string())
         };
     }
-    if uses.starts_with("./") || uses.starts_with("../") {
-        return Builtin::Unsupported(format!("{uses}: actions from a directory in the repository are not supported yet"));
+    if uses.starts_with("./") {
+        return match ch_workflow::uses::parse_uses(uses) {
+            Ok(_) => Builtin::Local(uses.to_string()),
+            Err(e) => Builtin::Unsupported(e.0),
+        };
+    }
+    if uses.starts_with("../") {
+        return Builtin::Unsupported(format!("{uses}: a local action must be inside the workspace, starting with ./"));
     }
     let without_ref = uses.split('@').next().unwrap_or(uses);
     let lowered = without_ref.to_ascii_lowercase();
@@ -63,16 +75,30 @@ pub fn resolve(uses: &str) -> Builtin {
         ["cache", "save"] => Builtin::Cache(CacheMode::SaveOnly),
         ["upload-artifact"] => Builtin::UploadArtifact,
         ["download-artifact"] => Builtin::DownloadArtifact,
-        _ => Builtin::Unsupported(format!(
-            "{uses} is not one of the built-in actions (checkout, cache, upload-artifact, download-artifact, docker://). Actions that download JavaScript or other code are not supported"
-        )),
+        _ => match ch_workflow::uses::parse_uses(uses) {
+            Ok(ch_workflow::uses::Uses::Repo { .. }) => Builtin::Remote(uses.to_string()),
+            Ok(_) => Builtin::Unsupported(format!("{uses} is not an action the runner can run")),
+            Err(e) => Builtin::Unsupported(e.0),
+        },
     }
 }
 
 /// Work to do after every step has run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PostAction {
-    CacheSave { key: String, version: String, patterns: Vec<String> },
+    CacheSave {
+        key: String,
+        version: String,
+        patterns: Vec<String>,
+    },
+    /// A JavaScript action's `post:` script, its `post-if` condition and the env it runs with
+    /// (its inputs and the state its main step saved).
+    Node {
+        title: String,
+        script: String,
+        condition: String,
+        env: BTreeMap<String, String>,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -156,13 +182,13 @@ mod tests {
     }
 
     #[test]
-    fn other_actions_are_refused_with_a_reason() {
-        for u in ["actions/setup-node@v4", "someone/checkout@v1", "docker://", "./local-action", "../x", "", "actions/checkout/extra"] {
+    fn other_actions_are_fetched_or_refused_with_a_reason() {
+        assert_eq!(resolve("actions/setup-node@v4"), Builtin::Remote("actions/setup-node@v4".into()));
+        assert_eq!(resolve("someone/checkout@v1"), Builtin::Remote("someone/checkout@v1".into()));
+        assert_eq!(resolve("haven_aaron/tool/sub@main"), Builtin::Remote("haven_aaron/tool/sub@main".into()));
+        assert_eq!(resolve("./local-action"), Builtin::Local("./local-action".into()));
+        for u in ["docker://", "../x", "", "actions/checkout/extra", "./a/../../b", "o_x/r@v1"] {
             assert!(matches!(resolve(u), Builtin::Unsupported(_)), "{u:?} gave {:?}", resolve(u));
-        }
-        match resolve("actions/setup-node@v4") {
-            Builtin::Unsupported(m) => assert!(m.contains("built-in")),
-            _ => unreachable!(),
         }
     }
 

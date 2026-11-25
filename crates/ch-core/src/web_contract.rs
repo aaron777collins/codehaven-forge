@@ -333,6 +333,26 @@ pub struct Runner {
     pub created_at: DateTime<Utc>,
 }
 
+/// Site admin > Actions: which actions a `uses:` may name (ch-ctk.5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionsPolicy {
+    /// `none`, `selected` or `all`.
+    pub mode: String,
+    pub allow: Vec<String>,
+    pub block: Vec<String>,
+    pub require_sha: bool,
+    pub allow_codehaven_repos: bool,
+}
+
+/// One action a run used, as the run page lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionUsed {
+    /// `actions/setup-node`, or `haven_owner/repo` for a repository here.
+    pub name: String,
+    pub requested: String,
+    pub sha: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecretMeta {
     pub name: String,
@@ -363,6 +383,28 @@ pub trait Pipelines: Send + Sync {
     /// Registered runners: those that serve `repo` when given, else every runner (site admins only).
     async fn runners(&self, actor: &Actor, repo: Option<RepoId>) -> Result<Vec<Runner>>;
     async fn revoke_runner(&self, actor: &Actor, id: RunnerId, client: &ClientInfo) -> Result<()>;
+    /// The most a workflow job's token may do on this repository: `read`, or `write` (what the
+    /// workflow asks for). Repository admins only.
+    async fn token_ceiling(&self, actor: &Actor, repo: RepoId) -> Result<String> {
+        let _ = (actor, repo);
+        Err(nb("pipelines"))
+    }
+    async fn set_token_ceiling(&self, actor: &Actor, repo: RepoId, value: &str, client: &ClientInfo) -> Result<()> {
+        let _ = (actor, repo, value, client);
+        Err(nb("pipelines"))
+    }
+    async fn actions_policy(&self, actor: &Actor) -> Result<ActionsPolicy> {
+        let _ = actor;
+        Err(nb("pipelines"))
+    }
+    async fn set_actions_policy(&self, actor: &Actor, policy: ActionsPolicy, client: &ClientInfo) -> Result<()> {
+        let _ = (actor, policy, client);
+        Err(nb("pipelines"))
+    }
+    async fn run_actions(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Vec<ActionUsed>> {
+        let _ = (actor, repo, run);
+        Ok(Vec::new())
+    }
     async fn secrets(&self, actor: &Actor, repo: RepoId) -> Result<Vec<SecretMeta>>;
     async fn set_secret(&self, actor: &Actor, repo: RepoId, name: &str, value: &str, client: &ClientInfo) -> Result<()>;
     async fn delete_secret(&self, actor: &Actor, repo: RepoId, name: &str, client: &ClientInfo) -> Result<()>;
@@ -544,6 +586,12 @@ impl Pipelines for NotBuilt {
         Err(nb("pipelines"))
     }
     async fn revoke_runner(&self, actor: &Actor, id: RunnerId, client: &ClientInfo) -> Result<()> {
+        Err(nb("pipelines"))
+    }
+    async fn token_ceiling(&self, actor: &Actor, repo: RepoId) -> Result<String> {
+        Err(nb("pipelines"))
+    }
+    async fn set_token_ceiling(&self, actor: &Actor, repo: RepoId, value: &str, client: &ClientInfo) -> Result<()> {
         Err(nb("pipelines"))
     }
     async fn secrets(&self, actor: &Actor, repo: RepoId) -> Result<Vec<SecretMeta>> {

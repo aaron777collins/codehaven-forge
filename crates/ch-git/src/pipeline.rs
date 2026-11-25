@@ -109,6 +109,15 @@ async fn check(core: &GitCore, ctx: &PushCtx, repo: &Repo, updates: &[RefUpdate]
             problems.push(format!("This changes {dir}, which runs as CI. A token needs the workflow scope to do that."));
             continue;
         }
+        // A workflow job never changes workflow files, whatever its token may write (ch-ctk.8).
+        if matches!(ctx.actor, Actor::Job { .. })
+            && u.new != ZERO_SHA
+            && (u.name.starts_with("refs/heads/") || u.name.starts_with("refs/tags/"))
+            && let Err(dir) = workflow_dirs_unchanged(core, u, objects).await
+        {
+            problems.push(format!("This changes {dir}, which runs as CI. A workflow job cannot change workflow files."));
+            continue;
+        }
         if let Some(branch) = u.name.strip_prefix("refs/heads/")
             && let Err(msg) = check_branch_update(&protections, branch, &repo.default_branch, kind_of(u), ctx.origin)
         {

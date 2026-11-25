@@ -74,8 +74,8 @@ async fn status_input_is_checked_and_access_enforced(pool: PgPool) {
     assert_eq!(w.post(&uri, &Who::User(w.bob), json!({"state": "success"})).await.0, StatusCode::FORBIDDEN, "reading is not enough");
     assert_eq!(w.post(&uri, &Who::Anon, json!({"state": "success"})).await.0, StatusCode::UNAUTHORIZED);
     assert_eq!(w.env.count("commit_statuses").await, 0);
-    // A running job may report on its own repo's commits.
-    let yml = "name: ci\non: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - run: echo\n";
+    // A running job may report on its own repo's commits when its workflow asks for it.
+    let yml = "name: ci\non: push\npermissions:\n  statuses: write\njobs:\n  b:\n    runs-on: x\n    steps:\n      - run: echo\n";
     let (repo2, git2) = w.repo_with(w.alice, "other", &[(CI_YML, yml)]).await;
     w.push(repo2, &git2, "main", None).await;
     let r = w.runner("r", &["x"]).await;

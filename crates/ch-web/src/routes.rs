@@ -86,6 +86,7 @@ pub fn build_for(mcp: bool) -> Registry {
         .get("/admin/runners", admin::runners_get)
         .post("/admin/runners/{id}/revoke", admin::runner_revoke)
         .post("/admin/runners/token", admin::runner_token)
+        .form("/admin/actions", admin::actions_get, admin::actions_post)
         .get("/admin/audit", admin::audit_get)
         .get("/admin/settings", visibility::admin_settings_get)
         .post("/admin/settings", visibility::admin_settings_post)

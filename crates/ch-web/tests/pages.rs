@@ -178,6 +178,7 @@ const PAGES: &[(&str, &str)] = &[
     ("/admin/invites", "dana@example.test"),
     ("/admin/users", "bob"),
     ("/admin/runners", "harbour-runner-1"),
+    ("/admin/actions", "softprops/action-gh-release"),
     ("/admin/audit", "auth.sign_in"),
 ];
 
@@ -854,7 +855,7 @@ async fn sidebar_marks_the_current_section_and_hides_settings_from_readers() {
 #[tokio::test]
 async fn an_admin_without_two_factor_is_told_to_turn_it_on() {
     let cookie = format!("ch_session={ADMIN_NO_2FA_COOKIE}");
-    for p in ["/admin", "/admin/invites", "/admin/users", "/admin/runners", "/admin/audit", "/admin/workspace"] {
+    for p in ["/admin", "/admin/invites", "/admin/users", "/admin/runners", "/admin/actions", "/admin/audit", "/admin/workspace"] {
         let r = get_as(&cookie, p).await;
         assert_eq!(r.status, StatusCode::FORBIDDEN, "{p}");
         assert!(r.body.contains("two-factor"), "{p}");

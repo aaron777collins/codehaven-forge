@@ -31,8 +31,14 @@ const FK: &str = "23503";
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
 async fn fresh_database_has_zero_accounts(pool: PgPool) {
-    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM users").fetch_one(&pool).await.unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE kind <> 'bot'").fetch_one(&pool).await.unwrap();
     assert_eq!(n, 0, "a new instance has no accounts and no seeded admin");
+    // The one row it has is the account workflow jobs write as: it cannot sign in.
+    let bot: (String, bool, bool) = sqlx::query_as("SELECT username::text, password_hash IS NULL, is_admin FROM users WHERE kind = 'bot'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(bot, ("codehaven-actions".to_string(), true, false));
     let invites: i64 = sqlx::query_scalar("SELECT count(*) FROM invites").fetch_one(&pool).await.unwrap();
     assert_eq!(invites, 0);
 }

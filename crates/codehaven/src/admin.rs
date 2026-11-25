@@ -117,6 +117,16 @@ pub async fn run(state: &AppState, command: AdminCommand) -> Result<()> {
             println!("Registration token. It works once and expires at {}:", t.expires_at.format("%Y-%m-%d %H:%M UTC"));
             println!("{}", t.token);
         }
+        AdminCommand::Runners => {
+            for r in state.pipelines.runners(&sys, None).await.map_err(describe)? {
+                let seen = r.last_seen_at.map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string()).unwrap_or_else(|| "never".into());
+                println!("{:>5}  {:<24} {:<8} last seen {}  {}", r.id.0, r.name, r.status, seen, r.labels.join(","));
+            }
+        }
+        AdminCommand::RevokeRunner { id } => {
+            state.pipelines.revoke_runner(&sys, ch_core::RunnerId(id), &cli_client).await.map_err(describe)?;
+            println!("Removed runner {id}. Its credential no longer works.");
+        }
         AdminCommand::ResetPassword { username } => {
             let user = state.accounts.get_by_username(&sys, &username).await.map_err(describe)?;
             state.accounts.sign_out_everywhere(&sys, user.id, &cli_client).await.map_err(describe)?;

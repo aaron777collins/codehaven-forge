@@ -225,6 +225,38 @@ pub fn check_limits(o: &ContainerOptions, l: &Limits) -> Result<(), String> {
 }
 
 /// Parses and checks in one step.
+/// Health check flags a service may carry. The runner waits for the service's ports instead of
+/// running the check, so they are accepted and have no other effect.
+const HEALTH_FLAGS: &[&str] = &["--health-cmd", "--health-interval", "--health-timeout", "--health-retries", "--health-start-period"];
+
+/// `services.<id>.options`: the container options of a job, plus health check flags.
+pub fn validate_service(s: &str) -> Result<ContainerOptions, String> {
+    let words = split(s)?;
+    let mut kept = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        let w = &words[i];
+        let flag = w.split_once('=').map(|(f, _)| f).unwrap_or(w);
+        if HEALTH_FLAGS.contains(&flag) {
+            // `--health-cmd x` takes the next word; `--health-cmd=x` does not.
+            i += if w.contains('=') { 1 } else { 2 };
+            continue;
+        }
+        kept.push(w.clone());
+        i += 1;
+    }
+    let rest = kept.iter().map(|w| quote_word(w)).collect::<Vec<_>>().join(" ");
+    validate(&rest, &Limits::default())
+}
+
+fn quote_word(w: &str) -> String {
+    if !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || "-_=./:,@%+".contains(c)) {
+        w.to_string()
+    } else {
+        format!("'{}'", w.replace('\'', "'\\''"))
+    }
+}
+
 pub fn validate(s: &str, limits: &Limits) -> Result<ContainerOptions, String> {
     let o = parse_options(s)?;
     check_limits(&o, limits)?;

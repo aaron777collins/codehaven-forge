@@ -306,6 +306,8 @@ async fn jobs_cannot_reach_each_other_and_have_no_raw_sockets() {
         shm_size: 16 << 20,
         entrypoint: Some(vec!["tail".into()]),
         cmd: Some(vec!["-f".into(), "/dev/null".into()]),
+        network_of: None,
+        extra_hosts: Vec::new(),
     };
     let a = b.create_and_start(&spec("iso-a")).await.expect("create a");
     let c = b.create_and_start(&spec("iso-b")).await.expect("create b");
@@ -467,6 +469,8 @@ fn idle_spec(name: &str, image: &str, runner: i64) -> ContainerSpec {
         shm_size: 16 << 20,
         entrypoint: Some(vec!["tail".into()]),
         cmd: Some(vec!["-f".into(), "/dev/null".into()]),
+        network_of: None,
+        extra_hosts: Vec::new(),
     }
 }
 

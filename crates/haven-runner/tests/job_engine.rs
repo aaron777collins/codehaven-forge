@@ -308,11 +308,11 @@ async fn hash_files_sees_the_workspace() {
 }
 
 #[tokio::test]
-async fn unsupported_actions_fail_with_a_clear_message() {
+async fn actions_the_server_will_not_give_fail_with_a_clear_message() {
     let h = Harness::new().await;
     let r = h.run(TestJob::new(21).uses("actions/setup-node@v4", &[("node-version", "20")]).build()).await;
     assert_eq!(r.conclusion, "failure");
-    assert!(h.server.step_log(21, 1).contains("not one of the built-in actions"), "{}", h.server.step_log(21, 1));
+    assert!(h.server.step_log(21, 1).contains("not allowed on this instance"), "{}", h.server.step_log(21, 1));
 }
 
 #[tokio::test]

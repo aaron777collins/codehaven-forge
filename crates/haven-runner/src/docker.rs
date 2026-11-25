@@ -99,7 +99,9 @@ fn create_body(spec: &ContainerSpec, network: &str) -> ContainerCreateBody {
         // A tiny init reaps the zombies that build tools leave behind.
         init: Some(true),
         // A bridge of its own: no other container, this owner's or anyone else's, is ever on it.
+        // A service shares its job's instead (`container:<id>`), and nobody else's.
         network_mode: Some(network.to_string()),
+        extra_hosts: if spec.extra_hosts.is_empty() { None } else { Some(spec.extra_hosts.clone()) },
         // No raw sockets: a job cannot sniff or spoof its neighbours on the daemon's bridges.
         cap_drop: Some(vec!["NET_RAW".to_string()]),
         // Never privileged, no devices: the defaults, said out loud.
@@ -107,8 +109,10 @@ fn create_body(spec: &ContainerSpec, network: &str) -> ContainerCreateBody {
         ..Default::default()
     };
     let mut labels = spec.labels.clone();
-    // So remove() can find the network that belongs to this container alone.
-    labels.insert(LABEL_NETWORK.to_string(), network.to_string());
+    // So remove() can find the network that belongs to this container alone. A service has none.
+    if spec.network_of.is_none() {
+        labels.insert(LABEL_NETWORK.to_string(), network.to_string());
+    }
     ContainerCreateBody {
         image: Some(spec.image.clone()),
         env: Some(env_list(&spec.env)),
@@ -164,19 +168,29 @@ impl Backend for DockerBackend {
     }
 
     async fn create_and_start(&self, spec: &ContainerSpec) -> Result<String> {
-        let network = format!("haven-net-{}", spec.name);
-        self.create_job_network(&network, spec).await?;
+        let (network, own) = match &spec.network_of {
+            Some(id) => (format!("container:{id}"), false),
+            None => {
+                let n = format!("haven-net-{}", spec.name);
+                self.create_job_network(&n, spec).await?;
+                (n, true)
+            }
+        };
         let opts = CreateContainerOptionsBuilder::default().name(&spec.name).build();
         let created = match self.docker.create_container(Some(opts), create_body(spec, &network)).await {
             Ok(c) => c,
             Err(e) => {
-                self.remove_job_network(&network).await;
+                if own {
+                    self.remove_job_network(&network).await;
+                }
                 return Err(anyhow!(e)).with_context(|| format!("cannot create a container from {}", spec.image));
             }
         };
         if let Err(e) = self.docker.start_container(&created.id, None).await {
             let _ = self.remove(&created.id).await;
-            self.remove_job_network(&network).await;
+            if own {
+                self.remove_job_network(&network).await;
+            }
             return Err(anyhow!(e)).with_context(|| format!("cannot start a container from {}", spec.image));
         }
         Ok(created.id)
@@ -403,6 +417,8 @@ mod tests {
             shm_size: 64 << 20,
             entrypoint: Some(vec!["tail".into()]),
             cmd: Some(vec!["-f".into(), "/dev/null".into()]),
+            network_of: None,
+            extra_hosts: Vec::new(),
         };
         let b = create_body(&spec, "haven-net-n");
         let h = b.host_config.unwrap();

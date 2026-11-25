@@ -53,6 +53,12 @@ fn scope_allows(actor: &Actor, access: Access) -> bool {
             Access::Pull => Scopes::has(scopes, "read:packages") || Scopes::has(scopes, "write:packages"),
             Access::Push => Scopes::has(scopes, "write:packages"),
         },
+        // A workflow job: `packages: read` pulls, `packages: write` pushes, and only images
+        // linked to its own repository (checked in `job_allows`).
+        Actor::Job { perms, .. } => match access {
+            Access::Pull => perms.packages >= Permission::Read,
+            Access::Push => perms.packages >= Permission::Write,
+        },
         Actor::User { .. } | Actor::System => true,
         // A signed-out pull, let in by the gate only for an image linked to a public repository
         // (ch-4pn.13). Never a push.
@@ -92,6 +98,15 @@ async fn find(state: &AppState, owner: &str, image: &str) -> RegResult<Option<Pa
         name: r.name,
         orphaned: r.orphaned,
     }))
+}
+
+/// A job reaches only images linked to its own repository (ch-ctk.8). Its scope was checked by
+/// `scope_allows`.
+fn job_allows(actor: &Actor, pkg_repo: Option<i64>) -> Option<bool> {
+    match actor {
+        Actor::Job { repo_id, .. } => Some(pkg_repo == Some(repo_id.0)),
+        _ => None,
+    }
 }
 
 /// Can the actor act on an image its owner has, with no repository behind it? An orphaned image
@@ -152,6 +167,9 @@ pub async fn can_pull(state: &AppState, actor: &Actor, pkg: &Package, owner_is_o
     if !scope_allows(actor, Access::Pull) {
         return Ok(false);
     }
+    if let Some(ok) = job_allows(actor, pkg.repo_id) {
+        return Ok(ok);
+    }
     match pkg.repo_id {
         Some(repo) => {
             if let Some(&known) = memo.repo.get(&repo) {
@@ -199,6 +217,9 @@ pub async fn authorize(
 
     let person = as_person(actor);
     if let Some(pkg) = find(state, owner, image).await? {
+        if let Some(ok) = job_allows(actor, pkg.repo_id) {
+            return if ok { Ok(pkg) } else { Err(RegError::name_unknown()) };
+        }
         let allowed = match pkg.repo_id {
             Some(repo) => {
                 let needed = if access == Access::Push { Permission::Write } else { PULL_NEEDS };
@@ -225,6 +246,36 @@ pub async fn authorize(
 
     if !(create && access == Access::Push) {
         return Err(RegError::name_unknown());
+    }
+    // A job creates only an image named like its own repository, linked to it, and never for a
+    // public repository, where the first push would publish it (ch-4pn.13).
+    if let Actor::Job { repo_id, .. } = actor {
+        let own: Option<(i64, String, String)> = sqlx::query_as("SELECT owner_id, name::text, access_tier FROM repositories WHERE id = $1")
+            .bind(repo_id.0)
+            .fetch_optional(&state.db)
+            .await?;
+        return match own {
+            Some((o, name, tier)) if o == owner_id && name.eq_ignore_ascii_case(image.split('/').next().unwrap_or(image)) => {
+                if tier == "public" {
+                    return Err(RegError::denied("a workflow cannot create an image for a public repository; push it once yourself"));
+                }
+                let inserted: (i64, Option<i64>) = sqlx::query_as(
+                    "INSERT INTO packages (owner_id, repo_id, kind, name) VALUES ($1, $2, 'container', $3) \
+                     ON CONFLICT (owner_id, kind, name) DO UPDATE SET name = packages.name RETURNING id, repo_id",
+                )
+                .bind(owner_id)
+                .bind(repo_id.0)
+                .bind(image)
+                .fetch_one(&state.db)
+                .await?;
+                // Someone else made it first: it is theirs, and this job is held to the usual rule.
+                if inserted.1 != Some(repo_id.0) {
+                    return Err(RegError::name_unknown());
+                }
+                Ok(Package { id: inserted.0, owner_id, repo_id: Some(repo_id.0), owner_name, name: image.to_string(), orphaned: false })
+            }
+            _ => Err(RegError::name_unknown()),
+        };
     }
     if !owner_allows(state, actor, owner_id, is_org, Access::Push, false).await? {
         // Only someone who could read that account's images learns that pushing is refused.

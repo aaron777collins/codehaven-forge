@@ -12,7 +12,7 @@
 //! 4. Always: remove the container, take back ownership of the files the container made, and
 //!    delete the directory.
 
-use crate::actions::{self, ActionCtx, ActionOutput, Builtin, PostAction};
+use crate::actions::{self, ActionCtx, ActionOutput, Builtin, PostAction, remote};
 use crate::backend::{Backend, Chunk, ContainerSpec, ExecSpec, StreamKind};
 use crate::client::Client;
 use crate::commands::{self, CommandParser};
@@ -26,6 +26,7 @@ use crate::mask::Masker;
 use crate::options::{self, Effective};
 use crate::shell;
 use ch_api_types::runner::{CompleteRequest, JobPayload, StepKind, StepSpec, StepUpdate};
+use ch_workflow::action_def::ActionRuns;
 use futures::FutureExt;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -194,6 +195,16 @@ struct Engine<'a> {
     posts: Vec<PostAction>,
     debug: bool,
     uid_gid: Option<(u32, u32)>,
+    /// The number the next step the runner adds gets (an action's post step).
+    next_step: i32,
+    /// How many composite actions deep the current step is.
+    depth: u32,
+    /// The env a composite action's steps inherit from the step that used it.
+    scope_env: BTreeMap<String, String>,
+    /// Service containers that are running: (id under `services:`, container id).
+    services: Vec<(String, String)>,
+    /// Whether the job's image has `node`, once a JavaScript action has asked.
+    node_found: Option<bool>,
 }
 
 impl<'a> Engine<'a> {
@@ -271,6 +282,11 @@ impl<'a> Engine<'a> {
             posts: Vec::new(),
             debug,
             uid_gid,
+            next_step: payload.steps.iter().map(|s| s.number).max().unwrap_or(0) + 1,
+            depth: 0,
+            scope_env: BTreeMap::new(),
+            services: Vec::new(),
+            node_found: None,
         };
         let result = e.execute().await;
         e.teardown().await;
@@ -316,10 +332,20 @@ impl<'a> Engine<'a> {
     }
 
     async fn finish(&mut self, ran: bool) -> JobResult {
-        if ran && !self.failed && !self.cancelled && !self.timed_out && !self.aborted {
+        if ran {
+            // Post steps run last first, as on GitHub. A cache is saved only after a job that
+            // went well; an action's post step runs when its `post-if` says (default always()).
+            let ok = !self.failed && !self.cancelled && !self.timed_out && !self.aborted;
             let posts = std::mem::take(&mut self.posts);
-            for p in posts {
-                self.run_post(p).await;
+            for p in posts.into_iter().rev() {
+                self.observe_stops();
+                if self.aborted {
+                    break;
+                }
+                match p {
+                    PostAction::CacheSave { .. } if !ok => {}
+                    other => self.run_post(other).await,
+                }
             }
         }
         let mut outputs = BTreeMap::new();
@@ -398,9 +424,13 @@ impl<'a> Engine<'a> {
             shm_size: self.effective.shm_size,
             entrypoint: Some(vec!["tail".into()]),
             cmd: Some(vec!["-f".into(), "/dev/null".into()]),
+            network_of: None,
+            // Each service's id names the loopback the job shares with it (ch-ctk.7).
+            extra_hosts: self.payload.services.iter().map(|s| format!("{}:127.0.0.1", s.id)).collect(),
         };
         let id = backend.create_and_start(&spec).await?;
         self.container = Some(id.clone());
+        self.start_services(&id).await?;
 
         // What shell and PATH does this image have?
         let probe = ExecSpec {
@@ -484,6 +514,11 @@ impl<'a> Engine<'a> {
     }
 
     async fn teardown(&mut self) {
+        for (sid, id) in std::mem::take(&mut self.services) {
+            if let Err(e) = self.deps.backend.remove(&id).await {
+                tracing::warn!(job_id = self.payload.job_id, "cannot remove the {sid} service container {id}: {e:#}");
+            }
+        }
         // Take the files back before the container goes: it is the only thing that can.
         if let Some(id) = self.container.clone() {
             if let Some((uid, gid)) = self.uid_gid
@@ -517,6 +552,8 @@ impl<'a> Engine<'a> {
             shm_size: 64 << 20,
             entrypoint: Some(vec!["/bin/sh".into()]),
             cmd: Some(vec!["-c".into(), format!("chown -R {uid}:{gid} '{root}'; chmod -R u+rwX '{root}'; exit 0")]),
+            network_of: None,
+            extra_hosts: Vec::new(),
         };
         if let Ok(id) = self.deps.backend.create_and_start(&spec).await {
             let (tx, mut rx) = mpsc::channel::<Chunk>(8);
@@ -542,6 +579,7 @@ impl<'a> Engine<'a> {
     fn user_env(&self, step_env: Option<&BTreeMap<String, String>>) -> BTreeMap<String, String> {
         let mut m = self.job_env.clone();
         m.extend(self.github_env.clone());
+        m.extend(self.scope_env.clone());
         if let Some(s) = step_env {
             m.extend(s.clone());
         }
@@ -564,7 +602,20 @@ impl<'a> Engine<'a> {
         ctx.set("inputs", self.inputs_v.clone());
         ctx.set("runner", self.runner_v.clone());
         ctx.set("strategy", json!({}));
-        ctx.set("job", json!({"status": status_word(self.status()), "container": {"id": self.container.clone().unwrap_or_default()}}));
+        let services: serde_json::Map<String, Value> = self
+            .payload
+            .services
+            .iter()
+            .map(|svc| {
+                let id = self.services.iter().find(|(k, _)| *k == svc.id).map(|(_, c)| c.clone()).unwrap_or_default();
+                let ports: serde_json::Map<String, Value> = svc.ports.iter().map(|p| (p.to_string(), json!(p.to_string()))).collect();
+                (svc.id.clone(), json!({"id": id, "network": "", "ports": ports}))
+            })
+            .collect();
+        ctx.set(
+            "job",
+            json!({"status": status_word(self.status()), "container": {"id": self.container.clone().unwrap_or_default(), "network": ""}, "services": services}),
+        );
         let steps: serde_json::Map<String, Value> = self
             .steps
             .iter()
@@ -595,22 +646,28 @@ impl<'a> Engine<'a> {
             Ok(true) => {}
             Ok(false) => {
                 self.record(step, "skipped", "skipped", BTreeMap::new());
-                self.update(n, StepUpdate { status: "completed".into(), conclusion: Some("skipped".into()), outputs: BTreeMap::new() })
-                    .await;
+                self.update(
+                    n,
+                    StepUpdate { name: None, status: "completed".into(), conclusion: Some("skipped".into()), outputs: BTreeMap::new() },
+                )
+                .await;
                 return;
             }
             Err(e) => {
-                self.update(n, StepUpdate { status: "in_progress".into(), conclusion: None, outputs: BTreeMap::new() }).await;
+                self.update(n, StepUpdate { name: None, status: "in_progress".into(), conclusion: None, outputs: BTreeMap::new() }).await;
                 self.log.line(n, &format!("##[error]Cannot evaluate the condition of this step: {e}")).await;
                 self.failed = true;
                 self.record(step, "failure", "failure", BTreeMap::new());
-                self.update(n, StepUpdate { status: "completed".into(), conclusion: Some("failure".into()), outputs: BTreeMap::new() })
-                    .await;
+                self.update(
+                    n,
+                    StepUpdate { name: None, status: "completed".into(), conclusion: Some("failure".into()), outputs: BTreeMap::new() },
+                )
+                .await;
                 return;
             }
         }
 
-        self.update(n, StepUpdate { status: "in_progress".into(), conclusion: None, outputs: BTreeMap::new() }).await;
+        self.update(n, StepUpdate { name: None, status: "in_progress".into(), conclusion: None, outputs: BTreeMap::new() }).await;
         let run = AssertUnwindSafe(self.run_one(step)).catch_unwind().await.unwrap_or_else(|_| StepRun::failed());
 
         let (outcome, mut conclusion) = match run.end {
@@ -633,7 +690,8 @@ impl<'a> Engine<'a> {
             }
         }
         self.record(step, outcome, conclusion, run.outputs.clone());
-        self.update(n, StepUpdate { status: "completed".into(), conclusion: Some(conclusion.into()), outputs: run.outputs }).await;
+        self.update(n, StepUpdate { name: None, status: "completed".into(), conclusion: Some(conclusion.into()), outputs: run.outputs })
+            .await;
     }
 
     fn record(&mut self, step: &StepSpec, outcome: &str, conclusion: &str, outputs: BTreeMap<String, String>) {
@@ -917,6 +975,9 @@ impl<'a> Engine<'a> {
         self.log.line(n, "##[endgroup]").await;
 
         let builtin = actions::resolve(uses);
+        if matches!(builtin, Builtin::Remote(_) | Builtin::Local(_)) {
+            return self.run_action(step, step_env, files, &builtin, &inputs, uses).await;
+        }
         if let Builtin::Docker(image) = &builtin {
             return self.run_docker_step(step, step_env, files, image, &inputs).await;
         }
@@ -945,7 +1006,7 @@ impl<'a> Engine<'a> {
                 Builtin::Cache(mode) => actions::cache::run(&ac, *mode).await,
                 Builtin::UploadArtifact => actions::artifact::upload(&ac).await,
                 Builtin::DownloadArtifact => actions::artifact::download(&ac).await,
-                Builtin::Docker(_) | Builtin::Unsupported(_) => Ok(ActionOutput::default()),
+                Builtin::Docker(_) | Builtin::Unsupported(_) | Builtin::Remote(_) | Builtin::Local(_) => Ok(ActionOutput::default()),
             }
         };
         let (until, limit) = self.step_timeout(step);
@@ -1035,6 +1096,8 @@ impl<'a> Engine<'a> {
             shm_size: self.effective.shm_size,
             entrypoint,
             cmd,
+            network_of: None,
+            extra_hosts: Vec::new(),
         };
         self.own_for_container().await;
         self.dirty = true;
@@ -1165,6 +1228,7 @@ impl<'a> Engine<'a> {
 
     async fn run_post(&mut self, p: PostAction) {
         match p {
+            PostAction::Node { title, script, condition, env } => self.run_node_post(&title, &script, &condition, env).await,
             PostAction::CacheSave { key, version, patterns } => {
                 self.own_for_runner().await;
                 self.log.line(0, &format!("##[group]Post job cleanup: save cache {key}")).await;
@@ -1185,6 +1249,476 @@ impl<'a> Engine<'a> {
                 self.log.line(0, "##[endgroup]").await;
             }
         }
+    }
+}
+
+// ---- service containers (ch-ctk.7) -----------------------------------------------------------
+
+impl Engine<'_> {
+    /// Starts each service in the job container's network, then waits until each port it lists
+    /// takes a connection from inside the job, as `--health-cmd` would on GitHub.
+    async fn start_services(&mut self, job_container: &str) -> anyhow::Result<()> {
+        let backend = self.deps.backend.clone();
+        let cfg = self.deps.cfg.clone();
+        for svc in self.payload.services.clone() {
+            let image = self.interp(&svc.image, None).map_err(|e| anyhow::anyhow!("services.{}.image: {e}", svc.id))?;
+            let mut env = BTreeMap::new();
+            for (k, v) in &svc.env {
+                env.insert(k.clone(), self.interp(v, None).map_err(|e| anyhow::anyhow!("services.{}.env.{k}: {e}", svc.id))?);
+            }
+            // The same safe list as a job container, plus health checks, which are not run.
+            let opts = match &svc.options {
+                Some(o) => {
+                    let o = self.interp(o, None).map_err(|e| anyhow::anyhow!("services.{}.options: {e}", svc.id))?;
+                    ch_workflow::options::validate_service(&o).map_err(|e| anyhow::anyhow!("services.{}.options: {e}", svc.id))?
+                }
+                None => Default::default(),
+            };
+            env.extend(opts.env.iter().cloned());
+            self.log.line(0, &format!("Starting service {} ({image})", svc.id)).await;
+            let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+            let log = self.log.clone();
+            let forward = tokio::spawn(async move {
+                while let Some(l) = rx.recv().await {
+                    log.line(0, &l).await;
+                }
+            });
+            let pulled = backend.ensure_image(&image, cfg.always_pull(), &tx).await;
+            drop(tx);
+            let _ = forward.await;
+            pulled?;
+            let mut labels = BTreeMap::new();
+            labels.insert(LABEL_RUNNER.to_string(), self.deps.runner.id.to_string());
+            labels.insert(LABEL_JOB.to_string(), self.payload.job_id.to_string());
+            labels.insert("org.codehaven".to_string(), "1".to_string());
+            let spec = ContainerSpec {
+                name: format!("codehaven-svc-{}-{}-{}-{:04x}", self.deps.runner.id, self.payload.job_id, svc.id, rand::random::<u16>()),
+                image: image.clone(),
+                labels,
+                env,
+                binds: Vec::new(),
+                workdir: None,
+                user: opts.user.clone(),
+                cpus: self.effective.cpus,
+                memory: self.effective.memory,
+                pids: self.effective.pids,
+                shm_size: opts.shm_bytes.unwrap_or(self.effective.shm_size),
+                entrypoint: None,
+                cmd: None,
+                network_of: Some(job_container.to_string()),
+                extra_hosts: Vec::new(),
+            };
+            let id = backend.create_and_start(&spec).await?;
+            self.services.push((svc.id.clone(), id.clone()));
+            for port in &svc.ports {
+                self.wait_for_port(job_container, &svc.id, *port).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn wait_for_port(&self, job_container: &str, id: &str, port: u16) -> anyhow::Result<()> {
+        let secs = self.deps.cfg.limits.service_wait_seconds.max(1);
+        let script = format!(
+            "i=0; while [ $i -lt {secs} ]; do (exec 3<>/dev/tcp/127.0.0.1/{port}) 2>/dev/null && exit 0; i=$((i+1)); sleep 1; done; exit 1"
+        );
+        let probe = ExecSpec { argv: vec!["bash".into(), "-c".into(), script], env: BTreeMap::new(), workdir: None, user: None };
+        let (_, code) = self.exec_collect(job_container, &probe).await?;
+        if code != 0 {
+            anyhow::bail!("the service {id} did not take connections on port {port} within {secs} seconds");
+        }
+        self.log.line(0, &format!("Service {id} is ready on port {port}.")).await;
+        Ok(())
+    }
+}
+
+// ---- actions that are not built in (ch-ctk.4) ------------------------------------------------
+
+impl Engine<'_> {
+    /// Runs a JavaScript or composite action from GitHub, from a repository here or from the
+    /// workspace. `given` are the step's `with:` values, already evaluated, keys in lower case.
+    async fn run_action(
+        &mut self,
+        step: &StepSpec,
+        step_env: &BTreeMap<String, String>,
+        files: &StepFiles,
+        builtin: &Builtin,
+        given: &BTreeMap<String, String>,
+        uses: &str,
+    ) -> StepRun {
+        let n = step.number;
+        if self.depth >= remote::MAX_DEPTH {
+            self.log.line(n, &format!("##[error]{uses}: composite actions may be nested at most {} deep.", remote::MAX_DEPTH)).await;
+            return StepRun::failed();
+        }
+        self.own_for_runner().await;
+        let fetched = match builtin {
+            Builtin::Remote(u) => remote::fetch_remote(&self.deps.client, &self.dirs, self.payload, u).await,
+            Builtin::Local(u) => remote::fetch_local(&self.dirs, u),
+            _ => Err(anyhow::anyhow!("{uses} is not an action the runner fetches")),
+        };
+        let f = match fetched {
+            Ok(f) => f,
+            Err(e) => {
+                self.log.line(n, &format!("##[error]{e:#}")).await;
+                return StepRun::failed();
+            }
+        };
+        if let Some(sha) = &f.sha {
+            self.log.line(n, &format!("Using {} at {sha}", f.repository)).await;
+        }
+
+        // Inputs: what the step gave, else the action's default (which may be an expression
+        // such as `${{ github.token }}`). Inputs it does not declare are passed on with a warning.
+        let mut inputs = BTreeMap::new();
+        for i in &f.def.inputs {
+            let v = match given.get(&i.id.to_ascii_lowercase()) {
+                Some(v) => v.clone(),
+                None => match &i.default {
+                    Some(d) => match self.interp(d, Some(step_env)) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            self.log.line(n, &format!("##[error]The default of input {}: {e}", i.id)).await;
+                            return StepRun::failed();
+                        }
+                    },
+                    None => {
+                        if i.required {
+                            self.log.line(n, &format!("##[warning]Input required and not supplied: {}", i.id)).await;
+                        }
+                        String::new()
+                    }
+                },
+            };
+            inputs.insert(i.id.clone(), v);
+        }
+        for (k, v) in given {
+            if !f.def.inputs.iter().any(|i| i.id.eq_ignore_ascii_case(k)) {
+                self.log.line(n, &format!("##[warning]Unexpected input '{k}'")).await;
+                inputs.insert(k.clone(), v.clone());
+            }
+        }
+
+        match f.def.runs.clone() {
+            ActionRuns::Docker { .. } => {
+                self.log
+                    .line(n, &format!("##[error]{uses} is a Docker container action. Jobs here have no Docker daemon, so use a `docker://image` step or a `run:` step instead."))
+                    .await;
+                StepRun::failed()
+            }
+            ActionRuns::Node { main, pre, pre_if, post, post_if, .. } => {
+                self.run_node(
+                    step,
+                    step_env,
+                    files,
+                    &f,
+                    &inputs,
+                    (&main, pre.as_deref(), pre_if.as_deref(), post.as_deref(), post_if.as_deref()),
+                )
+                .await
+            }
+            ActionRuns::Composite { steps } => self.run_composite(step, step_env, &f, &inputs, &steps).await,
+        }
+    }
+
+    /// What every phase of an action sees: its inputs as `INPUT_*` and where it is.
+    fn action_env(&self, step: &StepSpec, f: &remote::Fetched, inputs: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+        let mut env = BTreeMap::new();
+        for (k, v) in inputs {
+            env.insert(remote::input_env(k), v.clone());
+        }
+        env.insert("GITHUB_ACTION_PATH".into(), f.dir.to_string_lossy().into_owned());
+        env.insert("GITHUB_ACTION_REPOSITORY".into(), f.repository.clone());
+        env.insert("GITHUB_ACTION_REF".into(), f.git_ref.clone());
+        let action = step.id.clone().filter(|i| !i.is_empty()).unwrap_or_else(|| format!("__{}", f.repository.replace('/', "_")));
+        env.insert("GITHUB_ACTION".into(), action);
+        // The toolkit's cache service (ch-ctk.6), at the public address, which job containers
+        // can reach. The token is the job's own, in the shape the toolkit reads.
+        let server = self.payload.context.server_url.trim_end_matches('/');
+        let left = self.deadline.saturating_duration_since(Instant::now()) + CLEANUP_GRACE;
+        let rt = remote::runtime_token(self.payload, left);
+        self.log.masker().add(&rt);
+        env.insert("ACTIONS_RUNTIME_TOKEN".into(), rt);
+        env.insert("ACTIONS_CACHE_URL".into(), format!("{server}/api/runner/v1/toolkit/"));
+        env.insert("ACTIONS_RUNTIME_URL".into(), format!("{server}/api/runner/v1/toolkit/"));
+        env.insert("ACTIONS_RESULTS_URL".into(), format!("{server}/"));
+        env
+    }
+
+    #[allow(clippy::type_complexity)]
+    async fn run_node(
+        &mut self,
+        step: &StepSpec,
+        step_env: &BTreeMap<String, String>,
+        files: &StepFiles,
+        f: &remote::Fetched,
+        inputs: &BTreeMap<String, String>,
+        phases: (&str, Option<&str>, Option<&str>, Option<&str>, Option<&str>),
+    ) -> StepRun {
+        let (main, pre, pre_if, post, post_if) = phases;
+        let n = step.number;
+        let mut env = step_env.clone();
+        env.extend(self.action_env(step, f, inputs));
+        let state = self.dirs.files.join(format!("step-{n}-state"));
+        if let Err(e) = crate::safefs::create_new(&self.dirs.root, &state, 0o666) {
+            self.log.line(n, &format!("##[error]Cannot create the step's state file: {e}")).await;
+            return StepRun::failed();
+        }
+        env.insert("GITHUB_STATE".into(), state.to_string_lossy().into_owned());
+
+        if let Some(pre) = pre {
+            let go = self.with_ctx(Some(step_env), |c| expr::eval_condition(pre_if.unwrap_or("always()"), c)).unwrap_or(false);
+            if go {
+                self.log.line(n, "##[group]Pre step").await;
+                let run = self.exec_node(step, n, &env, files, &f.dir.join(pre)).await;
+                self.log.line(n, "##[endgroup]").await;
+                if !matches!(run.end, StepEnd::Success) {
+                    return run;
+                }
+            }
+        }
+        let run = self.exec_node(step, n, &env, files, &f.dir.join(main)).await;
+
+        if let Some(post) = post {
+            let mut penv = env.clone();
+            if let Ok(t) = self.dirs.read_file(&state)
+                && let Ok(pairs) = commands::parse_env_file(&t)
+            {
+                for (k, v) in pairs {
+                    penv.insert(format!("STATE_{k}"), v);
+                }
+            }
+            let title = step
+                .name
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| if f.repository.is_empty() { "action".to_string() } else { f.repository.clone() });
+            self.posts.push(PostAction::Node {
+                title,
+                script: f.dir.join(post).to_string_lossy().into_owned(),
+                condition: post_if.unwrap_or("always()").to_string(),
+                env: penv,
+            });
+        }
+        run
+    }
+
+    /// One `node <script>` in the job container, with the step's files and limits.
+    async fn exec_node(
+        &mut self,
+        step: &StepSpec,
+        n: i32,
+        env: &BTreeMap<String, String>,
+        files: &StepFiles,
+        script: &std::path::Path,
+    ) -> StepRun {
+        if !self.has_node(env).await {
+            self.log
+                .line(n, "##[error]This action needs Node.js, and the job's image has no `node`. Use the default image, or a `container:` image with Node.")
+                .await;
+            return StepRun::failed();
+        }
+        let pid_path = self.dirs.pid_path(n);
+        let argv = shell::wrap_with_pidfile(&pid_path.to_string_lossy(), &["node".to_string(), script.to_string_lossy().into_owned()]);
+        let spec = ExecSpec {
+            argv,
+            env: self.exec_env(env, files),
+            workdir: Some(self.dirs.workspace.to_string_lossy().into_owned()),
+            user: None,
+        };
+        self.own_for_container().await;
+        self.dirty = true;
+        self.owner = Owner::Container;
+        let Some(id) = self.container.clone() else { return StepRun::failed() };
+        let (until, limit) = self.step_timeout(step);
+        let (end, set_outputs) = self.run_exec(&id, n, spec, &pid_path, until, limit).await;
+        StepRun { end, outputs: set_outputs.into_iter().collect() }
+    }
+
+    /// Whether `node` is on the job's PATH, asked once per job.
+    async fn has_node(&mut self, env: &BTreeMap<String, String>) -> bool {
+        if let Some(v) = self.node_found {
+            return v;
+        }
+        let Some(id) = self.container.clone() else { return false };
+        let mut probe_env = BTreeMap::new();
+        if let Some(p) = self.exec_env(env, &StepFiles::none()).get("PATH") {
+            probe_env.insert("PATH".to_string(), p.clone());
+        }
+        let probe =
+            ExecSpec { argv: vec!["/bin/sh".into(), "-c".into(), "command -v node".into()], env: probe_env, workdir: None, user: None };
+        let found = matches!(self.exec_collect(&id, &probe).await, Ok((_, 0)));
+        self.node_found = Some(found);
+        found
+    }
+
+    /// An action's post step, as a step of its own after the workflow's steps.
+    async fn run_node_post(&mut self, title: &str, script: &str, condition: &str, env: BTreeMap<String, String>) {
+        let go = self.with_ctx(None, |c| expr::eval_condition(condition, c)).unwrap_or(false);
+        if !go {
+            return;
+        }
+        let n = self.next_step;
+        self.next_step += 1;
+        let name = format!("Post {title}");
+        self.update(n, StepUpdate { name: Some(name), status: "in_progress".into(), conclusion: None, outputs: BTreeMap::new() }).await;
+        let files = match self.dirs.step_files(n) {
+            Ok(f) => f,
+            Err(e) => {
+                self.log.line(n, &format!("##[error]Cannot create the step's files: {e}")).await;
+                self.update(
+                    n,
+                    StepUpdate { name: None, status: "completed".into(), conclusion: Some("failure".into()), outputs: BTreeMap::new() },
+                )
+                .await;
+                return;
+            }
+        };
+        let spec = StepSpec {
+            number: n,
+            id: None,
+            name: None,
+            kind: StepKind::Run { run: String::new(), shell: None, working_directory: None },
+            env: BTreeMap::new(),
+            condition: None,
+            continue_on_error: false,
+            timeout_minutes: None,
+        };
+        let mut run = self.exec_node(&spec, n, &env, &files, std::path::Path::new(script)).await;
+        self.collect_files(n, &files, &mut run).await;
+        let conclusion = match run.end {
+            StepEnd::Success => "success",
+            StepEnd::Cancelled => "cancelled",
+            StepEnd::Failure | StepEnd::TimedOut => {
+                self.failed = true;
+                "failure"
+            }
+        };
+        self.update(
+            n,
+            StepUpdate { name: None, status: "completed".into(), conclusion: Some(conclusion.into()), outputs: BTreeMap::new() },
+        )
+        .await;
+    }
+
+    /// A composite action: its steps run one after another inside this step, with their own
+    /// `steps` and `inputs` contexts, and its outputs are its `outputs.*.value` expressions.
+    async fn run_composite(
+        &mut self,
+        step: &StepSpec,
+        step_env: &BTreeMap<String, String>,
+        f: &remote::Fetched,
+        inputs: &BTreeMap<String, String>,
+        steps: &[ch_workflow::Step],
+    ) -> StepRun {
+        let n = step.number;
+        let saved_steps = std::mem::take(&mut self.steps);
+        let saved_inputs = std::mem::replace(&mut self.inputs_v, jobenv::map_to_value(inputs));
+        let saved_failed = std::mem::replace(&mut self.failed, false);
+        let saved_github = self.github_v.clone();
+        let mut scope = self.scope_env.clone();
+        scope.extend(step_env.clone());
+        scope.extend(self.action_env(step, f, inputs));
+        let saved_scope = std::mem::replace(&mut self.scope_env, scope);
+        if let Some(g) = self.github_v.as_object_mut() {
+            g.insert("action_path".into(), json!(f.dir.to_string_lossy()));
+            g.insert("action_repository".into(), json!(f.repository));
+            g.insert("action_ref".into(), json!(f.git_ref));
+        }
+        self.depth += 1;
+
+        for s in steps {
+            self.observe_stops();
+            if self.aborted {
+                break;
+            }
+            let sub = StepSpec {
+                number: n,
+                id: s.id.clone(),
+                name: s.name.clone(),
+                kind: match &s.kind {
+                    ch_workflow::StepKind::Run { run, shell, working_directory } => StepKind::Run {
+                        run: run.clone(),
+                        // A composite `run:` must name its shell on GitHub; bash is the usual one.
+                        shell: Some(shell.clone().unwrap_or_else(|| "bash".into())),
+                        working_directory: working_directory.clone(),
+                    },
+                    ch_workflow::StepKind::Uses { uses, with } => StepKind::Uses { uses: uses.clone(), inputs: with.clone() },
+                },
+                env: s.env.clone(),
+                condition: s.condition.clone(),
+                continue_on_error: s.continue_on_error.as_deref().is_some_and(|v| v.trim() == "true"),
+                timeout_minutes: s.timeout_minutes.as_deref().and_then(|v| v.trim().parse().ok()),
+            };
+            Box::pin(self.run_sub_step(&sub)).await;
+        }
+
+        let mut outputs = BTreeMap::new();
+        for (k, v) in &f.def.outputs {
+            if let Some(src) = v {
+                match self.interp(src, None) {
+                    Ok(val) => {
+                        outputs.insert(k.clone(), val);
+                    }
+                    Err(e) => self.log.line(n, &format!("##[warning]Output {k} of the action: {e}")).await,
+                }
+            }
+        }
+        let failed = self.failed;
+        self.depth -= 1;
+        self.steps = saved_steps;
+        self.inputs_v = saved_inputs;
+        self.failed = saved_failed;
+        self.github_v = saved_github;
+        self.scope_env = saved_scope;
+        // The last inner step's files are read already; the step itself has none of its own.
+        let _ = self.dirs.step_files(n);
+        let end = if self.cancelled {
+            StepEnd::Cancelled
+        } else if failed {
+            StepEnd::Failure
+        } else {
+            StepEnd::Success
+        };
+        StepRun { end, outputs }
+    }
+
+    /// One step of a composite action: like a workflow step, logged inside its parent and not
+    /// reported to the server on its own.
+    async fn run_sub_step(&mut self, step: &StepSpec) {
+        let n = step.number;
+        let condition = step.condition.as_deref().unwrap_or("success()");
+        match self.with_ctx(None, |c| expr::eval_condition(condition, c)) {
+            Ok(true) => {}
+            Ok(false) => {
+                self.record(step, "skipped", "skipped", BTreeMap::new());
+                return;
+            }
+            Err(e) => {
+                self.log.line(n, &format!("##[error]Cannot evaluate the condition of this step: {e}")).await;
+                self.failed = true;
+                self.record(step, "failure", "failure", BTreeMap::new());
+                return;
+            }
+        }
+        let run = self.run_one(step).await;
+        let (outcome, mut conclusion) = match run.end {
+            StepEnd::Success => ("success", "success"),
+            StepEnd::Cancelled => ("cancelled", "cancelled"),
+            StepEnd::Failure | StepEnd::TimedOut => ("failure", "failure"),
+        };
+        match run.end {
+            StepEnd::Success => {}
+            StepEnd::Cancelled => self.cancelled = true,
+            StepEnd::Failure | StepEnd::TimedOut => {
+                if step.continue_on_error {
+                    conclusion = "success";
+                } else {
+                    self.failed = true;
+                }
+            }
+        }
+        self.record(step, outcome, conclusion, run.outputs);
     }
 }
 

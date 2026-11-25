@@ -6,7 +6,7 @@
 #   make test [P=ch-core]    cargo nextest, whole workspace or one crate
 #   make lint                clippy, warnings denied
 #   make fmt                 formatting check
-#   make ci                  the gate every stream runs before a merge
+#   make ci                  the gate every stream runs before a merge (CH_NATIVE=1: already in a builder)
 #   make sqlx                refresh .sqlx/ after a query or migration change
 #   make docker-test         the runner's executor tests, against a throwaway Docker daemon
 #   make e2e E2E_TAG=test-x  end-to-end run in a throwaway compose project, tag test-x
@@ -26,7 +26,13 @@ DEPLOY ?=
 MAIN := $(shell git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's,/\.git$$,,')
 -include $(MAIN)/deploy/dev/local.env
 
-ifeq ($(strip $(CH_HOST)),)
+ifneq ($(strip $(CH_NATIVE)),)
+# Already inside a builder (Codehaven's own CI job, .codehaven/workflows/ci.yml): run here, with
+# no Docker and no ssh.
+R := bash -c
+H := bash -c
+HS := bash -c
+else ifeq ($(strip $(CH_HOST)),)
 R := bash deploy/dev/local.sh $(STREAM)
 H := bash deploy/dev/local.sh --host $(STREAM)
 HS := bash deploy/dev/local.sh --host src

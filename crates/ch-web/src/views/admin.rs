@@ -588,6 +588,75 @@ pub async fn runner_token(ctx: Ctx, _form: FormData) -> WebResult<Response> {
     ctx.page(&RunnerTokenPage { c, section: "runners", token: t.token, expires: fmt::time(t.expires_at), commands })
 }
 
+// ---------------------------------------------------------------- actions policy
+
+#[derive(Template)]
+#[template(path = "admin/actions.html")]
+struct ActionsPolicyPage {
+    c: Chrome,
+    section: &'static str,
+    mode: String,
+    allow: String,
+    block: String,
+    require_sha: bool,
+    allow_codehaven_repos: bool,
+    error: String,
+}
+
+async fn actions_page(
+    ctx: &Ctx,
+    p: ch_core::web_contract::ActionsPolicy,
+    error: &str,
+    status: axum::http::StatusCode,
+) -> WebResult<Response> {
+    let c = ctx.chrome("Actions").await.nav("admin");
+    ctx.page_status(
+        status,
+        &ActionsPolicyPage {
+            c,
+            section: "actions",
+            mode: p.mode,
+            allow: p.allow.join("\n"),
+            block: p.block.join("\n"),
+            require_sha: p.require_sha,
+            allow_codehaven_repos: p.allow_codehaven_repos,
+            error: error.to_string(),
+        },
+    )
+}
+
+pub async fn actions_get(ctx: Ctx) -> WebResult<Response> {
+    site_admin(&ctx)?;
+    let p = ctx.state.pipelines.actions_policy(&ctx.actor).await?;
+    actions_page(&ctx, p, "", axum::http::StatusCode::OK).await
+}
+
+pub async fn actions_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
+    site_admin(&ctx)?;
+    let lines = |s: &str| -> Vec<String> { s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect() };
+    let p = ch_core::web_contract::ActionsPolicy {
+        mode: form.get("mode").to_string(),
+        allow: lines(form.get("allow")),
+        block: lines(form.get("block")),
+        require_sha: form.get("require_sha") == "1",
+        allow_codehaven_repos: form.get("allow_codehaven_repos") == "1",
+    };
+    match ctx.state.pipelines.set_actions_policy(&ctx.actor, p.clone(), &ctx.client).await {
+        Ok(()) => Ok(ctx.redirect_flash("/admin/actions", "ok", "Saved the Actions policy.")),
+        Err(e) => match FieldErrors::from_error(&e) {
+            Some(errs) => {
+                // Say which pattern or choice was wrong, not only that something was.
+                let msg = [errs.general.clone(), errs.get("allow"), errs.get("block"), errs.get("mode")]
+                    .into_iter()
+                    .find(|m| !m.is_empty())
+                    .unwrap_or_else(|| "Check the form and try again.".to_string());
+                actions_page(&ctx, p, &msg, axum::http::StatusCode::UNPROCESSABLE_ENTITY).await
+            }
+            None => Err(e.into()),
+        },
+    }
+}
+
 // ---------------------------------------------------------------- audit log
 
 struct AuditRow {

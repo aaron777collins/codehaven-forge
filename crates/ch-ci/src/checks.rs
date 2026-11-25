@@ -155,9 +155,18 @@ impl Checks for ChecksImpl {
         target_url: Option<&str>,
     ) -> Result<CommitStatus> {
         actor.deny_app("create a commit status")?;
-        // A job may report on its own repository's commits. Everyone else needs write access.
-        let job_ok = matches!(actor, Actor::Job { repo_id, perms, .. } if *repo_id == repo && perms.write_checks);
-        if !job_ok {
+        // A job may report on its own repository's commits when its token has `statuses: write`.
+        // Everyone else needs write access.
+        if let Actor::Job { repo_id, perms, .. } = actor {
+            if *repo_id != repo {
+                return Err(Error::NotFound);
+            }
+            if perms.statuses < Permission::Write {
+                return Err(Error::forbidden(
+                    "This job's token cannot write commit statuses. Add `statuses: write` to the workflow's `permissions:`.",
+                ));
+            }
+        } else {
             self.ctx.authz.require(actor, repo, Permission::Write).await?;
         }
         if !valid_state(state) {

@@ -12,6 +12,7 @@
 //! - [`logs`] and [`live`] keep and stream job output, [`store`] keeps artifacts and caches,
 //!   [`secrets`] keeps sealed secrets, [`checks`] keeps check runs and statuses.
 
+pub mod action_fetch;
 pub mod checks;
 pub mod clock;
 pub mod ctx;
@@ -29,6 +30,7 @@ pub mod shared;
 pub mod source;
 pub mod spec;
 pub mod store;
+pub mod toolkit;
 pub mod triggers;
 pub mod web;
 pub mod workers;
@@ -48,7 +50,7 @@ pub fn api_routes() -> Router<AppState> {
 /// Mounted under `/api/runner/v1`: register, jobs, logs, artifacts, cache. The gate admits
 /// a signed-out request only to `POST /register`.
 pub fn runner_routes() -> Router<AppState> {
-    runner_api::routes()
+    runner_api::routes().merge(toolkit::routes())
 }
 
 /// Event consumer `ci-triggers`, the scheduler, lease reaper, log and artifact retention.

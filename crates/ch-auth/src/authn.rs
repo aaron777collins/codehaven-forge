@@ -264,6 +264,14 @@ impl Authn for AuthnService {
         self.check_address_budget(client)?;
         let found = if token.starts_with("chp_") {
             self.token_actor(token).await?
+        } else if token.starts_with("eyJ") {
+            // The runtime token an action gets for artifacts and caches (ch-ctk.6): its own job's
+            // credential in the shape the Actions toolkit expects.
+            ch_db::ci_auth::job_from_runtime_token(&self.core.db, token).await?.map(|(job_id, repo_id, perms)| Actor::Job {
+                job_id,
+                repo_id,
+                perms,
+            })
         } else if let Some(a) = self.job_actor(token).await? {
             Some(a)
         } else {

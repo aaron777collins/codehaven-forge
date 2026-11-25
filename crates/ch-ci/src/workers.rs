@@ -247,8 +247,9 @@ pub async fn janitor_pass(ctx: &Ctx) -> Result<()> {
     let c = crate::store::evict_caches(ctx).await?;
     let l = crate::logs::purge_old(ctx, ctx.config.ci.log_retention_days).await?;
     sqlx::query("DELETE FROM runner_registration_tokens WHERE expires_at < now() - interval '7 days'").execute(&ctx.db).await?;
-    if a + c + l > 0 {
-        tracing::info!(artifacts = a, caches = c, logs = l, "cleaned up CI storage");
+    let u = crate::toolkit::drop_abandoned_uploads(ctx).await?;
+    if a + c + l + u > 0 {
+        tracing::info!(artifacts = a, caches = c, logs = l, unfinished_uploads = u, "cleaned up CI storage");
     }
     Ok(())
 }

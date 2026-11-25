@@ -469,7 +469,7 @@ async fn a_job_token_reads_only_its_own_repository(pool: PgPool) {
         GitCaller::Actor(ch_core::Actor::Job {
             job_id: ch_core::JobId(1),
             repo_id: w.repo.id,
-            perms: ch_core::actor::JobPerms { contents_read: true, write_checks: true },
+            perms: ch_core::actor::JobPerms::default_token(false),
         })
     };
     assert!(open_as(&w, job(), "demo", GitWire::UploadPack).await.is_ok());

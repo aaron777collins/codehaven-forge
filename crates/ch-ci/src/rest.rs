@@ -64,6 +64,7 @@ pub fn routes() -> Router<AppState> {
         .route("/repos/{owner}/{repo}/actions/artifacts/{id}/zip", get(artifact_zip))
         .route("/repos/{owner}/{repo}/actions/caches", get(list_caches))
         .route("/repos/{owner}/{repo}/actions/caches/{id}", delete(delete_cache))
+        .route("/repos/{owner}/{repo}/actions/permissions/workflow", get(get_workflow_permissions).put(put_workflow_permissions))
         // secrets and variables
         .route("/repos/{owner}/{repo}/actions/secrets", get(repo_secrets))
         .route("/repos/{owner}/{repo}/actions/secrets/{name}", get(repo_secret).put(put_repo_secret).delete(delete_repo_secret))
@@ -91,6 +92,12 @@ fn client(c: Option<Extension<ClientInfo>>) -> ClientInfo {
 }
 
 async fn repo_for(state: &AppState, actor: &Actor, owner: &str, name: &str, need: Permission) -> Result<Repo> {
+    // Everything here that needs write changes Actions itself: starting, stopping, switching off,
+    // approving, deleting what a run saved. A job's `contents: write` is about the code, and
+    // nothing a job does starts or stops another run, so a job token never gets this far.
+    if need >= Permission::Write && matches!(actor, Actor::Job { .. }) {
+        return Err(Error::forbidden("A workflow job cannot change Actions."));
+    }
     let repo = state.repos.get_by_name(actor, owner, name).await?;
     state.authz.require(actor, repo.id, need).await?;
     Ok(repo)
@@ -1110,6 +1117,34 @@ fn variables_response(rows: Vec<(String, String, DateTime<Utc>)>) -> Json<dto::V
         total_count: rows.len() as u32,
         variables: rows.into_iter().map(|(name, value, t)| dto::Variable { name, value, created_at: t, updated_at: t }).collect(),
     })
+}
+
+/// GitHub's `default_workflow_permissions`: what a job's token may do at most here.
+async fn get_workflow_permissions(
+    State(state): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    Path((o, n)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>> {
+    let repo = repo_for(&state, &actor, &o, &n, Permission::Admin).await?;
+    let v = state.pipelines.token_ceiling(&actor, repo.id).await?;
+    Ok(Json(json!({ "default_workflow_permissions": v, "can_approve_pull_request_reviews": false })))
+}
+
+#[derive(Deserialize)]
+struct WorkflowPermissionsBody {
+    default_workflow_permissions: String,
+}
+
+async fn put_workflow_permissions(
+    State(state): State<AppState>,
+    CurrentActor(actor): CurrentActor,
+    c: Option<Extension<ClientInfo>>,
+    Path((o, n)): Path<(String, String)>,
+    Json(body): Json<WorkflowPermissionsBody>,
+) -> Result<StatusCode> {
+    let repo = repo_for(&state, &actor, &o, &n, Permission::Admin).await?;
+    state.pipelines.set_token_ceiling(&actor, repo.id, &body.default_workflow_permissions, &client(c)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn repo_secrets(

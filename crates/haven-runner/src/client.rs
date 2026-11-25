@@ -290,6 +290,24 @@ impl Client {
         self.retrying(4, || self.download_to(self.url(&["jobs", &id, "artifacts", name]), job_token, dest)).await
     }
 
+    /// Which commit each action resolves to, pinned to the run by the server (ch-ctk.5).
+    pub async fn resolve_actions(
+        &self,
+        job_token: &str,
+        job_id: i64,
+        actions: &[String],
+    ) -> Result<ch_api_types::runner::ActionResolveResponse, ApiError> {
+        let id = job_id.to_string();
+        let url = self.url(&["jobs", &id, "actions", "resolve"]);
+        let body = ch_api_types::runner::ActionResolveRequest { actions: actions.to_vec() };
+        self.retrying(4, || self.send_json(Method::POST, url.clone(), &body, Some(job_token))).await
+    }
+
+    pub async fn download_action(&self, job_token: &str, job_id: i64, archive: &str, dest: &Path) -> Result<(), ApiError> {
+        let id = job_id.to_string();
+        self.retrying(4, || self.download_to(self.url(&["jobs", &id, "actions", "archive", archive]), job_token, dest)).await
+    }
+
     pub async fn cache_lookup(&self, job_token: &str, req: &CacheLookupRequest) -> Result<CacheLookupResponse, ApiError> {
         let url = self.url(&["cache", "lookup"]);
         self.retrying(4, || self.send_json(Method::POST, url.clone(), req, Some(job_token))).await

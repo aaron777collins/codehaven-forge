@@ -11,6 +11,7 @@
 //!
 //! See ARCHITECTURE.md section 9.
 
+pub mod action_def;
 pub mod actions;
 pub mod diag;
 pub mod discover;
@@ -20,10 +21,12 @@ pub mod inputs;
 pub mod model;
 pub mod options;
 pub mod parse;
+pub mod permissions;
 pub mod plan;
 pub mod refs;
 pub mod schedule;
 pub mod trigger;
+pub mod uses;
 
 pub use diag::Diagnostic;
 pub use model::*;

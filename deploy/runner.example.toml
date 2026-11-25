@@ -28,6 +28,8 @@ shm_size = "1g"
 max_job_minutes = 360
 # Log kept per job. After this the log says so and stops growing; the job carries on.
 max_log_megabytes = 100
+# How long a service container (`services:` in a workflow) gets to take connections on its ports.
+service_wait_seconds = 120
 
 [docker]
 # Empty means DOCKER_HOST (and DOCKER_TLS_VERIFY, DOCKER_CERT_PATH).

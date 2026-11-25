@@ -1,6 +1,7 @@
 GET /.well-known/oauth-authorization-server
 GET /.well-known/oauth-protected-resource
 GET /.well-known/oauth-protected-resource/mcp
+GET /api/runner/v1/toolkit/blobs/{grant}
 GET /favicon.svg
 GET /healthz
 GET /invite/{token}
@@ -12,6 +13,7 @@ GET /static/{*path}
 HEAD /.well-known/oauth-authorization-server
 HEAD /.well-known/oauth-protected-resource
 HEAD /.well-known/oauth-protected-resource/mcp
+HEAD /api/runner/v1/toolkit/blobs/{grant}
 HEAD /favicon.svg
 HEAD /healthz
 HEAD /invite/{token}

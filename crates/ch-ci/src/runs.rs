@@ -320,8 +320,14 @@ pub async fn create_run(ctx: &Ctx, n: NewRun) -> Result<Created> {
     })?;
     let mut fx = Effects::default();
     for p in &planned {
+        let mut job = p.job.clone();
+        // The job's own `permissions:` replace the workflow's, so a job without any carries the
+        // workflow's from here on (re-runs and matrices waiting on `needs` included).
+        if job.permissions.is_none() {
+            job.permissions = n.workflow.permissions.clone();
+        }
         let spec = JobSpec {
-            job: p.job.clone(),
+            job,
             matrix: p.matrix.clone(),
             runs_on: p.runs_on.clone(),
             timeout_minutes: p.timeout_minutes,
@@ -338,6 +344,7 @@ pub async fn create_run(ctx: &Ctx, n: NewRun) -> Result<Created> {
         let at = JobPlace {
             run_id,
             repo_id: n.repo_id.0,
+            fork: n.fork,
             head_sha: &n.head_sha,
             workflow_name: &n.workflow_name,
             repository: &info.full_name(),
@@ -370,10 +377,20 @@ fn step_name(spec: &JobSpec, i: usize) -> String {
 struct JobPlace<'a> {
     run_id: i64,
     repo_id: i64,
+    /// A pull request from a fork: its jobs' tokens only read contents.
+    fork: bool,
     head_sha: &'a str,
     workflow_name: &'a str,
     repository: &'a str,
     base: &'a str,
+}
+
+/// What the job's token may do, from its `permissions:` (the workflow's, when it has none). The
+/// repository's ceiling is applied when the token is used, so a change to it reaches jobs that
+/// are already queued (`ch_db::ci_auth`).
+fn token_permissions(spec: &JobSpec, fork: bool) -> Result<Json> {
+    use ch_workflow::permissions::{Ceiling, effective};
+    serde_json::to_value(effective(None, spec.job.permissions.as_ref(), Ceiling::Write, fork)).map_err(Error::internal)
 }
 
 /// Inserts one job as `waiting`, with its steps and its queued check run. Returns the job id.
@@ -390,8 +407,8 @@ async fn insert_job(
 ) -> Result<i64> {
     let labels: Vec<String> = spec.runs_on.iter().map(|l| l.trim().to_lowercase()).collect();
     let job_id: i64 = sqlx::query_scalar(
-        "INSERT INTO workflow_jobs (run_id, repo_id, job_key, name, matrix, runs_on, needs, status, spec)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'waiting', $8) RETURNING id",
+        "INSERT INTO workflow_jobs (run_id, repo_id, job_key, name, matrix, runs_on, needs, status, spec, token_permissions)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'waiting', $8, $9) RETURNING id",
     )
     .bind(at.run_id)
     .bind(at.repo_id)
@@ -401,6 +418,7 @@ async fn insert_job(
     .bind(&labels)
     .bind(needs)
     .bind(serde_json::to_value(spec).map_err(Error::internal)?)
+    .bind(token_permissions(spec, at.fork)?)
     .fetch_one(&mut **tx)
     .await?;
     for (i, s) in spec.job.steps.iter().enumerate() {
@@ -766,6 +784,7 @@ pub async fn advance_run(ctx: &Ctx, run_id: i64) -> Result<()> {
                                 let at = JobPlace {
                                     run_id: run.id,
                                     repo_id: run.repo_id,
+                                    fork: meta.fork,
                                     head_sha: &run.head_sha,
                                     workflow_name: &meta.workflow_name,
                                     repository: &meta.repository,
@@ -1079,8 +1098,8 @@ pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool, by: Option<UserId>
         let (status, conclusion, outputs) =
             if keep { ("completed", j.conclusion.clone(), j.outputs.clone()) } else { ("waiting", None, json!({})) };
         let job_id: i64 = sqlx::query_scalar(
-            "INSERT INTO workflow_jobs (run_id, repo_id, job_key, name, matrix, runs_on, needs, status, conclusion, spec, outputs, started_at, completed_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
+            "INSERT INTO workflow_jobs (run_id, repo_id, job_key, name, matrix, runs_on, needs, status, conclusion, spec, outputs, started_at, completed_at, token_permissions)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id",
         )
         .bind(new_id)
         .bind(old.repo_id)
@@ -1095,6 +1114,7 @@ pub async fn rerun(ctx: &Ctx, run_id: i64, failed_only: bool, by: Option<UserId>
         .bind(outputs)
         .bind(if keep { j.started_at } else { None })
         .bind(if keep { j.completed_at } else { None })
+        .bind(token_permissions(&spec, meta.fork)?)
         .fetch_one(&mut *tx)
         .await?;
         for (i, s) in spec.job.steps.iter().enumerate() {

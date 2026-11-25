@@ -276,7 +276,7 @@ async fn job_tokens_live_until_the_job_ends_and_fork_jobs_cannot_write(pool: PgP
         Actor::Job { job_id, repo_id, perms } => {
             assert_eq!(job_id.0, job);
             assert_eq!(*repo_id, repo);
-            assert!(perms.contents_read && perms.write_checks);
+            assert!(perms.contents_read() && perms.runtime_write());
         }
         other => panic!("{other:?}"),
     }
@@ -290,7 +290,7 @@ async fn job_tokens_live_until_the_job_ends_and_fork_jobs_cannot_write(pool: PgP
 
     let (_, _) = job_fixture(&c, "chj_forkjob000000000000000000000000000000", true).await;
     match c.state.authn.from_bearer("chj_forkjob000000000000000000000000000000", &c1()).await.unwrap() {
-        Actor::Job { perms, .. } => assert!(perms.contents_read && !perms.write_checks),
+        Actor::Job { perms, .. } => assert!(perms.contents_read() && !perms.runtime_write()),
         other => panic!("{other:?}"),
     }
     // A flat top-level flag is ignored: only meta.fork counts, so the old wrong path cannot come back.
@@ -301,7 +301,7 @@ async fn job_tokens_live_until_the_job_ends_and_fork_jobs_cannot_write(pool: PgP
         .await
         .unwrap();
     match c.state.authn.from_bearer("chj_flatjob000000000000000000000000000000", &c1()).await.unwrap() {
-        Actor::Job { perms, .. } => assert!(perms.write_checks),
+        Actor::Job { perms, .. } => assert!(perms.runtime_write()),
         other => panic!("{other:?}"),
     }
 }

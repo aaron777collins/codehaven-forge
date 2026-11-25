@@ -176,6 +176,24 @@ pub struct JobPayload {
     pub token: String,
     /// The server expects a heartbeat within this many seconds.
     pub lease_seconds: u32,
+    /// Service containers (ch-ctk.7), started before the first step in the job container's
+    /// network. Image and env may hold `${{ }}`, which the runner fills in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<ServiceSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceSpec {
+    /// The key under `services:`, also its host name inside the job.
+    pub id: String,
+    pub image: String,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// Container ports the job waits for before its first step.
+    #[serde(default)]
+    pub ports: Vec<u16>,
+    #[serde(default)]
+    pub options: Option<String>,
 }
 
 /// `POST /jobs/{id}/heartbeat`, every 30 seconds.
@@ -213,6 +231,10 @@ pub struct StepUpdate {
     pub conclusion: Option<String>,
     #[serde(default)]
     pub outputs: BTreeMap<String, String>,
+    /// A step the runner adds while the job runs, such as an action's post step, named here on
+    /// its first update. Its number comes after the workflow's steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// `POST /jobs/{id}/complete`
@@ -253,6 +275,31 @@ pub struct CacheHit {
     pub size: i64,
     /// True when the key matched exactly, false when a restore key matched.
     pub exact: bool,
+}
+
+/// `POST /jobs/{id}/actions/resolve`: the `uses:` values a job wants, as written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionResolveRequest {
+    pub actions: Vec<String>,
+}
+
+/// One answer: a commit and an archive to fetch with `GET /jobs/{id}/actions/archive/{archive}`,
+/// or why the action may not run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionResolution {
+    pub uses: String,
+    pub sha: Option<String>,
+    /// sha256 of the tar.gz. Its files are under one top directory.
+    pub archive: Option<String>,
+    /// The action's folder inside the repository, `""` for the top.
+    #[serde(default)]
+    pub path: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionResolveResponse {
+    pub actions: Vec<ActionResolution>,
 }
 
 #[cfg(test)]
@@ -323,6 +370,7 @@ mod tests {
             timeout_minutes: 60,
             token: "job_secret".into(),
             lease_seconds: 120,
+            services: Vec::new(),
         }
     }
 
@@ -369,6 +417,7 @@ mod tests {
         crate::roundtrip(
             "runner_step_update",
             &StepUpdate {
+                name: None,
                 status: "completed".into(),
                 conclusion: Some("success".into()),
                 outputs: BTreeMap::from([("ver".into(), "1.2".into())]),

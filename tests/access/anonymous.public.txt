@@ -1,6 +1,7 @@
 GET /.well-known/oauth-authorization-server
 GET /.well-known/oauth-protected-resource
 GET /.well-known/oauth-protected-resource/mcp
+GET /api/runner/v1/toolkit/blobs/{grant}
 GET /api/v3/orgs/{org}
 GET /api/v3/orgs/{org}/repos
 GET /api/v3/repos/{owner}/{repo}
@@ -123,6 +124,7 @@ GET /{owner}/{repo}/tree/{*rest}
 HEAD /.well-known/oauth-authorization-server
 HEAD /.well-known/oauth-protected-resource
 HEAD /.well-known/oauth-protected-resource/mcp
+HEAD /api/runner/v1/toolkit/blobs/{grant}
 HEAD /api/v3/orgs/{org}
 HEAD /api/v3/orgs/{org}/repos
 HEAD /api/v3/repos/{owner}/{repo}

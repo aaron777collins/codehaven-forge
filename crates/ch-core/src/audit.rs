@@ -53,6 +53,8 @@ pub mod action {
     pub const RUNNER_TOKEN_ISSUED: &str = "runner.token_issued";
     pub const RUNNER_REGISTERED: &str = "runner.registered";
     pub const RUNNER_REMOVED: &str = "runner.removed";
+    pub const ACTIONS_TOKEN_CEILING: &str = "repo.actions_token_ceiling_changed";
+    pub const ACTIONS_POLICY: &str = "instance.actions_policy_changed";
     pub const SECRET_CHANGED: &str = "secret.changed";
     pub const SECRET_DELETED: &str = "secret.deleted";
     pub const REPO_VISIBILITY: &str = "repo.visibility_changed";

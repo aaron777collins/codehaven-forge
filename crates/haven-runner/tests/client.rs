@@ -98,7 +98,7 @@ async fn a_job_the_server_forgot_is_a_lost_lease_not_a_retry() {
     let e = c.heartbeat(999).await.unwrap_err();
     assert!(e.is_lease_lost(), "{e:?}");
     assert_eq!(s.requests_to("heartbeat"), 1, "not retried");
-    let u = StepUpdate { status: "in_progress".into(), conclusion: None, outputs: BTreeMap::new() };
+    let u = StepUpdate { name: None, status: "in_progress".into(), conclusion: None, outputs: BTreeMap::new() };
     assert!(c.update_step(999, 1, &u).await.unwrap_err().is_lease_lost());
 }
 

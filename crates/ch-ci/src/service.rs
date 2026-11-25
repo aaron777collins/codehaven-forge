@@ -467,6 +467,8 @@ impl Ci for CiImpl {
 /// the workflows permission, and a personal access token only with the `workflow` scope.
 fn require_ci(actor: &Actor, repo: RepoId) -> Result<()> {
     match actor {
+        // `contents: write` is about the code. A job never starts, stops or reruns a run.
+        Actor::Job { .. } => Err(Error::forbidden("A workflow job cannot run or stop workflows.")),
         Actor::App { grant, .. } if !grant.workflows.has(repo) => {
             Err(Error::forbidden("This connection was not given permission to run workflows on this repository"))
         }

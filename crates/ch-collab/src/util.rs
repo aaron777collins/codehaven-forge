@@ -32,6 +32,15 @@ pub fn writing_user(actor: &Actor, repo: RepoId) -> Result<UserId> {
         }
         return Ok(*user_id);
     }
+    // A job writes as the `codehaven-actions` account, on its own repository, when its token may
+    // contribute or write contents. Which write is allowed is still decided by `Authz` (write for
+    // releases and merges, a grant for issues and comments).
+    if let Actor::Job { repo_id, perms, .. } = actor {
+        return match perms.bot {
+            Some(bot) if *repo_id == repo && (perms.contribute() || perms.contents >= ch_core::Permission::Write) => Ok(bot),
+            _ => Err(Error::forbidden("This job's token cannot make changes here. Give it a permission in the workflow's `permissions:`")),
+        };
+    }
     let user = acting_user(actor)?;
     if let Actor::Token { scopes, .. } = actor
         && !scopes.has("repo")

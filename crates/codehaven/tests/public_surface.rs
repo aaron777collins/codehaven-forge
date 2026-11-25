@@ -436,7 +436,7 @@ fn concrete(pattern: &str, w: &World, owner: &str, repo: &str) -> String {
                 "{workflow}" => w.workflow.to_string(),
                 "{rid}" | "{delivery}" | "{thread}" | "{token}" | "{provider}" | "{user_id}" | "{repo_id}" | "{slug}" | "{team}"
                 | "{key}" | "{run_id}" | "{jid}" | "{wid}" | "{did}" | "{digest}" | "{kind}" | "{n}" | "{layer}" | "{issue_number}"
-                | "{build}" => "1".into(),
+                | "{build}" | "{grant}" | "{archive}" => "1".into(),
                 other if other.starts_with('{') => panic!("route {pattern}: no fixture for parameter {other}"),
                 other => other.into(),
             }

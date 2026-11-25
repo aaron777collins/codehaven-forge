@@ -189,7 +189,14 @@ impl Authz for DbAuthz {
             sqlx::query_as("SELECT owner_id, visibility FROM repositories WHERE id = $1").bind(repo.0).fetch_optional(&self.0).await?;
         let Some((owner, vis)) = row else { return Ok(Permission::None) };
         let uid = match actor {
-            Actor::Job { repo_id, .. } => return Ok(if *repo_id == repo { Permission::Read } else { Permission::None }),
+            Actor::Job { repo_id, perms, .. } => {
+                // As the real service: a job reads its own repository, and writes it with `contents: write`.
+                return Ok(match (*repo_id == repo, perms.contents >= Permission::Write) {
+                    (true, true) => Permission::Write,
+                    (true, false) => Permission::Read,
+                    _ => Permission::None,
+                });
+            }
             Actor::System => return Ok(Permission::Admin),
             a => match a.user_id() {
                 Some(u) => u,
@@ -372,6 +379,8 @@ async fn fake_gate(State(pool): State<PgPool>, mut req: Request, next: Next) -> 
             Actor::Runner { runner_id: r }
         } else if let Some((job_id, repo_id, perms)) = ch_db::ci_auth::job_from_token(&pool, tok).await.unwrap() {
             Actor::Job { job_id, repo_id, perms }
+        } else if let Some((job_id, repo_id, perms)) = ch_db::ci_auth::job_from_runtime_token(&pool, tok).await.unwrap() {
+            Actor::Job { job_id, repo_id, perms }
         } else {
             Actor::Anonymous
         }
@@ -380,7 +389,7 @@ async fn fake_gate(State(pool): State<PgPool>, mut req: Request, next: Next) -> 
     };
     // The real gate rejects a signed-out request before it reaches a handler, except on the
     // public routes. Register is the only one CI has.
-    let is_public = req.method() == Method::POST && req.uri().path() == "/api/runner/v1/register";
+    let is_public = ch_core::access::is_public(req.method(), req.uri().path());
     if actor.is_anonymous() && !is_public {
         return Response::builder().status(StatusCode::UNAUTHORIZED).body(Body::from("{\"message\":\"Requires authentication\"}")).unwrap();
     }
@@ -425,17 +434,12 @@ impl Authn for TestAuthn {
                     .await?;
                 Ok(admin.map(|a| if a { admin_actor(*user_id) } else { user_actor(*user_id) }))
             }
-            Credential::Job { job_id } => {
-                let repo: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM workflow_jobs WHERE id = $1 AND status <> 'completed'")
-                    .bind(job_id.0)
-                    .fetch_optional(&self.0)
-                    .await?;
-                Ok(repo.map(|r| Actor::Job {
-                    job_id: *job_id,
-                    repo_id: RepoId(r),
-                    perms: ch_core::JobPerms { contents_read: true, write_checks: true },
-                }))
-            }
+            // The real lookup, so a job's `permissions:` decide here as they do in the server.
+            Credential::Job { job_id } => Ok(ch_db::ci_auth::job_by_id(&self.0, *job_id).await?.map(|(repo_id, perms)| Actor::Job {
+                job_id: *job_id,
+                repo_id,
+                perms,
+            })),
             _ => Ok(None),
         }
     }
@@ -575,6 +579,13 @@ impl World {
             Some((bytes, ct)) => b.header(header::CONTENT_TYPE, ct).body(Body::from(bytes)).unwrap(),
             None => b.body(Body::empty()).unwrap(),
         };
+        let resp = self.router.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        (status, resp.into_body().collect().await.unwrap().to_bytes())
+    }
+
+    /// Any request, headers and all, through the router and the fake gate.
+    pub async fn raw(&self, req: Request) -> (StatusCode, Bytes) {
         let resp = self.router.clone().oneshot(req).await.unwrap();
         let status = resp.status();
         (status, resp.into_body().collect().await.unwrap().to_bytes())

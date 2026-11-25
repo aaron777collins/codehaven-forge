@@ -61,6 +61,7 @@ impl TestJob {
                 timeout_minutes: 10,
                 token: format!("job_token_{job_id}"),
                 lease_seconds: 30,
+                services: Vec::new(),
             },
         }
     }

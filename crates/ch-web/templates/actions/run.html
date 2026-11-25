@@ -62,6 +62,23 @@
 {% else %}
 {% call ui::empty("No jobs", "This run has no jobs to show.") %}
 {% endif %}
+{% if !actions_used.is_empty() %}
+<section class="card pad">
+  <h3>Actions used</h3>
+  <table class="data-table">
+    <thead><tr><th>Action</th><th>Requested</th><th>Resolved</th></tr></thead>
+    <tbody>
+      {% for a in actions_used %}
+      <tr>
+        <td data-label="Action" class="mono">{{ a.name }}</td>
+        <td data-label="Requested" class="mono">{{ a.requested }}</td>
+        <td data-label="Resolved" class="mono" title="{{ a.sha }}">{{ a.short }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
 {% if !artifacts.is_empty() %}
 <section class="card pad">
   <h3>Artifacts</h3>

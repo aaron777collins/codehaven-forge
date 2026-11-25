@@ -58,9 +58,7 @@ impl Authn for FakeAuthn {
     async fn from_bearer(&self, token: &str, _c: &ClientInfo) -> ch_core::Result<Actor> {
         match token {
             "chp_good" => Ok(Actor::Token { user_id: UserId(1), token_id: TokenId(1), scopes: Scopes::new(["repo"]) }),
-            "job_good" => {
-                Ok(Actor::Job { job_id: JobId(1), repo_id: RepoId(1), perms: JobPerms { contents_read: true, write_checks: true } })
-            }
+            "job_good" => Ok(Actor::Job { job_id: JobId(1), repo_id: RepoId(1), perms: JobPerms::default_token(false) }),
             "runner_good" => Ok(Actor::Runner { runner_id: RunnerId(1) }),
             "slow_down" => Err(Error::RateLimited { retry_after_secs: 30 }),
             "explode" => Err(Error::internal(anyhow::anyhow!("database password is hunter2"))),
@@ -86,7 +84,13 @@ fn config(trusted: &[&str]) -> Config {
 
 fn state(cfg: Config, fake_auth: bool) -> AppState {
     let dir = std::env::temp_dir().join(format!("ch-surface-{}", std::process::id()));
-    let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy("postgres://nobody:nothing@127.0.0.1:1/none").unwrap();
+    // Nothing listens there. A short wait for a connection keeps a page that reads a setting
+    // (the sign-in page) from spending the default 30 seconds on each try, which under a loaded
+    // build host made this file take minutes.
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(300))
+        .connect_lazy("postgres://nobody:nothing@127.0.0.1:1/none")
+        .unwrap();
     let mut b = AppStateBuilder::new(
         Arc::new(cfg),
         pool.clone(),
@@ -507,7 +511,8 @@ async fn each_credential_opens_only_its_own_kind_of_route() {
         (registry, "session", &session, false),
         (registry, "basic", &basic, true),
         (registry, "token", &token, true),
-        (registry, "job", &job, false),
+        // A job's token pulls and pushes its own repository's images (ch-ctk.8).
+        (registry, "job", &job, true),
         (registry, "runner", &runner, false),
         (runner_api, "session", &session, false),
         (runner_api, "basic", &basic, false),

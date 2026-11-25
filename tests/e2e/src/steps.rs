@@ -79,6 +79,21 @@ async fn step1(c: &Ctx) -> Result<()> {
         Case { path: "/x/y.git/info/refs?service=git-upload-pack", status: 401, kind: "git" },
         Case { path: "/v2/", status: 401, kind: "registry" },
         Case { path: "/api/runner/v1/jobs/request", status: 401, kind: "runner" },
+        // C8: the Actions policy page, the token ceiling, action archives and the toolkit cache
+        // need a session or a job's credential; a cache link someone made up is a plain 404.
+        Case { path: "/admin/actions", status: 303, kind: "page" },
+        Case { path: "/api/v3/repos/x/y/actions/permissions/workflow", status: 401, kind: "api" },
+        Case {
+            path: "/api/runner/v1/jobs/1/actions/archive/0000000000000000000000000000000000000000000000000000000000000000",
+            status: 401,
+            kind: "runner",
+        },
+        Case { path: "/api/runner/v1/toolkit/_apis/artifactcache/cache?keys=a&version=b", status: 401, kind: "runner" },
+        Case {
+            path: "/api/runner/v1/toolkit/blobs/c.1.9999999999.0000000000000000000000000000000000000000000000000000000000000000",
+            status: 404,
+            kind: "link",
+        },
     ];
     for case in &cases {
         let r = c.get(case.path).await?;

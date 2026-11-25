@@ -49,6 +49,8 @@ pub struct LimitsSection {
     pub max_job_minutes: u32,
     /// Log bytes kept per job. Past this the log says so and stops growing.
     pub max_log_megabytes: u64,
+    /// How long a service container gets to start taking connections on its ports.
+    pub service_wait_seconds: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -98,7 +100,15 @@ impl Default for RunnerSection {
 
 impl Default for LimitsSection {
     fn default() -> Self {
-        LimitsSection { cpus: 4.0, memory: "8g".into(), pids: 4096, shm_size: "1g".into(), max_job_minutes: 360, max_log_megabytes: 100 }
+        LimitsSection {
+            cpus: 4.0,
+            memory: "8g".into(),
+            pids: 4096,
+            shm_size: "1g".into(),
+            max_job_minutes: 360,
+            max_log_megabytes: 100,
+            service_wait_seconds: 120,
+        }
     }
 }
 

@@ -1,0 +1,32 @@
+{% extends "admin/layout.html" %}
+{% import "components.html" as ui %}
+{% block admin_body %}
+<h1>Actions</h1>
+{% if !error.is_empty() %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<section class="card stack">
+  <h2>Which actions workflows may use</h2>
+  <p>A step's <code>uses:</code> names an action from GitHub (<code>owner/repo@ref</code>) or from a repository here (<code>haven_owner/repo@ref</code>). Actions in a job's own repository (<code>./path</code>) are always allowed.</p>
+  <form method="post" action="/admin/actions" class="stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <fieldset class="stack">
+      <legend>Allowed actions</legend>
+      <label class="row"><input type="radio" name="mode" value="none"{% if mode == "none" %} checked{% endif %}> None</label>
+      <label class="row"><input type="radio" name="mode" value="selected"{% if mode == "selected" %} checked{% endif %}> Selected actions</label>
+      <label class="row"><input type="radio" name="mode" value="all"{% if mode == "all" %} checked{% endif %}> All public actions</label>
+    </fieldset>
+    <div class="field">
+      <label for="allow">Allowed</label>
+      <textarea id="allow" name="allow" rows="8" spellcheck="false">{{ allow }}</textarea>
+      <p class="hint">One per line: <code>owner/*</code> or <code>owner/repo</code>. Used when Selected actions is chosen.</p>
+    </div>
+    <div class="field">
+      <label for="block">Blocked</label>
+      <textarea id="block" name="block" rows="4" spellcheck="false">{{ block }}</textarea>
+      <p class="hint">Always refused, whatever else is chosen.</p>
+    </div>
+    <label class="row"><input type="checkbox" name="require_sha" value="1"{% if require_sha %} checked{% endif %}> Require a full commit SHA</label>
+    <label class="row"><input type="checkbox" name="allow_codehaven_repos" value="1"{% if allow_codehaven_repos %} checked{% endif %}> Allow repositories on this instance</label>
+    <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+  </form>
+</section>
+{% endblock %}

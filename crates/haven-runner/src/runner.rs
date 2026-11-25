@@ -307,6 +307,8 @@ impl Runner {
                 shm_size: 64 << 20,
                 entrypoint: Some(vec!["/bin/sh".into()]),
                 cmd: Some(vec!["-c".into(), format!("chown -R {uid}:{gid} '{d}'; chmod -R u+rwX '{d}'; exit 0")]),
+                network_of: None,
+                extra_hosts: Vec::new(),
             };
             if let Ok(id) = self.backend.create_and_start(&spec).await {
                 let (tx, mut rx) = tokio::sync::mpsc::channel(8);

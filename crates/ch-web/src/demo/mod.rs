@@ -1443,6 +1443,18 @@ impl Pipelines for Demo {
     async fn revoke_runner(&self, _a: &Actor, _id: RunnerId, _c: &ClientInfo) -> Result<()> {
         Ok(())
     }
+    async fn actions_policy(&self, _a: &Actor) -> Result<ch_core::web_contract::ActionsPolicy> {
+        Ok(ch_core::web_contract::ActionsPolicy {
+            mode: "selected".into(),
+            allow: vec!["actions/*".into(), "softprops/action-gh-release".into()],
+            block: vec![],
+            require_sha: false,
+            allow_codehaven_repos: true,
+        })
+    }
+    async fn set_actions_policy(&self, _a: &Actor, _p: ch_core::web_contract::ActionsPolicy, _c: &ClientInfo) -> Result<()> {
+        Ok(())
+    }
     async fn secrets(&self, _a: &Actor, _r: RepoId) -> Result<Vec<SecretMeta>> {
         Ok(vec![
             SecretMeta { name: "DEPLOY_KEY".into(), updated_at: ago(12, 0) },

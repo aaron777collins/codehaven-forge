@@ -13,7 +13,9 @@ use async_trait::async_trait;
 use ch_core::audit::{AuditEvent, Outcome, action};
 use ch_core::model::ClientInfo;
 use ch_core::services::Ci;
-use ch_core::web_contract::{Artifact, Pipelines, Runner, SecretMeta, Variable, WorkflowDef, WorkflowInput, WorkflowJob, WorkflowStep};
+use ch_core::web_contract::{
+    ActionUsed, ActionsPolicy, Artifact, Pipelines, Runner, SecretMeta, Variable, WorkflowDef, WorkflowInput, WorkflowJob, WorkflowStep,
+};
 use ch_core::{Actor, Error, Permission, RepoId, Result, RunId, RunnerId};
 use std::collections::HashMap;
 
@@ -163,6 +165,119 @@ impl Pipelines for CiImpl {
             .await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    async fn token_ceiling(&self, actor: &Actor, repo: RepoId) -> Result<String> {
+        self.ctx.authz.require(actor, repo, Permission::Admin).await?;
+        Ok(sqlx::query_scalar("SELECT actions_token_ceiling FROM repositories WHERE id = $1").bind(repo.0).fetch_one(&self.ctx.db).await?)
+    }
+
+    async fn set_token_ceiling(&self, actor: &Actor, repo: RepoId, value: &str, client: &ClientInfo) -> Result<()> {
+        self.ctx.authz.require(actor, repo, Permission::Admin).await?;
+        if !matches!(value, "read" | "write") {
+            return Err(Error::invalid("Repository", "actions_token_ceiling", "Choose read or write."));
+        }
+        let mut tx = self.ctx.db.begin().await?;
+        sqlx::query("UPDATE repositories SET actions_token_ceiling = $2 WHERE id = $1").bind(repo.0).bind(value).execute(&mut *tx).await?;
+        self.ctx
+            .audit
+            .record(
+                &mut tx,
+                AuditEvent::new(actor, client, action::ACTIONS_TOKEN_CEILING, Outcome::Success)
+                    .target("repo", repo.0)
+                    .details(serde_json::json!({ "value": value })),
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn actions_policy(&self, actor: &Actor) -> Result<ActionsPolicy> {
+        if !actor.is_site_admin() {
+            return Err(Error::forbidden("Only a site admin can see the Actions policy."));
+        }
+        let p = crate::action_fetch::load_policy(&self.ctx).await?;
+        Ok(ActionsPolicy {
+            mode: match p.mode {
+                ch_workflow::uses::PolicyMode::None => "none",
+                ch_workflow::uses::PolicyMode::Selected => "selected",
+                ch_workflow::uses::PolicyMode::All => "all",
+            }
+            .to_string(),
+            allow: p.allow,
+            block: p.block,
+            require_sha: p.require_sha,
+            allow_codehaven_repos: p.allow_codehaven_repos,
+        })
+    }
+
+    async fn set_actions_policy(&self, actor: &Actor, policy: ActionsPolicy, client: &ClientInfo) -> Result<()> {
+        if !actor.is_site_admin() {
+            return Err(Error::forbidden("Only a site admin can change the Actions policy."));
+        }
+        if !matches!(policy.mode.as_str(), "none" | "selected" | "all") {
+            return Err(Error::invalid("ActionsPolicy", "mode", "Choose none, selected or all."));
+        }
+        let clean = |list: &[String], field: &str| -> Result<Vec<String>> {
+            let mut out: Vec<String> = Vec::new();
+            for p in list.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+                if !ch_workflow::uses::valid_pattern(p) {
+                    return Err(Error::invalid("ActionsPolicy", field, format!("`{p}` is not owner/* or owner/repo.")));
+                }
+                if !out.iter().any(|o| o.eq_ignore_ascii_case(p)) {
+                    out.push(p.to_string());
+                }
+            }
+            if out.len() > 500 {
+                return Err(Error::invalid("ActionsPolicy", field, "List at most 500 patterns."));
+            }
+            Ok(out)
+        };
+        let allow = clean(&policy.allow, "allow")?;
+        let block = clean(&policy.block, "block")?;
+        let mut tx = self.ctx.db.begin().await?;
+        sqlx::query(
+            "UPDATE actions_policy SET mode = $1, allow = $2, block = $3, require_sha = $4, allow_codehaven_repos = $5, updated_at = now() WHERE id",
+        )
+        .bind(&policy.mode)
+        .bind(&allow)
+        .bind(&block)
+        .bind(policy.require_sha)
+        .bind(policy.allow_codehaven_repos)
+        .execute(&mut *tx)
+        .await?;
+        self.ctx
+            .audit
+            .record(
+                &mut tx,
+                AuditEvent::new(actor, client, action::ACTIONS_POLICY, Outcome::Success).details(serde_json::json!({
+                    "mode": policy.mode, "allow": allow, "block": block,
+                    "require_sha": policy.require_sha, "allow_codehaven_repos": policy.allow_codehaven_repos
+                })),
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn run_actions(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Vec<ActionUsed>> {
+        self.ctx.authz.require(actor, repo, Permission::Read).await?;
+        let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+            "SELECT a.host, a.name, a.git_ref, a.sha FROM action_resolutions a JOIN workflow_runs r ON r.id = a.run_id
+             WHERE a.run_id = $1 AND r.repo_id = $2 ORDER BY a.created_at, a.name",
+        )
+        .bind(run.0)
+        .bind(repo.0)
+        .fetch_all(&self.ctx.db)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(host, name, git_ref, sha)| ActionUsed {
+                name: if host == "haven" { format!("haven_{name}") } else { name },
+                requested: git_ref,
+                sha,
+            })
+            .collect())
     }
 
     async fn secrets(&self, actor: &Actor, repo: RepoId) -> Result<Vec<SecretMeta>> {

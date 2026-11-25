@@ -2,7 +2,7 @@
 
 use crate::shared::{Shared, shared_for};
 use crate::source::{GitSource, WorkflowSource};
-use ch_core::services::{Audit, Authz, BlobStore, EventBus, Repos};
+use ch_core::services::{Audit, Authz, BlobStore, EventBus, GitService, Repos};
 use ch_core::state::{AppState, AppStateBuilder};
 use ch_core::{Config, Result};
 use ch_db::sealing::MasterKey;
@@ -20,6 +20,7 @@ pub struct Ctx {
     pub authz: Arc<dyn Authz>,
     pub repos: Arc<dyn Repos>,
     pub source: Arc<dyn WorkflowSource>,
+    pub git: Arc<dyn GitService>,
     pub shared: Arc<Shared>,
 }
 
@@ -35,6 +36,7 @@ impl Ctx {
             authz: s.authz.clone(),
             repos: s.repos.clone(),
             source: shared.source_override().unwrap_or_else(|| Arc::new(GitSource::new(s.git.clone()))),
+            git: s.git.clone(),
             shared,
         }
     }
@@ -50,6 +52,7 @@ impl Ctx {
             authz: b.authz.clone(),
             repos: b.repos.clone(),
             source: shared.source_override().unwrap_or_else(|| Arc::new(GitSource::new(b.git.clone()))),
+            git: b.git.clone(),
             shared,
         }
     }

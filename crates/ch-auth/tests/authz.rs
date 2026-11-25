@@ -156,7 +156,7 @@ async fn jobs_runners_and_the_system(pool: PgPool) {
     let alice = c.env.user("alice").await;
     let mine = c.env.repo(alice, "mine").await;
     let other = c.env.public_repo(alice, "other").await;
-    let job = Actor::Job { job_id: ch_core::JobId(1), repo_id: mine, perms: JobPerms { contents_read: true, write_checks: true } };
+    let job = Actor::Job { job_id: ch_core::JobId(1), repo_id: mine, perms: JobPerms::default_token(false) };
     assert_eq!(c.state.authz.repo_permission(&job, mine).await.unwrap(), Permission::Read);
     assert_eq!(
         c.state.authz.repo_permission(&job, other).await.unwrap(),

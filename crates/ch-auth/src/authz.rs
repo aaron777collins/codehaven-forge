@@ -88,7 +88,37 @@ impl AuthzService {
 
     /// The facts, whether the repo is archived, and whether a signed-out visitor could read it
     /// right now (public, with the instance switch on). `None` facts for a missing repo.
+    ///
+    /// A private fork carries its ancestors' code, so someone other than its owner who cannot
+    /// see every private repository it was forked from gets nothing on it (ch-4pn.16): a grant on
+    /// the fork alone does not open what the parent's owner closed. Its owner keeps it.
     async fn user_facts(&self, user: UserId, site_admin: bool, repo: RepoId) -> Result<(Option<Facts>, bool, bool)> {
+        let (facts, archived, open_to_all) = self.own_facts(user, site_admin, repo).await?;
+        let Some(f) = &facts else { return Ok((facts, archived, open_to_all)) };
+        if f.site_admin || f.owns_personal_repo || f.org_owner {
+            return Ok((facts, archived, open_to_all));
+        }
+        let ancestors: Vec<i64> = sqlx::query_scalar(
+            "WITH RECURSIVE chain (id, parent, depth) AS (
+                 SELECT r.id, r.fork_parent_id, 0 FROM repositories r
+                  WHERE r.id = $1 AND r.fork_parent_id IS NOT NULL AND r.access_tier = 'private'
+                 UNION ALL
+                 SELECT p.id, p.fork_parent_id, c.depth + 1 FROM repositories p JOIN chain c ON p.id = c.parent WHERE c.depth < 64)
+             SELECT c.id FROM chain c JOIN repositories a ON a.id = c.id WHERE c.depth > 0 AND a.access_tier = 'private'",
+        )
+        .bind(repo.0)
+        .fetch_all(&self.core.db)
+        .await?;
+        for a in ancestors {
+            let (af, _, _) = self.own_facts(user, site_admin, RepoId(a)).await?;
+            if af.as_ref().map(compute).unwrap_or(Permission::None) < Permission::View {
+                return Ok((Some(Facts::default()), archived, open_to_all));
+            }
+        }
+        Ok((facts, archived, open_to_all))
+    }
+
+    async fn own_facts(&self, user: UserId, site_admin: bool, repo: RepoId) -> Result<(Option<Facts>, bool, bool)> {
         #[derive(sqlx::FromRow)]
         struct Row {
             owner_id: i64,
@@ -165,13 +195,22 @@ impl AuthzService {
             Actor::Runner { .. } => Ok((Permission::None, false)),
             Actor::System => Ok((Permission::Admin, false)),
             Actor::Job { repo_id, perms, .. } => {
-                // A job may read its own repo and nothing else, public or not.
+                // A job works on its own repo and nothing else, public or not. It writes only when
+                // its `permissions:` give it `contents: write`; every other scope is checked where
+                // it is used (statuses, checks, issues, packages).
                 let archived: Option<bool> = sqlx::query_scalar("SELECT archived FROM repositories WHERE id = $1")
                     .bind(repo.0)
                     .fetch_optional(&self.core.db)
                     .await?;
+                let level = if perms.contents >= Permission::Write {
+                    Permission::Write
+                } else if perms.any() {
+                    Permission::Read
+                } else {
+                    Permission::None
+                };
                 Ok(match archived {
-                    Some(a) if *repo_id == repo && perms.contents_read => (Permission::Read, a),
+                    Some(a) if *repo_id == repo => (level, a),
                     _ => (Permission::None, false),
                 })
             }
@@ -209,7 +248,9 @@ impl Authz for AuthzService {
             Actor::System => return Ok(true),
             Actor::User { id, .. } => (*id, actor.is_site_admin()),
             Actor::Token { user_id, .. } | Actor::App { user_id, .. } => (*user_id, false),
-            // A job reads its own repository, which is not a grant to contribute.
+            // A job contributes (issues, comments, pull requests) to its own repository only
+            // when its token has `issues: write` or `pull-requests: write`.
+            Actor::Job { repo_id, perms, .. } => return Ok(*repo_id == repo && perms.contribute()),
             _ => return Ok(false),
         };
         let (facts, _, _) = self.user_facts(user, site_admin, repo).await?;

@@ -52,6 +52,35 @@ pub fn parse(src: &str) -> Result<Workflow, Vec<Diagnostic>> {
     }
 }
 
+/// Reads an action's `action.yml` (ch-ctk.4). Keys the runner does not use (`description`,
+/// `author`, `branding`) are ignored, as GitHub ignores them.
+pub fn parse_action(src: &str) -> Result<crate::action_def::ActionDef, Vec<Diagnostic>> {
+    if src.len() > MAX_FILE_BYTES {
+        return Err(vec![Diagnostic::new(0, 0, format!("the file is larger than {} KiB", MAX_FILE_BYTES / 1024))]);
+    }
+    if let Some(line) = nesting_too_deep(src) {
+        return Err(vec![Diagnostic::new(line, 1, format!("the file is nested more than {MAX_NESTING} levels deep"))]);
+    }
+    let opts = LoaderOptions::default().error_on_duplicate_keys(true).prevent_coercion(true);
+    let root = match marked_yaml::parse_yaml_with_options(0, src, opts) {
+        Ok(n) => n,
+        Err(e) => return Err(vec![load_error(&e)]),
+    };
+    let mut p = P { diags: Vec::new() };
+    let def = p.action(&root);
+    p.diags.sort_by_key(|d| (d.line, d.column));
+    p.diags.dedup();
+    match def {
+        Some(d) if p.diags.is_empty() => Ok(d),
+        _ => {
+            if p.diags.is_empty() {
+                p.diags.push(Diagnostic::new(0, 0, "the file is not a valid action.yml"));
+            }
+            Err(p.diags)
+        }
+    }
+}
+
 /// The line where the nesting first passes `MAX_NESTING`, counting block indentation, `- `
 /// sequence markers and `[`/`{` flow brackets. A rough scan, deliberately: it only has to
 /// be safe, and it errs towards refusing.
@@ -285,6 +314,127 @@ impl P {
         out
     }
 
+    /// `permissions: read-all | write-all | {scope: read|write|none, ...}`.
+    fn permissions(&mut self, n: &Node) -> Option<crate::permissions::Declared> {
+        use crate::permissions::{Declared, check_entry};
+        match n {
+            Node::Scalar(s) if !is_null(n) => {
+                let d = Declared::from_word(s.as_str().trim());
+                if d.is_none() {
+                    self.err(pos(n), "`permissions` must be read-all, write-all or a mapping of scopes");
+                }
+                d
+            }
+            Node::Sequence(_) => {
+                self.err(pos(n), "`permissions` must be read-all, write-all or a mapping of scopes");
+                None
+            }
+            _ => {
+                let mut out = BTreeMap::new();
+                for (k, v) in self.entries(n, "permissions") {
+                    let Node::Scalar(val) = v else {
+                        self.err(pos(v), format!("permission `{}` must be read, write or none", k.as_str()));
+                        continue;
+                    };
+                    match check_entry(k.as_str(), val.as_str().trim()) {
+                        Ok(level) => {
+                            out.insert(k.as_str().to_string(), level);
+                        }
+                        Err(msg) => self.err(kpos(k), msg),
+                    }
+                }
+                Some(Declared::Scopes(out))
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ action.yml
+
+    fn action(&mut self, root: &Node) -> Option<crate::action_def::ActionDef> {
+        use crate::action_def::{ActionDef, ActionInput, ActionRuns};
+        let Node::Mapping(m) = root else {
+            self.err(pos(root), "an action.yml must be a mapping with `runs`");
+            return None;
+        };
+        let mut def = ActionDef {
+            name: String::new(),
+            inputs: Vec::new(),
+            outputs: BTreeMap::new(),
+            runs: ActionRuns::Docker { image: String::new() },
+        };
+        let mut runs = None;
+        for (k, v) in m.iter() {
+            match k.as_str() {
+                "name" => def.name = self.text(v, "name").unwrap_or_default(),
+                "inputs" => {
+                    for (id, body) in self.entries(v, "inputs") {
+                        let mut input = ActionInput { id: id.as_str().to_string(), default: None, required: false };
+                        for (ik, iv) in self.entries(body, &format!("inputs.{}", id.as_str())) {
+                            match ik.as_str() {
+                                "default" => input.default = self.text(iv, "default"),
+                                "required" => {
+                                    input.required =
+                                        matches!(self.text(iv, "required").as_deref().map(str::trim), Some("true" | "True" | "TRUE"))
+                                }
+                                _ => {}
+                            }
+                        }
+                        def.inputs.push(input);
+                    }
+                }
+                "outputs" => {
+                    for (id, body) in self.entries(v, "outputs") {
+                        let mut value = None;
+                        for (ok, ov) in self.entries(body, &format!("outputs.{}", id.as_str())) {
+                            if ok.as_str() == "value" {
+                                value = self.template(ov, "value");
+                            }
+                        }
+                        def.outputs.insert(id.as_str().to_string(), value);
+                    }
+                }
+                "runs" => runs = Some(v),
+                _ => {}
+            }
+        }
+        let Some(runs) = runs else {
+            self.err(pos(root), "an action.yml needs `runs`");
+            return None;
+        };
+        let mut using = String::new();
+        let (mut main, mut pre, mut pre_if, mut post, mut post_if, mut image) = (None, None, None, None, None, None);
+        let mut steps = None;
+        for (k, v) in self.entries(runs, "runs") {
+            match k.as_str() {
+                "using" => using = self.text(v, "using").unwrap_or_default().trim().to_ascii_lowercase(),
+                "main" => main = self.text(v, "main"),
+                "pre" => pre = self.text(v, "pre"),
+                "pre-if" => pre_if = self.text(v, "pre-if"),
+                "post" => post = self.text(v, "post"),
+                "post-if" => post_if = self.text(v, "post-if"),
+                "image" => image = self.text(v, "image"),
+                "steps" => steps = Some(self.steps(v)),
+                _ => {}
+            }
+        }
+        def.runs = match using.as_str() {
+            "node12" | "node16" | "node20" | "node24" => match main {
+                Some(main) if !main.trim().is_empty() => ActionRuns::Node { using, main, pre, pre_if, post, post_if },
+                _ => {
+                    self.err(pos(runs), "a JavaScript action needs `runs.main`");
+                    return None;
+                }
+            },
+            "composite" => ActionRuns::Composite { steps: steps.unwrap_or_default() },
+            "docker" => ActionRuns::Docker { image: image.unwrap_or_default() },
+            other => {
+                self.err(pos(runs), format!("`runs.using: {other}` is not something the runner can run. Use node20, node24 or composite"));
+                return None;
+            }
+        };
+        Some(def)
+    }
+
     fn unknown_key(&mut self, k: &MarkedScalarNode, place: &str, known: &[&str]) {
         let near = known.iter().find(|c| near_miss(k.as_str(), c));
         let hint = near.map(|c| format!(". Did you mean `{c}`?")).unwrap_or_default();
@@ -305,6 +455,7 @@ impl P {
             env: BTreeMap::new(),
             defaults: Defaults::default(),
             concurrency: None,
+            permissions: None,
             jobs: Vec::new(),
         };
         let mut have_on = false;
@@ -326,8 +477,7 @@ impl P {
                 "defaults" => wf.defaults = self.defaults(v),
                 "concurrency" => wf.concurrency = self.concurrency(v),
                 "jobs" => jobs_node = Some(v),
-                // Accepted and ignored: job tokens are always read-only on contents.
-                "permissions" => {}
+                "permissions" => wf.permissions = self.permissions(v),
                 _ => self.unknown_key(k, "the workflow", KNOWN),
             }
         }
@@ -652,6 +802,8 @@ impl P {
             outputs: BTreeMap::new(),
             defaults: Defaults::default(),
             concurrency: None,
+            permissions: None,
+            services: BTreeMap::new(),
             steps: Vec::new(),
         };
         let mut have_runs_on = false;
@@ -693,9 +845,11 @@ impl P {
                 "timeout-minutes" => job.timeout_minutes = self.uint_or_expr(v, "timeout-minutes"),
                 "continue-on-error" => job.continue_on_error = self.bool_or_expr(v, "continue-on-error"),
                 "concurrency" => job.concurrency = self.concurrency(v),
-                "permissions" => {}
-                "services" => self.err(kpos(k), "`services:` is not supported in this version. Start the service in a `run:` step with `docker run -d`, or use a container job"),
-                "environment" => self.err(kpos(k), "`environment:` (deployment environments and approvals) is not supported in this version"),
+                "permissions" => job.permissions = self.permissions(v),
+                "services" => job.services = self.services(v),
+                "environment" => {
+                    self.err(kpos(k), "`environment:` (deployment environments and approvals) is not supported in this version")
+                }
                 "uses" | "with" | "secrets" => self.err(kpos(k), "reusable workflows (`uses:` on a job) are not supported in this version"),
                 _ => self.unknown_key(k, &format!("job `{key}`"), KNOWN),
             }
@@ -791,6 +945,60 @@ impl P {
                 Some(c)
             }
         }
+    }
+
+    fn services(&mut self, n: &Node) -> BTreeMap<String, crate::model::Service> {
+        let mut out = BTreeMap::new();
+        for (k, v) in self.entries(n, "services") {
+            let id = k.as_str().to_string();
+            if !valid_key(&id) || id.len() > 63 {
+                self.err(kpos(k), format!("`{id}` is not a valid service name. Use letters, digits, `-` and `_`"));
+                continue;
+            }
+            let line = pos(v).0;
+            let mut svc = crate::model::Service { image: String::new(), env: BTreeMap::new(), ports: Vec::new(), options: None, line };
+            for (sk, sv) in self.entries(v, &format!("services.{id}")) {
+                match sk.as_str() {
+                    "image" => svc.image = self.template(sv, "image").unwrap_or_default(),
+                    "env" => svc.env = self.string_map(sv, "env"),
+                    "ports" => {
+                        for p in self.string_list(sv, "ports") {
+                            // `5432`, `5432/tcp`, `5432:5432` or `8080:80`: the container's side.
+                            let container = p.rsplit(':').next().unwrap_or("").split('/').next().unwrap_or("").trim().to_string();
+                            match container.parse::<u16>() {
+                                Ok(port) if port > 0 => svc.ports.push(port),
+                                _ => self.err(pos(sv), format!("`services.{id}.ports`: `{p}` is not a port")),
+                            }
+                        }
+                    }
+                    "options" => {
+                        svc.options = self.template(sv, "options");
+                        if let Some(o) = &svc.options
+                            && !expr::has_expression(o)
+                            && let Err(e) = crate::options::validate_service(o)
+                        {
+                            self.err(pos(sv), format!("`services.{id}.options`: {e}"));
+                        }
+                    }
+                    "volumes" | "credentials" => self.err(
+                        kpos(sk),
+                        format!(
+                            "`services.{id}.{}` is not allowed: services cannot mount volumes or bring registry credentials",
+                            sk.as_str()
+                        ),
+                    ),
+                    _ => self.unknown_key(sk, &format!("`services.{id}`"), &["image", "env", "ports", "options"]),
+                }
+            }
+            if svc.image.trim().is_empty() {
+                self.err((line, 1), format!("`services.{id}.image` is required"));
+            }
+            out.insert(id, svc);
+        }
+        if out.len() > 10 {
+            self.err(pos(n), "a job may have at most 10 services");
+        }
+        out
     }
 
     fn strategy(&mut self, n: &Node, job_key: &str) -> Option<Strategy> {
@@ -955,7 +1163,14 @@ impl P {
             (None, Some((u, at))) => {
                 match actions::classify(&u) {
                     Ok(b) => self.check_inputs(&b, &with, at),
-                    Err(e) => self.err(at, e),
+                    // Not built in: an action from this repository (`./path`), from GitHub
+                    // (`owner/repo@ref`) or from a repository here (`haven_owner/repo@ref`), which
+                    // the site's policy decides when the job runs (ch-ctk.5).
+                    Err(e) => match crate::uses::parse_uses(&u) {
+                        Ok(_) => {}
+                        Err(pe) if u.contains('@') || u.trim_start().starts_with("./") => self.err(at, pe.0),
+                        Err(_) => self.err(at, e),
+                    },
                 }
                 if shell.is_some() || wd.is_some() {
                     self.err((line, 1), "`shell` and `working-directory` only apply to `run` steps");

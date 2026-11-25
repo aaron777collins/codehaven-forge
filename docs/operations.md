@@ -86,6 +86,36 @@ refuses to start otherwise.
 Full mode (a site admin's switch at `/admin/pages`) also serves `*.pages.example.com`. Turn it on
 only after the proxy has a wildcard certificate for that name, which needs a DNS challenge.
 
+## Runners
+
+`codehaven admin runners` lists the registered runners and when each last called in.
+`codehaven admin revoke-runner <id>` removes one: its credential stops working at once. Both run
+inside the server container, like the other admin commands:
+
+```sh
+docker compose -p <project> exec server codehaven admin runners
+docker compose -p <project> exec server codehaven admin revoke-runner 1
+```
+
+## Codehaven's own repository and CI
+
+Codehaven can build itself (ch-d9s). `.codehaven/workflows/ci.yml` runs `make ci CH_NATIVE=1`
+in the builder image with a Postgres service beside it, which is the same gate `make ci` runs
+on a build host. Once, on the instance that should run it:
+
+1. Load the builder image into the runner's Docker daemon: `CODEHAVEN_CI_BUILDER=1 bash
+   deploy/prod/ci-up.sh`. It is a few GiB in that daemon's storage.
+2. Make sure the account that will own the repository may run CI (`can_run_ci`; Site admin >
+   Users, or `codehaven admin create-user --can-run-ci` for a new one).
+3. Create an empty private repository for it in the browser (New repository, private, no
+   README), and a personal access token with the `repo` and `workflow` scopes (Settings >
+   Tokens). The `workflow` scope is what lets a push carry `.codehaven/workflows/`.
+4. From a checkout of the source: `git remote add haven https://<host>/<owner>/codehaven.git`
+   and `git push haven main`, with the token as the password. Nothing is copied from anywhere
+   else.
+5. The push starts the `ci` workflow on the instance's runner. Later pushes and pull requests
+   run it again.
+
 ## Backups
 
 ```sh

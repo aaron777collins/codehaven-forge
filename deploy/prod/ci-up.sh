@@ -54,6 +54,17 @@ if ! "${C[@]}" exec -T dind docker image inspect codehaven-job:trixie >/dev/null
   echo "loading codehaven-job:trixie into dind"
   docker save codehaven-job:trixie | "${C[@]}" exec -T dind docker load
 fi
+# Codehaven's own CI (.codehaven/workflows/ci.yml) runs in the builder image. Loaded only when
+# asked, because it is a few GiB in dind's storage.
+if [ "${CODEHAVEN_CI_BUILDER:-}" = 1 ]; then
+  ver=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$dir/rust-toolchain.toml")
+  builder="codehaven-builder:$ver"
+  docker image inspect "$builder" >/dev/null 2>&1 || bash "$dir/deploy/dev/builder-image.sh" >/dev/null
+  if ! "${C[@]}" exec -T dind docker image inspect "$builder" >/dev/null 2>&1; then
+    echo "loading $builder into dind"
+    docker save "$builder" | "${C[@]}" exec -T dind docker load
+  fi
+fi
 
 "${C[@]}" up -d runner
 "${C[@]}" ps

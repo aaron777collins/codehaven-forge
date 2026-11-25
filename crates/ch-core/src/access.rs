@@ -90,6 +90,11 @@ pub const PUBLIC_ROUTES: &[PublicRoute] = &[
         pattern: "/api/runner/v1/register",
         why: "Rejects anything without an admin-issued registration token",
     },
+    PublicRoute {
+        methods: &["GET"],
+        pattern: "/api/runner/v1/toolkit/blobs/{grant}",
+        why: "A cache archive for the Actions toolkit, which downloads with no credential: a one-hour link this server signed for one entry. Anything else is a 404",
+    },
     // The five below exist only while `mcp.enabled` is true. Each is static or answers only for
     // a code or token made at the consent page. There is no client registration route.
     PublicRoute {
@@ -416,6 +421,19 @@ pub fn address_key(ip: std::net::IpAddr) -> String {
     }
 }
 
+/// `address_key`, but an IPv6 client counts by its /56, the block one home or office is usually
+/// given, so it cannot spread over 256 /64s (ch-6yg). Used where a cap holds open connections,
+/// such as the Pages host's replies per address.
+pub fn wide_address_key(ip: std::net::IpAddr) -> String {
+    match ip {
+        std::net::IpAddr::V6(v6) if v6.to_ipv4_mapped().is_none() => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/56", s[0], s[1], s[2], s[3] & 0xff00)
+        }
+        other => address_key(other),
+    }
+}
+
 /// True when `router_path` (a registered pattern such as `/{owner}/{repo}/tree/{*rest}`) is the
 /// rule's own pattern. The router layer checks this, so a path the gate admitted can only run
 /// the handler the rule names.
@@ -636,7 +654,7 @@ pub fn actor_accepted(actor: &Actor, kind: RouteKind) -> bool {
         (Actor::User { via: AuthVia::Basic, .. }, RouteKind::Api | RouteKind::GitHttp | RouteKind::Registry) => true,
         (Actor::User { via: AuthVia::Ssh, .. }, _) => false,
         (Actor::Token { .. }, RouteKind::Api | RouteKind::GitHttp | RouteKind::Registry) => true,
-        (Actor::Job { .. }, RouteKind::Api | RouteKind::GitHttp | RouteKind::Runner) => true,
+        (Actor::Job { .. }, RouteKind::Api | RouteKind::GitHttp | RouteKind::Runner | RouteKind::Registry) => true,
         (Actor::Runner { .. }, RouteKind::Runner) => true,
         // An app token opens the MCP endpoint and nothing else, and nothing else opens it.
         (Actor::App { .. }, RouteKind::Mcp) => true,
@@ -726,7 +744,7 @@ mod tests {
         assert_eq!(history_tiers(&user, Permission::Admin, true), None);
         assert_eq!(history_tiers(&Actor::Anonymous, Permission::View, false), Some(&["public"][..]));
         assert_eq!(history_tiers(&user, Permission::None, false), Some(&[][..]));
-        let job = Actor::Job { job_id: JobId(1), repo_id: RepoId(1), perms: JobPerms { contents_read: true, write_checks: false } };
+        let job = Actor::Job { job_id: JobId(1), repo_id: RepoId(1), perms: JobPerms::default_token(true) };
         assert_eq!(history_tiers(&job, Permission::Read, false), None, "a job reads its own repository's history");
     }
 
@@ -747,7 +765,11 @@ mod tests {
                 "/oauth/revoke",
             ]
         );
-        assert_eq!(PUBLIC_ROUTES.len(), 11 + 5 + 1, "the eleven that existed before, plus five, plus forgot password (ch-bfa)");
+        assert_eq!(
+            PUBLIC_ROUTES.len(),
+            11 + 5 + 1 + 1,
+            "the eleven that existed before, plus five, plus forgot password (ch-bfa), plus the toolkit cache link (ch-ctk.6)"
+        );
         for p in [
             "/oauth/register",
             "/register",
@@ -821,7 +843,7 @@ mod tests {
             Actor::User { id: UserId(1), is_admin: true, has_2fa: true, via: AuthVia::Session },
             Actor::User { id: UserId(1), is_admin: true, has_2fa: true, via: AuthVia::Basic },
             Actor::Token { user_id: UserId(1), token_id: TokenId(1), scopes: Scopes::new(["repo"]) },
-            Actor::Job { job_id: JobId(1), repo_id: RepoId(1), perms: JobPerms { contents_read: true, write_checks: true } },
+            Actor::Job { job_id: JobId(1), repo_id: RepoId(1), perms: JobPerms::default_token(false) },
             Actor::Runner { runner_id: RunnerId(1) },
             Actor::System,
             Actor::Anonymous,
@@ -859,6 +881,16 @@ mod tests {
         assert!(is_public(&Method::GET, "/robots.txt"));
         assert!(is_public(&Method::GET, "/favicon.svg"));
         assert!(is_public(&Method::POST, "/api/runner/v1/register"));
+        let a: std::net::IpAddr = "2001:db8:1:2a00::1".parse().unwrap_or(std::net::IpAddr::from([0, 0, 0, 0]));
+        let b: std::net::IpAddr = "2001:db8:1:2aff:ffff::9".parse().unwrap_or(std::net::IpAddr::from([0, 0, 0, 0]));
+        let c: std::net::IpAddr = "2001:db8:1:2b00::1".parse().unwrap_or(std::net::IpAddr::from([0, 0, 0, 0]));
+        assert_eq!(wide_address_key(a), wide_address_key(b), "one /56 is one client");
+        assert_ne!(wide_address_key(a), wide_address_key(c));
+        assert_ne!(address_key(a), address_key(b), "the /64 key still tells them apart");
+        assert_eq!(wide_address_key(std::net::IpAddr::from([192, 0, 2, 1])), "192.0.2.1");
+        assert!(is_public(&Method::GET, "/api/runner/v1/toolkit/blobs/c.1.2.abc"));
+        assert!(!is_public(&Method::PUT, "/api/runner/v1/toolkit/blobs/c.1.2.abc"), "a link only reads");
+        assert!(!is_public(&Method::GET, "/api/runner/v1/toolkit/_apis/artifactcache/cache"), "the cache API needs the runtime token");
         assert!(is_public(&Method::GET, "/login/oidc/github/callback"));
     }
 
@@ -946,7 +978,7 @@ mod tests {
         let session = Actor::User { id: UserId(1), is_admin: false, has_2fa: false, via: AuthVia::Session };
         let basic = Actor::User { id: UserId(1), is_admin: false, has_2fa: false, via: AuthVia::Basic };
         let token = Actor::Token { user_id: UserId(1), token_id: TokenId(1), scopes: Scopes::new(["repo"]) };
-        let job = Actor::Job { job_id: JobId(1), repo_id: RepoId(1), perms: JobPerms { contents_read: true, write_checks: true } };
+        let job = Actor::Job { job_id: JobId(1), repo_id: RepoId(1), perms: JobPerms::default_token(false) };
         let runner = Actor::Runner { runner_id: RunnerId(1) };
         assert!(actor_accepted(&session, RouteKind::Page));
         assert!(!actor_accepted(&session, RouteKind::GitHttp));

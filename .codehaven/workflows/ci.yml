@@ -1,0 +1,32 @@
+# Codehaven's own CI, on Codehaven (ch-d9s): the same gate every change passes before a merge.
+# It runs in the builder image (deploy/images/builder.Dockerfile), which the runner's Docker
+# daemon has to hold: deploy/prod/ci-up.sh loads it when CODEHAVEN_CI_BUILDER=1. The database
+# tests use a Postgres service beside the job, reached by its name.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    container: codehaven-builder:1.100.0
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432
+    env:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
+      SQLX_OFFLINE: "true"
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - name: make ci
+        run: make ci CH_NATIVE=1

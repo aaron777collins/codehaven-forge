@@ -68,8 +68,8 @@ container's). `GITHUB_TOKEN` is not in the environment; `${{ secrets.GITHUB_TOKE
 ### Built-in actions
 
 `checkout`, `cache` (and `cache/restore`, `cache/save`), `upload-artifact`, `download-artifact`,
-`docker://image`, each with or without an `actions/` or `codehaven/` prefix and a version. Anything
-else fails with a message that says why. They run inside the runner process, so they work on the
+`docker://image`, each with or without an `actions/` or `codehaven/` prefix and a version.
+Every other `uses:` is fetched and run, as the next section says. They run inside the runner process, so they work on the
 workspace from outside the container. The rules for what they may touch:
 
 - File patterns never leave the workspace: no `..`, absolute paths only inside it, and symbolic
@@ -97,6 +97,69 @@ workspace from outside the container. The rules for what they may touch:
 These rules keep one job's files from reaching the runner. They are not a sandbox: a job still
 runs in a container on a shared Docker daemon. Jobs in virtual machines (ch-ctk.3) are the
 stronger option if Codehaven ever runs code from people it does not trust.
+
+### Other actions
+
+Any other `uses:` is fetched (ch-ctk.4, ch-ctk.5):
+
+- `owner/repo[/path]@ref` is a public GitHub action. `haven_owner/repo[/path]@ref` is a
+  repository on this instance, served when it is the job's own, public, or the same owner's and
+  as visible, and readable by the person who started the run. A scheduled run has no such person,
+  so it uses only its own repository's actions and public ones. `./path` is an action in the
+  job's own workspace.
+- The runner asks the server (`POST /jobs/{id}/actions/resolve`, with the job token). The server
+  checks the site's policy (Site admin > Actions: none, selected or all, an allow list, a block
+  list that always wins, optionally full SHAs only), resolves the ref to a commit that a branch
+  or tag of that repository reaches (a tag before a branch; never a fork's commit that GitHub
+  serves under the parent's name, never `refs/pull/*`), keeps a tarball of that commit and pins
+  the answer to the run. Later jobs and re-runs of failed jobs get the same commit, and the run
+  page lists every action with its commit.
+- A repository here is used when it is the job's own, public, or has the same owner and is at
+  least as visible as the job's repository. A pull request from a fork uses public ones only.
+  Any other looks exactly like a repository that does not exist.
+- The runner downloads the archive with the job token, checks its sha256, unpacks regular files
+  and folders only under `_runner/actions/<archive>` and reads `action.yml`.
+- JavaScript actions (`node12` to `node24`) run with the job image's `node`: inputs as
+  `INPUT_*`, `GITHUB_ACTION_PATH`, `GITHUB_STATE`, a `pre` script before the main one, and a
+  `post` script as a step of its own after the workflow's steps, last first, when its
+  `post-if` (default `always()`) holds. A post step shows as `Post <name>`.
+- Composite actions run their steps inside the step that used them, with their own `inputs` and
+  `steps` contexts and `github.action_path`; their `outputs` are their `value` expressions.
+  Nesting stops at 9 levels.
+- Docker container actions (`using: docker`) need a Docker daemon, which jobs do not have, so
+  they fail with a message that says to use a `docker://image` step or a `run:` step.
+- JavaScript actions also get `ACTIONS_RUNTIME_TOKEN` and `ACTIONS_CACHE_URL`, so the cache
+  built into `setup-node`, `setup-python`, `setup-go`, `setup-java` and the rest works
+  (ch-ctk.6). The token is a JWT the runner signs with the sha256 of the job token, which the
+  server checks against the hash it keeps, and dies with the job. Like GitHub's, it reaches the
+  cache service and nothing else: it carries none of the job token's scopes, so an action that
+  was never given the job token cannot write a status, an issue or a release with it. Cache
+  uploads that are never finished are dropped after an hour, or when the job ends, and the
+  server holds at most 4 GiB of them at once. Caches follow the built-in cache's rules: a job reads
+  its own ref, then a pull request's base, then the default branch, and writes only its own.
+  The toolkit downloads an archive with no credential, so the lookup answers with a link this
+  server signed for that one entry, which stops working after an hour.
+
+### Services
+
+`services:` (ch-ctk.7) start before the first step, each in the job container's network, so the
+job reaches a service at `localhost:<port>` and by its name (`postgres:5432`). The job waits up
+to `limits.service_wait_seconds` (120) for each port the service lists under `ports:`; health
+check options are accepted and the port wait stands in for them. Options are the same safe list
+as a job container's. `job.services.<id>.id` and `.ports` are in the `job` context. Services go
+when the job ends.
+
+### The job token
+
+What `GITHUB_TOKEN` may do follows the workflow's `permissions:` (ch-ctk.8). With none it reads
+contents and packages. `contents: write` pushes, tags and makes releases; `statuses: write`
+posts commit statuses; `issues` or `pull-requests: write` opens and comments on issues and pull
+requests (one scope here); `packages: write` pushes images linked to the job's own repository.
+Naming any scope sets the others to none, and a job's block replaces the workflow's. Writes are
+made as the `codehaven-actions` account, which cannot sign in, go through branch protection with
+no bypass, never change workflow files and start no workflow. A repository admin can cap every
+token at read (Settings > Secrets, or `PUT /repos/{o}/{r}/actions/permissions/workflow`). A pull
+request from a fork reads contents and nothing else.
 
 ### Logs
 

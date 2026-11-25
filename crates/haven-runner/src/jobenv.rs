@@ -130,6 +130,13 @@ pub struct StepFiles {
     pub summary: PathBuf,
 }
 
+impl StepFiles {
+    /// No files, for a probe that is not a step.
+    pub fn none() -> StepFiles {
+        StepFiles { output: PathBuf::new(), env: PathBuf::new(), path: PathBuf::new(), summary: PathBuf::new() }
+    }
+}
+
 #[cfg(unix)]
 fn set_mode(p: &Path, mode: u32) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -318,6 +325,7 @@ mod tests {
             timeout_minutes: 60,
             token: "job_tok".into(),
             lease_seconds: 120,
+            services: Vec::new(),
         }
     }
 

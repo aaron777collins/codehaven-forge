@@ -55,6 +55,10 @@ pub enum AdminCommand {
         #[arg(long)]
         repo: Option<String>,
     },
+    /// List registered runners: id, name, status and when each last called in.
+    Runners,
+    /// Remove a runner: its credential stops working at once. Jobs it holds fail when their lease runs out.
+    RevokeRunner { id: i64 },
     /// Print a fresh one-time link and sign the account out everywhere.
     ResetPassword { username: String },
     /// Clear a sign-in lockout.

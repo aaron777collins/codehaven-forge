@@ -29,9 +29,12 @@ tracing.workspace = true
 anyhow.workspace = true
 hex.workspace = true
 sha2.workspace = true
+hmac.workspace = true
+rand.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 ch-testkit.workspace = true
 tower.workspace = true
 http-body-util.workspace = true

@@ -86,7 +86,7 @@ async fn handle(State(core): State<Arc<Core>>, req: Request) -> Response {
     let inm = req.headers().get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()).map(str::to_string);
     // The binary puts the trusted client address here before the request reaches this router.
     let ip = req.extensions().get::<ClientInfo>().map(|c| c.ip).unwrap_or(std::net::IpAddr::from([0, 0, 0, 0]));
-    let from = ch_core::access::address_key(ip);
+    let from = ch_core::access::wide_address_key(ip);
     let ask = Ask { document, inm: inm.as_deref(), from: &from };
     let resp = if host == pages {
         if let Some(r) = asset_for(&raw) {

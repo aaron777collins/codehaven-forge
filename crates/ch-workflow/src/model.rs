@@ -15,6 +15,9 @@ pub struct Workflow {
     pub env: BTreeMap<String, String>,
     pub defaults: Defaults,
     pub concurrency: Option<Concurrency>,
+    /// `permissions:` for every job's token, unless a job has its own.
+    #[serde(default)]
+    pub permissions: Option<crate::permissions::Declared>,
     /// In file order.
     pub jobs: Vec<Job>,
 }
@@ -144,6 +147,20 @@ pub struct Container {
     pub line: u32,
 }
 
+/// A service container beside the job (ch-ctk.7): it shares the job container's network, so the
+/// job reaches it at `localhost:<port>` and by its id as a host name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Service {
+    /// May hold `${{ }}`.
+    pub image: String,
+    pub env: BTreeMap<String, String>,
+    /// The container ports the job waits for before its first step, from `ports:` (`5432` or
+    /// `5432:5432`; the host side means nothing here).
+    pub ports: Vec<u16>,
+    pub options: Option<String>,
+    pub line: u32,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Matrix {
     /// Axes in file order. Each value is a JSON scalar, array or object.
@@ -179,6 +196,11 @@ pub struct Job {
     pub outputs: BTreeMap<String, String>,
     pub defaults: Defaults,
     pub concurrency: Option<Concurrency>,
+    /// `permissions:` for this job's token. Replaces the workflow's.
+    #[serde(default)]
+    pub permissions: Option<crate::permissions::Declared>,
+    #[serde(default)]
+    pub services: BTreeMap<String, Service>,
     pub steps: Vec<Step>,
 }
 

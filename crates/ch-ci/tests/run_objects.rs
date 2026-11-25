@@ -86,3 +86,16 @@ async fn a_push_run_has_no_pull_requests_and_a_head_commit(pool: PgPool) {
     assert_eq!(v["head_commit"]["id"], git.head());
     assert_eq!(v["head_commit"]["author"]["name"].as_str().map(|s| !s.is_empty()), Some(true));
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_push_event_carries_the_compare_link_and_its_commit(pool: PgPool) {
+    let w = World::new(pool).await;
+    let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, &basic_workflow())]).await;
+    w.push(repo, &git, "main", None).await;
+    let run = w.run_ids().await[0];
+    let payload: serde_json::Value =
+        sqlx::query_scalar("SELECT event_payload FROM workflow_runs WHERE id = $1").bind(run).fetch_one(w.pool()).await.unwrap();
+    let event = ch_ci::spec::split_payload(&payload).0;
+    assert!(event["compare"].as_str().unwrap().contains("/alice/demo/compare/"), "{event}");
+    assert_eq!(event["commits"][0]["id"], git.head());
+}

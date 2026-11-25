@@ -36,7 +36,7 @@ fn create(username: &str, admin_flag: bool) -> AdminCommand {
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
 async fn create_user_makes_an_account_with_no_password_and_a_one_hour_link(pool: PgPool) {
     let (state, _dir) = state(pool.clone()).await;
-    assert_eq!(count(&pool, "SELECT count(*) FROM users").await, 0);
+    assert_eq!(count(&pool, "SELECT count(*) FROM users WHERE kind = 'user'").await, 0);
     admin::run(&state, create("alice", true)).await.unwrap();
     let (admin_flag, has_pw): (bool, bool) =
         sqlx::query_as("SELECT is_admin, password_hash IS NOT NULL FROM users WHERE username = 'alice'").fetch_one(&pool).await.unwrap();
@@ -135,4 +135,22 @@ async fn the_public_repositories_switch_is_audited_and_off_lowers_every_public_r
         1,
         "each lowered repository is audited"
     );
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn runners_are_listed_and_revoked_from_the_cli(pool: PgPool) {
+    let (state, _dir) = state(pool.clone()).await;
+    // The credential hash is SHA-256 sized: the table checks it is 32 bytes.
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO runners (name, labels, credential_hash) VALUES ('old', ARRAY['linux'], sha256('old')) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    admin::run(&state, AdminCommand::Runners).await.unwrap();
+    admin::run(&state, AdminCommand::RevokeRunner { id }).await.unwrap();
+    assert_eq!(count(&pool, &format!("SELECT count(*) FROM runners WHERE id = {id} AND revoked_at IS NOT NULL")).await, 1);
+    assert_eq!(count(&pool, "SELECT count(*) FROM audit_events WHERE action = 'runner.removed'").await, 1);
+    // A second time there is nothing to remove.
+    assert!(admin::run(&state, AdminCommand::RevokeRunner { id }).await.is_err());
 }
