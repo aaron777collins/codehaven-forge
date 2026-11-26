@@ -80,3 +80,23 @@ that strips or rewrites `Content-Security-Policy` breaks the terminal.
 The terminal is on by default. `[workspace] terminal` in the config file is the ceiling, and a
 site admin with two-factor sign-in can turn it on or off at `/admin/workspace`, separately from
 the editor. The change is audited and applies on the next request.
+
+Turning the terminal off applies to the next page load. A terminal that is already open keeps running
+until its page closes, because the shell lives in that page's own Worker; the admin page says so.
+
+### Checking it in Firefox and WebKit
+
+The end-to-end run uses Chrome. Firefox and WebKit have their own behaviour for the clipboard, shared workers
+and Workers, so the same checks run against them from a machine that has Playwright's builds of them. Start a
+throwaway stack that stays up (`SHOTS_KEEP=1 SHOTS_NO_SHOTS=1 SHOTS_STEPS=0-22 bash deploy/dev/shots.sh --tag shots-mine`),
+copy its `session.json` and forward a port to the server's container address, then run, with a `playwright-core`
+whose version matches the browsers installed:
+
+```sh
+node tests/e2e/terminal.mjs session.json http://127.0.0.1:13200 https://shots.example.invalid alice/demo ws-check webkit
+node tests/e2e/monaco_worker.mjs session.json http://127.0.0.1:13200 https://shots.example.invalid alice/demo ws-check webkit
+```
+
+`firefox` and `chromium` work in the same place. `monaco_worker.mjs` fails when the editor's Worker does not start
+from the workspace's own asset folder, which is the case where Monaco falls back to the main thread. Remove the
+stack afterwards: `docker compose -p <project> down -v`.

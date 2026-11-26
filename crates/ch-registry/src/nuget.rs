@@ -54,6 +54,8 @@ pub fn routes() -> Router<AppState> {
         .route("/nuget/{owner}/flatcontainer/{id}/index.json", get(flat_versions))
         .route("/nuget/{owner}/flatcontainer/{id}/{version}/{file}", get(flat_file))
         .route("/nuget/{owner}/push", put(push).layer(DefaultBodyLimit::max(MAX_NUPKG_BYTES as usize + 64 * 1024)))
+        // `dotnet nuget push` adds a slash to the PackagePublish address it reads from the index.
+        .route("/nuget/{owner}/push/", put(push).layer(DefaultBodyLimit::max(MAX_NUPKG_BYTES as usize + 64 * 1024)))
         .route("/nuget/{owner}/push/{id}/{version}", axum::routing::delete(unlist).post(relist))
 }
 

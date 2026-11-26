@@ -13,11 +13,16 @@ use std::sync::Arc;
 
 /// Builds the state: the real database-backed pieces, then each crate's services in order.
 pub async fn build_state(config: Arc<Config>, pool: PgPool) -> Result<AppState> {
+    build_state_with(config, pool, ch_auth::AuthOptions::default()).await
+}
+
+/// The same with the identity options a test may change (cheap password hashing, a fixed key).
+pub async fn build_state_with(config: Arc<Config>, pool: PgPool, auth: ch_auth::AuthOptions) -> Result<AppState> {
     let blobs = FsBlobStore::new(config.blobs_dir()).with_min_free(config.storage.min_free_gib.saturating_mul(1 << 30));
     blobs.init().await?;
     let mut b =
         AppStateBuilder::new(config, pool.clone(), Arc::new(PgAudit::new(pool.clone())), Arc::new(PgEventBus::new(pool)), Arc::new(blobs));
-    install_services(&mut b)?;
+    install_services_with(&mut b, auth)?;
     let state = b.build();
     // The packages pages' service needs the whole state, so it goes in after it is built.
     ch_registry::packages::install(&state);
@@ -26,8 +31,13 @@ pub async fn build_state(config: Arc<Config>, pool: PgPool) -> Result<AppState> 
 
 /// The service crates, in dependency order. Tests call this with their own builder.
 pub fn install_services(b: &mut AppStateBuilder) -> Result<()> {
+    install_services_with(b, ch_auth::AuthOptions::default())
+}
+
+/// The same with the identity options a test may change.
+pub fn install_services_with(b: &mut AppStateBuilder, auth: ch_auth::AuthOptions) -> Result<()> {
     b.ext.insert(Arc::new(ch_core::net::ProxyHosts::default()));
-    ch_auth::build(b)?.install(b);
+    ch_auth::build_with(b, auth)?.install(b);
     ch_notify::build(b)?.install(b);
     ch_git::build(b)?.install(b);
     ch_collab::build(b)?.install(b);

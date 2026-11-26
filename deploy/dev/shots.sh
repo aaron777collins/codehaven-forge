@@ -110,7 +110,7 @@ sleep 5
 server_ip=$(docker inspect "$project-server-1" --format "{{(index .NetworkSettings.Networks \"${project}_shots\").IPAddress}}")
 
 mkdir -p "$work" "$out"
-cp "$dir/tests/e2e/e2e_full.py" "$dir/tests/e2e/shoot.mjs" "$dir/tests/e2e/workspace.mjs" "$dir/tests/e2e/livelog.mjs" "$dir/tests/e2e/terminal.mjs" "$work/"
+cp "$dir/tests/e2e/e2e_full.py" "$dir/tests/e2e/shoot.mjs" "$dir/tests/e2e/workspace.mjs" "$dir/tests/e2e/livelog.mjs" "$dir/tests/e2e/terminal.mjs" "$dir/tests/e2e/monaco_worker.mjs" "$work/"
 # playwright-core lives in $CODEHAVEN_SHOTS_NODE_MODULES; shoot.mjs uses `import`, so the work dir
 # needs a package.json that says ESM.
 ln -sfn "$CODEHAVEN_SHOTS_NODE_MODULES" "$work/node_modules"

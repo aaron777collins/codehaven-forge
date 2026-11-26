@@ -1093,6 +1093,17 @@ def step22():
         print("         " + line[:200], flush=True)
     problems = "\n".join(line[:200] for line in p.stderr.strip().splitlines()[:25])
     check(p.returncode == 0, f"the workspace failed in the browser:\n{problems}")
+    # ch-1ke.8: the editor's Worker must start from the asset folder, not fall back to the main
+    # thread. E2E_WORKSPACE_ENGINES picks engines (default chromium; the host has Chrome only).
+    mw = os.environ.get("E2E_MONACO_MJS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "monaco_worker.mjs")
+    if not os.path.exists(mw):
+        check(False, f"{mw} is not here, so the editor's Worker was not checked in a browser")
+    for engine in (os.environ.get("E2E_WORKSPACE_ENGINES") or "chromium").split(","):
+        p = subprocess.run(["node", mw, sess, BASE, PUBLIC, "alice/demo", "ws-check", engine], capture_output=True, text=True, timeout=150)
+        for line in p.stdout.strip().splitlines():
+            print("         " + line[:200], flush=True)
+        problems = "\n".join(line[:300] for line in p.stderr.strip().splitlines()[:25])
+        check(p.returncode == 0, f"the editor's Worker failed in {engine}:\n{problems}")
 
 
 def step23():
@@ -2442,6 +2453,424 @@ def step37():
     check(bp.status in (403, 404), f"a stranger at the workspace: {bp.status}")
 
 
+# ------------------------------------------------------------------ C14: the acceptance rows step 35 did not run (ch-ctk.14)
+
+# Pinned to full commit SHAs, each read from github.com on 2026-11-26 (git ls-remote of the tag).
+A_SETUP_JAVA = "actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880"  # v6.3.0
+A_SETUP_GO = "actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5"  # v7.1.0
+A_SETUP_RUBY = "ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18"  # v1.343.0
+A_SETUP_DOTNET = "actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73"  # v6.1.0
+A_RUST = "dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8"  # v1
+A_CPR = "peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1"  # v8.1.3
+A_NCIPOLLO = "ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd"  # v1.21.0
+A_CACHE_RESTORE = "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"  # the same commit as A_CACHE
+
+# Every workflow but the cache one ignores the second commit on main (it changes only second.txt), so the
+# heavy ones (1 GiB, Postgres, .NET) run once, and the cache workflow runs on both main pushes.
+_C14_RAW = {
+    "java.yml": """name: conf-java
+on: {push: {branches: [main], paths-ignore: ['second.txt']}}
+jobs:
+  java:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: @JAVA@
+        with: {distribution: temurin, java-version: '21'}
+      - run: |
+          mkdir -p j && cd j
+          printf 'public class Hello { public static void main(String[] a) { System.out.println("java-ok " + System.getProperty("java.specification.version")); } }\\n' > Hello.java
+          javac Hello.java
+          java Hello
+""",
+    "go.yml": """name: conf-go
+on: {push: {branches: [main], paths-ignore: ['second.txt']}}
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: @GO@
+        with: {go-version: '1.22'}
+      - run: |
+          mkdir -p g && cd g
+          go mod init hello
+          printf 'package main\\nimport ("fmt"; "runtime")\\nfunc main() { fmt.Println("go-ok", runtime.Version()) }\\n' > main.go
+          go run .
+""",
+    "ruby.yml": """name: conf-ruby
+on: {push: {branches: [main], paths-ignore: ['second.txt']}}
+jobs:
+  ruby:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: @RUBY@
+        with: {ruby-version: '3.3'}
+      - run: |
+          ruby -e 'puts "ruby-ok #{RUBY_VERSION}"'
+""",
+    "dotnet.yml": """name: conf-dotnet
+on: {push: {branches: [main], paths-ignore: ['second.txt']}}
+jobs:
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: @DOTNET@
+        with: {dotnet-version: '8.0.x'}
+      - run: |
+          dotnet new console -o d
+          dotnet run --project d
+          echo "dotnet-ok $(dotnet --version)"
+""",
+    "rust.yml": """name: conf-rust
+on: {push: {branches: [main], paths-ignore: ['second.txt']}}
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: @RUST@
+        with: {toolchain: stable}
+      - run: |
+          cargo new r --bin -q
+          cd r && cargo run -q
+          echo "rust-ok $(rustc --version | cut -d' ' -f2)"
+""",
+    # T4: a 1 GiB file goes up in one job and comes down in the job that needs it, byte for byte.
+    "big.yml": """name: conf-big
+on: {push: {branches: [main], paths-ignore: ['second.txt']}}
+jobs:
+  up:
+    runs-on: ubuntu-latest
+    outputs:
+      sum: ${{ steps.mk.outputs.sum }}
+    steps:
+      - id: mk
+        run: |
+          mkdir -p out/tree/deep
+          head -c 1073741824 /dev/urandom > out/big.bin
+          echo small > out/tree/deep/small.txt
+          echo "sum=$(sha256sum out/big.bin | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: @UPLOAD@
+        with: {name: c14-big, path: out, compression-level: 0}
+  down:
+    needs: up
+    runs-on: ubuntu-latest
+    steps:
+      - uses: @DOWNLOAD@
+        with: {name: c14-big, path: got}
+      - run: |
+          test "$(stat -c %s got/big.bin)" = 1073741824
+          test "$(sha256sum got/big.bin | cut -d' ' -f1)" = "${{ needs.up.outputs.sum }}"
+          test "$(cat got/tree/deep/small.txt)" = small
+          echo "big-artifact-ok"
+""",
+    # T3 and T8: a Postgres service reached by port and by name from a .NET program, then pack and
+    # push to this server's NuGet feed with the job's own token.
+    "services.yml": """name: conf-services
+on: {push: {branches: [main], paths-ignore: ['second.txt']}}
+permissions:
+  contents: read
+  packages: write
+jobs:
+  svc:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: {POSTGRES_PASSWORD: pw}
+        ports: ['5432:5432']
+    steps:
+      - uses: @DOTNET@
+        with: {dotnet-version: '8.0.x'}
+      - run: |
+          set -e
+          mkdir -p svc && cd svc
+          dotnet new console -o app
+          cd app
+          dotnet add package Npgsql --version 8.0.5
+          cat > Program.cs <<'EOF'
+          using Npgsql;
+          foreach (var host in new[] { "localhost", "postgres" })
+          {
+              await using var c = new NpgsqlConnection($"Host={host};Username=postgres;Password=pw;Database=postgres;Timeout=30");
+              for (var i = 0; ; i++)
+              {
+                  try { await c.OpenAsync(); break; }
+                  catch when (i < 30) { await Task.Delay(1000); }
+              }
+              await using var cmd = new NpgsqlCommand("select 41 + 1", c);
+              Console.WriteLine($"query-via-{host}=" + await cmd.ExecuteScalarAsync());
+          }
+          EOF
+          dotnet run
+          cd ..
+          dotnet new classlib -o lib -n Codehaven.Conf
+          dotnet pack lib -c Release -p:PackageVersion=1.2.3 -o out
+          cat > NuGet.Config <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="codehaven" value="${{ github.server_url }}/nuget/alice/index.json" allowInsecureConnections="true" />
+            </packageSources>
+            <packageSourceCredentials>
+              <codehaven>
+                <add key="Username" value="x-access-token" />
+                <add key="ClearTextPassword" value="${{ github.token }}" />
+              </codehaven>
+            </packageSourceCredentials>
+          </configuration>
+          EOF
+          dotnet nuget push out/Codehaven.Conf.1.2.3.nupkg --source codehaven --api-key "$GITHUB_TOKEN"
+          echo "nuget-push-ok"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+""",
+    # T5: the cache read order. `m` is saved on main and read by a pull request. `p` is saved by a
+    # pull request, and main must not see it. A fork's pull request reads and saves nothing.
+    "cache-order.yml": """name: conf-cache-order
+on:
+  push: {branches: [main]}
+  pull_request: {branches: [main]}
+jobs:
+  c:
+    runs-on: ubuntu-latest
+    steps:
+      - id: m
+        uses: @CACHE@
+        with: {path: cm, key: c14-from-main}
+      - id: p
+        if: github.event_name == 'pull_request'
+        uses: @CACHE@
+        with: {path: cp, key: c14-from-pr}
+      - id: q
+        if: github.event_name == 'push'
+        uses: @CACHE_RESTORE@
+        with: {path: cq, key: c14-from-pr}
+      - run: |
+          mkdir -p cm cp cq
+          date > cm/stamp
+          date > cp/stamp
+          echo "event=${{ github.event_name }} m-hit=[${{ steps.m.outputs.cache-hit }}] p-hit=[${{ steps.p.outputs.cache-hit }}] q-hit=[${{ steps.q.outputs.cache-hit }}]"
+""",
+    # Section 4: peter-evans/create-pull-request. It checks out, commits and pushes a branch with the job's token,
+    # then asks the API over https://<host>/api/v3 whatever the server's own scheme (it hard-codes https), so on
+    # this http-only throwaway stack that last call must fail with a TLS error, and the pull request is opened by
+    # the same REST call from the harness. Behind TLS it is one run.
+    "create-pr.yml": """name: conf-create-pr
+on: {push: {branches: [main], paths-ignore: ['second.txt']}}
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  cpr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: @CHECKOUT@
+      - run: echo "generated" > generated.txt
+      - uses: @CPR@
+        with:
+          branch: auto/generated
+          base: main
+          title: made by create-pull-request
+          body: c14
+          commit-message: generated file
+""",
+    # Section 4: ncipollo/release-action, a tag push.
+    "release-action.yml": """name: conf-release-action
+on: {push: {tags: ['r*']}}
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: @CHECKOUT@
+      - run: mkdir dist && echo hello-ncipollo > dist/ncipollo.txt
+      - uses: @NCIPOLLO@
+        with: {artifacts: 'dist/*', generateReleaseNotes: true}
+""",
+}
+
+
+def _c14_files():
+    pins = {"@JAVA@": A_SETUP_JAVA, "@GO@": A_SETUP_GO, "@RUBY@": A_SETUP_RUBY, "@DOTNET@": A_SETUP_DOTNET, "@RUST@": A_RUST,
+            "@UPLOAD@": A_UPLOAD, "@DOWNLOAD@": A_DOWNLOAD, "@CACHE@": A_CACHE, "@CACHE_RESTORE@": A_CACHE_RESTORE,
+            "@CHECKOUT@": A_CHECKOUT, "@CPR@": A_CPR, "@NCIPOLLO@": A_NCIPOLLO}
+    out = {"marker.txt": "marker\n"}
+    for name, text in _C14_RAW.items():
+        for k, v in pins.items():
+            text = text.replace(k, v)
+        out[f".codehaven/workflows/{name}"] = text
+    return out
+
+
+def step38():
+    """ch-ctk.14: the acceptance rows step 35 did not run, with real actions at pinned SHAs. T2: setup-java,
+    setup-go, setup-ruby, setup-dotnet and dtolnay/rust-toolchain each build a hello project. T4: a 1 GiB
+    artifact up and down with equal sha256 (and a small tree beside it). T3 and T8: a Postgres service
+    reached by port and by name from a .NET program, then `nuget push` with the job token. T5: the cache
+    read order (a pull request reads main's and cannot write main's; a fork's pull request reads and
+    writes nothing). Section 4: ncipollo/release-action and peter-evans/create-pull-request. Needs
+    SHOTS_JOBS_REACH_SERVER=1 and the internet, like step 35."""
+    a, tok = Client("10.9.2.4"), S["alice_token"]
+    bobtok = S["bob_token"]
+    r = a.api("POST", "/user/repos", js={"name": "c14", "visibility": "internal"}, auth=tok)
+    check(r.status == 201, f"create c14: {r.status} {r.text[:200]}")
+    wd = os.path.join(WORK, "c14")
+    os.makedirs(os.path.join(wd, ".codehaven/workflows"))
+    git(["init", "-q", "-b", "main"], wd)
+    files = _c14_files()
+    for path, text in files.items():
+        open(os.path.join(wd, path), "w").write(text)
+    git(["add", "marker.txt"], wd)
+    git(["commit", "-q", "-m", "A first commit"], wd)
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "Conformance workflows"], wd)
+    git(["push", http_url("alice", tok, "alice/c14"), "main"], wd, env=gitenv("10.9.2.4"))
+    sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    names = ["conf-java", "conf-go", "conf-ruby", "conf-dotnet", "conf-rust", "conf-big", "conf-services", "conf-cache-order", "conf-create-pr"]
+    t0 = time.time()
+    done = c13_wait(a, tok, "c14", sha, names, 40)
+    check(set(names) <= set(done), f"runs that did not finish: {sorted(set(names) - set(done))}")
+    logs = {n: c13_log(a, tok, "c14", done[n]) for n in names}
+    failed = []
+
+    def expect(name, needles, why="", ok=True):
+        conclusion = done[name].get("conclusion")
+        miss = [n for n in needles if n not in logs[name]]
+        if conclusion != ("success" if ok else "failure") or miss:
+            failed.append(f"{name}: conclusion {conclusion}, missing {miss}. {why}\n{logs[name][-2500:]}")
+
+    expect("conf-java", ["java-ok 21"])
+    expect("conf-go", ["go-ok go1.22"])
+    expect("conf-ruby", ["ruby-ok 3.3"])
+    expect("conf-dotnet", ["Hello, World!", "dotnet-ok 8.0"])
+    expect("conf-rust", ["Hello, world!", "rust-ok 1."])
+    expect("conf-big", ["big-artifact-ok"], "1 GiB up and down with equal sha256")
+    expect("conf-services", ["query-via-localhost=42", "query-via-postgres=42", "nuget-push-ok"], "a service by port and by name, and the feed")
+    expect("conf-cache-order", ["event=push m-hit=[false]"], "the first run on main finds nothing")
+    expect("conf-create-pr", ["Pushing pull request branch to 'origin/auto/generated'", "Attempting creation of pull request", "wrong version number"],
+           "the branch is pushed with the job token, and the action's https-only API call fails on an http stack", ok=False)
+    check(not failed, "conformance failures:\n" + "\n\n".join(failed))
+    print(f"         {len(names)} workflows of real actions finished in {int(time.time() - t0)} s", flush=True)
+
+    # T3: the package is in the feed.
+    c = Client("10.9.2.5")
+    alice = S["alice"]
+    r = alice.req("POST", "/settings/tokens", form={"_csrf": alice.csrf("/settings/tokens"), "name": "c14pull", "scopes": ["read:packages"], "expires_in_days": "30"})
+    m = re.search(r"chp_[A-Za-z0-9]{40}", r.text)
+    check(r.status == 200 and m, f"a packages token: {r.status}")
+    basic = "Basic " + base64.b64encode(f"alice:{m.group(0)}".encode()).decode()
+    ix = c.req("GET", "/nuget/alice/flatcontainer/codehaven.conf/index.json", auth=basic, cookies=False)
+    check(ix.status == 200 and "1.2.3" in ix.text, f"the pushed package is not in the feed: {ix.status} {ix.text[:200]}")
+    # Section 4: what create-pull-request did before its https-only call: the branch is in the repository with
+    # the generated file. The pull request it would open is the REST call it makes, with the job's own kind of token.
+    br = a.api("GET", "/repos/alice/c14/branches/auto/generated", auth=tok)
+    check(br.status == 200, f"create-pull-request's branch is not pushed: {br.status} {br.text[:200]}")
+    fc = a.api("GET", "/repos/alice/c14/contents/generated.txt?ref=auto/generated", auth=tok)
+    check(fc.status == 200, f"generated.txt is not on the branch: {fc.status}")
+    mk = a.api("POST", "/repos/alice/c14/pulls", js={"title": "made by create-pull-request", "head": "auto/generated", "base": "main", "body": "c14", "draft": False}, auth=tok)
+    check(mk.status == 201, f"the pull request call: {mk.status} {mk.text[:200]}")
+    prs = a.api("GET", "/repos/alice/c14/pulls?state=open", auth=tok).json()
+    cpr = [p for p in prs if p["title"] == "made by create-pull-request"]
+    check(len(cpr) == 1 and cpr[0]["head"]["ref"] == "auto/generated", f"the pull request from create-pull-request: {[(p['title'], p['head']['ref']) for p in prs]}")
+
+    # T5: a pull request reads main's cache and writes its own.
+    git(["checkout", "-q", "-b", "feat"], wd)
+    open(os.path.join(wd, "feat.txt"), "w").write("feat\n")
+    git(["add", "feat.txt"], wd)
+    git(["commit", "-q", "-m", "A change"], wd)
+    git(["push", http_url("alice", tok, "alice/c14"), "feat"], wd, env=gitenv("10.9.2.4"))
+    feat_sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    pr = a.api("POST", "/repos/alice/c14/pulls", js={"title": "feature", "head": "feat", "base": "main"}, auth=tok)
+    check(pr.status == 201, f"open the pull request: {pr.status} {pr.text[:200]}")
+    pr_no = pr.json()["number"]
+    d2 = c13_wait(a, tok, "c14", feat_sha, ["conf-cache-order"], 10)
+    check("conf-cache-order" in d2, "the pull request's cache run did not finish")
+    lg = c13_log(a, tok, "c14", d2["conf-cache-order"])
+    check(d2["conf-cache-order"].get("conclusion") == "success", f"the pull request's cache run failed:\n{lg[-1500:]}")
+    check("event=pull_request m-hit=[true] p-hit=[false]" in lg, f"a pull request must read main's cache and find none of its own:\n{lg[-1500:]}")
+
+    # Main again: what the pull request saved is not main's.
+    git(["checkout", "-q", "main"], wd)
+    open(os.path.join(wd, "second.txt"), "w").write("second\n")
+    git(["add", "second.txt"], wd)
+    git(["commit", "-q", "-m", "A second commit on main"], wd)
+    git(["push", http_url("alice", tok, "alice/c14"), "main"], wd, env=gitenv("10.9.2.4"))
+    main2 = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    d3 = c13_wait(a, tok, "c14", main2, ["conf-cache-order"], 10)
+    check("conf-cache-order" in d3, "the second main run did not finish")
+    lg = c13_log(a, tok, "c14", d3["conf-cache-order"])
+    check("event=push m-hit=[true] p-hit=[] q-hit=[false]" in lg, f"main must read its own cache and never the pull request's:\n{lg[-1500:]}")
+
+    # A fork's pull request: reads, and writes nothing.
+    f = Client("10.9.2.5").api("POST", "/repos/alice/c14/forks", js={}, auth=bobtok)
+    check(f.status in (200, 201, 202), f"fork: {f.status} {f.text[:200]}")
+    fwd = os.path.join(WORK, "c14-bob")
+    git(["clone", "-q", http_url("bob", bobtok, "bob/c14"), fwd], WORK)
+    git(["checkout", "-q", "-b", "fork-feat"], fwd)
+    open(os.path.join(fwd, "fork.txt"), "w").write("fork\n")
+    git(["add", "fork.txt"], fwd)
+    git(["commit", "-q", "-m", "A fork change"], fwd)
+    git(["push", "-q", "origin", "fork-feat"], fwd)
+    fork_sha = git(["rev-parse", "HEAD"], fwd).stdout.strip()
+    fpr = Client("10.9.2.5").api("POST", "/repos/alice/c14/pulls", js={"title": "from a fork", "head": "bob:fork-feat", "base": "main"}, auth=bobtok)
+    check(fpr.status == 201, f"open the fork's pull request: {fpr.status} {fpr.text[:200]}")
+    fno = fpr.json()["number"]
+    # The run of a fork's commit waits for someone with write access to approve it, unless this repository let it
+    # run at once (409: nothing was waiting). Ask again while the run is not there: the event is handled a moment
+    # after the pull request is opened.
+    d4 = {}
+    for _ in range(6):
+        ap = a.api("POST", f"/repos/alice/c14/actions/pulls/{fno}/approval", js={"head_sha": fork_sha}, auth=tok)
+        check(ap.status in (200, 201, 202, 204, 409), f"approve the fork's commit: {ap.status} {ap.text[:200]}")
+        d4 = c13_wait(a, tok, "c14", fork_sha, ["conf-cache-order"], 2)
+        if "conf-cache-order" in d4:
+            break
+    if "conf-cache-order" not in d4:
+        seen = a.api("GET", "/repos/alice/c14/actions/runs?per_page=100", auth=tok).json().get("workflow_runs", [])
+        state = a.api("GET", f"/repos/alice/c14/actions/pulls/{fno}/approval", auth=tok)
+        check(False, f"the fork's cache run did not finish (fork head {fork_sha[:10]}). Approval: {state.status} {state.text[:300]}. Runs: "
+                     + "; ".join(f"{x['name']}/{x['event']}/{x['status']}/{x.get('conclusion')}/{x['head_sha'][:10]}" for x in seen[:14]))
+    lg = c13_log(a, tok, "c14", d4["conf-cache-order"])
+    check(d4["conf-cache-order"].get("conclusion") == "success", f"the fork's cache run failed:\n{lg[-1800:]}")
+    check("event=pull_request m-hit=[true]" in lg, f"a fork's pull request must still read main's cache:\n{lg[-1500:]}")
+    caches = a.api("GET", "/repos/alice/c14/actions/caches?per_page=100", auth=tok).json()["actions_caches"]
+    seen = sorted((x["key"], x["ref"]) for x in caches)
+    check(("c14-from-main", "refs/heads/main") in seen, f"main's cache is not under main: {seen}")
+    check(("c14-from-pr", f"refs/pull/{pr_no}/merge") in seen, f"the pull request's cache is not under its own ref: {seen}")
+    check(not [x for x in seen if f"refs/pull/{fno}/" in x[1]], f"a fork's pull request wrote a cache: {seen}")
+    check(not [x for x in seen if x[0] == "c14-from-main" and x[1] != "refs/heads/main"], f"main's cache key was written under another ref: {seen}")
+
+    # Section 4: ncipollo/release-action, a tag push. It is not on the seed list of allowed actions, so a site
+    # admin allows it in Site admin > Actions, as the failed run says to.
+    ops = S["root"]
+    pol = ops.get("/admin/actions")
+    check(pol.status == 200, f"the Actions policy page: {pol.status}")
+    m = re.search(r'<textarea[^>]*name="allow"[^>]*>(.*?)</textarea>', pol.text, re.S)
+    check(m, "the policy page has no allow list")
+    import html as htmllib
+    allow = htmllib.unescape(m.group(1)).strip()
+    check("ncipollo/release-action" not in allow, "ncipollo/release-action is already allowed")
+    form = {"mode": "selected", "allow": allow + "\nncipollo/release-action", "block": "", "allow_codehaven_repos": "1"}
+    if 'name="require_sha" value="1" checked' in pol.text or re.search(r'name="require_sha"[^>]*checked', pol.text):
+        form["require_sha"] = "1"
+    sv = ops.post_form("/admin/actions", form, page="/admin/actions")
+    check(sv.status in (200, 303), f"save the policy: {sv.status} {sv.text[:300]}")
+    git(["checkout", "-q", "main"], wd)
+    git(["tag", "r0.3.0"], wd)
+    git(["push", http_url("alice", tok, "alice/c14"), "r0.3.0"], wd, env=gitenv("10.9.2.4"))
+    tag_sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    rd = c13_wait(a, tok, "c14", tag_sha, ["conf-release-action"], 10)
+    check("conf-release-action" in rd, "the release-action workflow did not finish")
+    rl = c13_log(a, tok, "c14", rd["conf-release-action"])
+    check(rd["conf-release-action"].get("conclusion") == "success", f"ncipollo/release-action failed:\n{rl[-2500:]}")
+    rel = a.api("GET", "/repos/alice/c14/releases/tags/r0.3.0", auth=tok)
+    check(rel.status == 200, f"the release does not exist: {rel.status} {rel.text[:200]}")
+    rj = rel.json()
+    check([x["name"] for x in rj["assets"]] == ["ncipollo.txt"], f"the release files: {[x['name'] for x in rj['assets']]}")
+    check((rj.get("body") or "").strip() != "", "generateReleaseNotes left the notes empty")
+    print(f"         c14 finished in {int(time.time() - t0)} s", flush=True)
+
 ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1), (2, "first admin and two-factor", step2),
        (3, "invites", step3), (4, "token and ssh key", step4), (5, "rate limit and lockout", step5), (6, "create repo", step6),
        (7, "push over HTTP", step7), (8, "push over SSH", step8), (9, "collaborator and clone", step9),
@@ -2462,7 +2891,8 @@ ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1)
        (34, "ch-2fc: the pull command on the package page is one docker accepts, and pulls", step34),
        (35, "ch-ctk.9: real actions at pinned SHAs (checkout, setup-node, setup-python, cache, artifacts, github-script, release) and two that must fail clearly", step35),
        (36, "ch-ctk.9: what a job tries with its own token, and what stays out of its reach", step36),
-       (37, "ch-1ke.3: the workspace run panel on a live runner: dispatch, state and a live log stream (needs step 35's repository)", step37)]
+       (37, "ch-1ke.3: the workspace run panel on a live runner: dispatch, state and a live log stream (needs step 35's repository)", step37),
+       (38, "ch-ctk.14: setup-java, -go, -ruby, -dotnet and rust-toolchain, a 1 GiB artifact, Postgres service and nuget push, cache read order with a fork, release-action and create-pull-request (needs SHOTS_JOBS_REACH_SERVER=1 and the internet)", step38)]
 
 
 THROWAWAY_PROJECT = re.compile(r"^(test|e2e|shots|tmp)-[a-z0-9][a-z0-9-]*$")

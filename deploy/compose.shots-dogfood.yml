@@ -4,6 +4,8 @@
 # connections to that one address and port. Nothing else about the guard changes.
 services:
   server:
+    # A 1 GiB artifact (e2e step 38) lands in the data directory, which is memory here (tmpfs).
+    mem_limit: 5g
     environment:
       CODEHAVEN__SERVER__EXTERNAL_URL: http://${SHOTS_SERVER_RUNNERS_IP:?set by deploy/dev/shots.sh}:3200
     networks:

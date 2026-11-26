@@ -337,6 +337,21 @@ async fn a_version_is_written_once_and_a_bad_package_is_refused(pool: PgPool) {
     assert_eq!(n, 1);
 }
 
+/// ch-ctk.14: `dotnet nuget push` takes the PackagePublish address from the service index
+/// (`.../push`) and puts to it with a slash added (`.../push/`). A route for the bare address only
+/// answered 404 to every real client, and the hand-made pushes of the other tests never showed it.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_push_to_the_address_with_the_slash_a_client_adds_is_accepted(pool: PgPool) {
+    let r = Reg::new(pool).await;
+    user(&r, "alice").await;
+    let pkg = nupkg(&spec("Acme.Slash", "1.0.0"), &[("lib/net8.0/Acme.Slash.dll", b"MZ-not-really")]);
+    let (body, ct) = form(&pkg);
+    let put = r.req(reqwest::Method::PUT, "/nuget/alice/push/", "pkg-alice", body, Some(&ct)).await;
+    assert_eq!(put.status, 201, "{}", String::from_utf8_lossy(&put.body));
+    let v = r.get("/nuget/alice/flatcontainer/acme.slash/index.json", "pull-alice").await;
+    assert_eq!(v.json()["versions"], json!(["1.0.0"]));
+}
+
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
 async fn who_may_read_and_who_may_push(pool: PgPool) {
     let r = Reg::new(pool).await;

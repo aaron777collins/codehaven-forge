@@ -269,7 +269,7 @@ Unlisting hides a version from search; asking for it by version still restores i
 ### Real actions, proven (ch-ctk.9)
 
 Real, unmodified actions from GitHub, pinned to full commit SHAs, run on a real runner in the e2e harness
-(steps 35 to 37, `SHOTS_JOBS_REACH_SERVER=1`, which gives the throwaway server an address jobs can reach). On
+(steps 35 to 38, `SHOTS_JOBS_REACH_SERVER=1`, which gives the throwaway server an address jobs can reach). On
 2026-11-26, from a clean stack, the ten workflows of step 35 finished in 36 seconds (the whole step, with two re-runs
 and the release, in 61), step 36 in 6 and step 37 in 9. Versions as pinned: checkout 3d3c42e, setup-node 949feb2,
 setup-python 6d4fd22, cache 55cc834, upload-artifact cf430e0, download-artifact 9000827, github-script 3a2844b,
@@ -287,6 +287,27 @@ Ubuntu 24.04 to `setup-python`.
 | `softprops/action-gh-release` | create, upload by `upload_url`, generated notes, digests; a re-run of the job replaces its files, makes no second release and starts no run |
 | `docker/setup-buildx-action`, `docker/login-action`, `docker/build-push-action` | fail at once with "failed to connect to the docker API at unix:///var/run/docker.sock": jobs have no Docker daemon (see below) |
 | `actions/deploy-pages` | fails at once with "Unable to get ACTIONS_ID_TOKEN_REQUEST_URL env variable" and "Ensure GITHUB_TOKEN has permission id-token: write": it needs OIDC and the Pages API |
+
+Step 38 runs the rows step 35 left out (ch-ctk.14), the same way, at pinned commits: setup-java 6.3.0 (d1374f8),
+setup-go 7.1.0 (d8cbb80), ruby/setup-ruby 1.343.0 (be3c7df), setup-dotnet 6.1.0 (0f4a354), dtolnay/rust-toolchain
+v1 (683b588), peter-evans/create-pull-request 8.1.3 (3ffccac), ncipollo/release-action 1.21.0 (339a818).
+
+| Row | What the step checks |
+| --- | --- |
+| setup-java, -go, -ruby, -dotnet, rust-toolchain | each builds and runs a hello project, and the version asked for is the version that runs |
+| 1 GiB artifact | a 1 GiB file and a small tree go up in one job and come down in the job that needs it, with equal sha256 and size |
+| Postgres service | a .NET program reaches `postgres:17-alpine` at `localhost:5432` and at `postgres:5432` and gets 42 back |
+| `dotnet nuget push` | the package is packed in the job and pushed to this server's NuGet feed with the job's own token; the feed lists it |
+| cache read order | main saves a cache; a pull request restores it and saves its own under `refs/pull/N/merge`; main never sees the pull request's; a fork's pull request reads main's and saves nothing |
+| `ncipollo/release-action` | a tag push creates the release with the file and generated notes |
+| `peter-evans/create-pull-request` | checks out, commits and pushes `auto/generated` with the job token. The pull request call is the one thing it cannot do here: the action always speaks `https://<host>/api/v3`, so on the http-only throwaway stack it ends with a TLS error, which the step expects, and the same REST call is made by the harness. Behind TLS it is one run |
+
+What this found: `dotnet nuget push` puts to the PackagePublish address with a slash added (`/nuget/{owner}/push/`),
+which answered 404 until the route was added; the job image now installs ICU explicitly, which the .NET SDK needs, and its
+`/etc/os-release` said Debian, which made `setup-ruby` treat the job as self-hosted and refuse to download a Ruby
+(the image now says Ubuntu 24.04 there as it already did in `/etc/lsb-release`, and keeps the real userland in
+`PRETTY_NAME`). Two more are the NuGet client's: it needs the token in the source's credentials as well as `--api-key`
+because the service index is private, and an http source needs `allowInsecureConnections` in `NuGet.Config`.
 
 What does not work, by design, and says so instead of hanging: anything that needs a Docker daemon inside the
 job (`docker build`, buildx, `docker login`, Docker container actions; use a `docker://image` step or a `run:`

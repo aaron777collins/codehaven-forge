@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod surface;
+
 pub const WORKSPACE_ROUTES: &[(&str, &str, &str, bool)] = &[
     ("GET", "/{owner}/{repo}/workspace", "read", false),
     ("GET", "/{owner}/{repo}/workspace/assets/{build}/{*file}", "read", false),

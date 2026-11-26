@@ -384,16 +384,21 @@ export async function createEditor(session, layout, opts) {
       document.head.append(s);
     });
     const LANGUAGE_WORKERS = new Set(["typescript", "javascript", "json", "css", "scss", "less", "html", "handlebars", "razor"]);
+    window.require.config({ paths: { vs } });
+    monaco = await new Promise((resolve, reject) => window.require(["vs/editor/editor.main"], () => resolve(window.monaco), reject));
+    // Set AFTER editor.main has loaded, never before: editor.main assigns its own
+    // `self.MonacoEnvironment` while it loads, and its getWorker wraps every Worker in a blob:
+    // script. The page's Trusted Types policy refuses a blob: address, so in every browser Monaco
+    // then gave up on the Worker and ran the editor service on the main thread (ch-1ke.8). Monaco
+    // reads this lazily, at the first model, so replacing it here is in time.
     self.MonacoEnvironment = {
       getWorker(_id, label) {
-        // Only the editor's own worker. Language service workers are not shipped, and Monaco's
-        // fallback (a blob: worker) is refused by the Trusted Types policy.
+        // Only the editor's own worker, started from the asset folder the policy allows. The
+        // language service workers are not shipped.
         if (LANGUAGE_WORKERS.has(String(label).toLowerCase())) throw new Error("No worker for " + label);
         return new Worker(vs + "/assets/editor.worker-_vAIFJDs.js", { name: String(label) });
       },
     };
-    window.require.config({ paths: { vs } });
-    monaco = await new Promise((resolve, reject) => window.require(["vs/editor/editor.main"], () => resolve(window.monaco), reject));
 
     const ns = (n) => monaco[n] || (monaco.languages && monaco.languages[n]);
     const off = (d) => { if (d && d.setModeConfiguration) d.setModeConfiguration({}); };

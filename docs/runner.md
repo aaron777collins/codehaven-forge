@@ -178,7 +178,10 @@ What `GITHUB_TOKEN` may do follows the workflow's `permissions:` (ch-ctk.8). Wit
 contents and packages. `contents: write` pushes, tags and makes releases; `statuses: write`
 posts commit statuses; `issues` or `pull-requests: write` opens and comments on issues and pull
 requests (one scope here); `packages: write` pushes images linked to the job's own repository.
-Naming any scope sets the others to none, and a job's block replaces the workflow's. Writes are
+Naming any scope sets the others to none, and a job's block replaces the workflow's. `contents: write` is write
+permission on the job's own repository for everything its API does, so a job with it can also open issues, add labels
+and edit pull requests as that account (`tests/access/matrix.job_write.txt` records it). Anyone who can write the
+workflow could do the same with a token of their own. Writes are
 made as the `codehaven-actions` account, which cannot sign in, go through branch protection with
 no bypass, never change workflow files and start no workflow. A repository admin can cap every
 token at read (Settings > Secrets, or `PUT /repos/{o}/{r}/actions/permissions/workflow`). A pull

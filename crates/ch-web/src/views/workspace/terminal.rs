@@ -187,6 +187,11 @@ mod tests {
         assert!(!doc.csp.contains("allow-same-origin") && !doc.csp.contains("unsafe-eval") && !doc.csp.contains("wasm"));
         assert!(script.contains("new Terminal("), "xterm is inlined");
         assert!(script.find("History.prototype").unwrap() < script.find("new Terminal(").unwrap(), "the lock runs first");
+        // Firefox and WebKit ignore the iframe's `allow` list for the clipboard, and WebKit allows a
+        // SharedWorker in a sandboxed frame, so the lock script removes both (ch-1ke.10).
+        let lock_end = script.find("new Terminal(").unwrap();
+        assert!(script[..lock_end].contains("Navigator.prototype, \"clipboard\""), "the clipboard is locked away before xterm");
+        assert!(script[..lock_end].contains("\"SharedWorker\""), "SharedWorker is locked away before xterm");
         assert!(!doc.html.contains("sourceMappingURL"), "no source map is asked for");
     }
 

@@ -152,10 +152,40 @@ bash deploy/dev/host.sh <stream> 'SHOTS_STEPS=0-4,26 SHOTS_DOGFOOD=1 SHOTS_NO_SH
 images. The real-actions steps (35 and 36) need it, and the internet, because the server fetches each action from
 GitHub: `SHOTS_STEPS=0-4,35,36 SHOTS_JOBS_REACH_SERVER=1 SHOTS_NO_SHOTS=1 bash deploy/dev/shots.sh --tag shots-mine`.
 
+Step 38 (the acceptance rows step 35 does not run: setup-java, setup-go, setup-ruby, setup-dotnet and
+rust-toolchain, a 1 GiB artifact, a Postgres service reached by port and by name with a `nuget push` using the job
+token, the cache read order including a fork's pull request, ncipollo/release-action and
+peter-evans/create-pull-request) runs the same way and needs the same two things: `SHOTS_STEPS=0-4,38`. The
+throwaway server gets 5 GiB of memory for it, because its data directory is memory there.
+
 `SHOTS_DOGFOOD=1` loads the builder and Postgres images into the stack's daemon, gives the server a
 fixed address on the runners network (`deploy/compose.shots-dogfood.yml`) and tells the daemon's
 guard (`GUARD_ALLOW`, never set by the production compose file) to let jobs reach that one address
 and port, because a throwaway server has no public https name.
+
+## The access matrix
+
+`tests/access/` holds what each credential reaches, as committed tables. The signed-out tables
+(`anonymous.*.txt`) are checked by `public_surface.rs`. Every other credential has one
+file (`matrix.<credential>.txt`), checked by `access_matrix.rs`: one row per route and method with six
+cells, for a private, an internal and a public repository, each with the owner's contribution limit off and on.
+`.` is refused, `v` is answered but the request was not valid, `r` is answered and no row or ref changed, `w` is
+answered and a row or ref changed. `matrix.routes.txt` lists every route the router registers, and a route
+that is not in it fails the build, so a new route cannot arrive without someone reading what each credential does
+with it.
+
+When a route changes on purpose, regenerate the tables and read the diff before committing it:
+
+```sh
+CH_FETCH=tests/access/.gen bash deploy/dev/remote.sh <stream> \
+  'CH_MATRIX_OUT=/work/tests/access/.gen cargo nextest run -p codehaven --test access_matrix --no-fail-fast'
+python3 tests/access/merge_matrix.py tests/access/.gen
+```
+
+Besides the tables, the test fails whatever they say when a request answers 5xx, when a GET changes a row, when an
+account with no grant changes anything but issues, comments, reviews, stars and watches, when the contribution limit
+does not hold, when a read-only credential writes, and when a private repository answers a credential with no right
+to it differently from one that does not exist.
 
 ## Backups
 

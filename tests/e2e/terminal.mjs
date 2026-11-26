@@ -186,9 +186,21 @@ await run(page, 'curl https://example.com', 'command not found');
 // T3: an unsaved edit in the editor is in the shell.
 await page.locator('.ws-row-main', { hasText: 'a.ts' }).first().click();
 await page.waitForSelector('.monaco-editor .view-lines', { timeout: 30000 });
+// The file arrives after the editor is there; typing before that lands in an empty model.
+// page.waitForFunction evaluates a string, which the workspace's CSP refuses in Chromium, so poll
+// with page.evaluate, which does not.
+{
+  const end = Date.now() + 30000;
+  for (;;) {
+    const loaded = await page.evaluate(() => !!window.monaco?.editor.getEditors()[0]?.getValue().includes('interface Item')).catch(() => false);
+    if (loaded) break;
+    if (Date.now() > end) throw new Error('the file never reached the editor');
+    await sleep(250);
+  }
+}
 await page.click('.monaco-editor .view-lines');
-await page.keyboard.press('Control+Home');
-await page.keyboard.press('Meta+ArrowUp').catch(() => {});
+// To the start of the file by Monaco's own call, since the key for that differs between systems.
+await page.evaluate(() => { const e = window.monaco.editor.getEditors()[0]; e.setPosition({ lineNumber: 1, column: 1 }); e.focus(); });
 await page.keyboard.type('// EDITED IN THE EDITOR\n');
 await sleep(2600); // the draft is kept after one second, then pushed to the terminal after one more
 await termFrame(page)?.click('.xterm').catch(() => {});
@@ -305,6 +317,11 @@ const probe = await termFrame(page).evaluate(async (O) => {
   await tryIt('websocket', () => new Promise((res, rej) => { const w = new WebSocket(O.replace('https', 'wss') + '/x'); w.onopen = () => res('open'); w.onerror = rej; setTimeout(rej, 1500); }));
   await tryIt('open', () => { const w = window.open(O); if (!w) throw new Error('null'); return 'window'; });
   await tryIt('rtc', () => { if (typeof RTCPeerConnection !== 'function') throw new Error('gone'); return new RTCPeerConnection(); });
+  // ch-1ke.10: Firefox and WebKit ignore the frame's `allow` list for the clipboard and let a
+  // sandboxed frame create a SharedWorker. The frame's lock script removes both.
+  await tryIt('clipboard', async () => { if (navigator.clipboard === undefined) throw new Error('gone'); await navigator.clipboard.writeText('x'); return 'wrote'; });
+  await tryIt('clipboard object', () => { if (navigator.clipboard === undefined && typeof ClipboardItem === 'undefined') throw new Error('gone'); return 'present'; });
+  await tryIt('sharedworker', () => { if (typeof SharedWorker !== 'function') throw new Error('gone'); new SharedWorker(URL.createObjectURL(new Blob(['1'], { type: 'text/javascript' }))); return 'made'; });
   await tryIt('history', () => { history.back(); history.go(-2); history.pushState({}, '', '/x'); return location.href.endsWith('/terminal') ? (() => { throw new Error('kept'); })() : location.href; });
   // A nested frame is blocked by frame-src 'none': whatever error page loads is not readable.
   await tryIt('iframe', () => new Promise((res, rej) => { const f = document.createElement('iframe'); f.src = O + '/api/v3/user'; f.onload = () => { let d = null; try { d = f.contentDocument; } catch { /* opaque */ } if (d && d.body && d.body.textContent.trim()) res('read ' + d.body.textContent.slice(0, 20)); else rej(); }; document.body.append(f); setTimeout(rej, 1500); }));
