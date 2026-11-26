@@ -120,6 +120,46 @@ async fn a_branch_filter_fails_a_job_from_another_branch_without_asking_anyone(p
     assert_eq!(w.jobs(run2).await[0].1, "waiting");
 }
 
+/// ch-b30: a tag named like the filtered branch is not that branch. A writer who cannot push to a
+/// protected `main` must not get a deploy by pushing a tag `main` at some other commit.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_tag_named_like_the_filtered_branch_does_not_pass_the_branch_filter(pool: PgPool) {
+    let s = setup(pool, EnvironmentDraft { wait_minutes: 0, branches: vec!["main".into()], reviewers: vec![] }).await;
+    let w = &s.w;
+    s.git.git(&["tag", "main", "HEAD"]);
+    let run = *w.push_ref(s.repo, &s.git, "refs/tags/main", "main").await.last().unwrap();
+    assert_eq!(w.run_status(run).await.1.as_deref(), Some("failure"), "the tag main is not the branch main");
+    let (secrets_seen, gates): (i64, i64) = (
+        sqlx::query_scalar("SELECT count(*) FROM workflow_jobs WHERE run_id = $1 AND status <> 'completed'")
+            .bind(run)
+            .fetch_one(w.pool())
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM deployment_gates").fetch_one(w.pool()).await.unwrap(),
+    );
+    assert_eq!((secrets_seen, gates), (0, 0), "no job was left to be claimed and no gate was made");
+    let r = w.runner("r", &["x"]).await;
+    assert!(r.request(w, 0).await.is_none(), "nothing for a runner to take, so no secret leaves");
+    // The branch itself still deploys.
+    let run2 = *w.push(s.repo, &s.git, "main", None).await.last().unwrap();
+    assert_ne!(w.run_status(run2).await.1.as_deref(), Some("failure"));
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_tags_pattern_lets_a_matching_tag_deploy_and_nothing_else_by_that_name(pool: PgPool) {
+    let s = setup(pool, EnvironmentDraft { wait_minutes: 0, branches: vec!["tags/v*".into()], reviewers: vec![UserId(-1)] }).await;
+    let w = &s.w;
+    s.git.git(&["tag", "v1", "HEAD"]);
+    s.git.git(&["tag", "x1", "HEAD"]);
+    let held = *w.push_ref(s.repo, &s.git, "refs/tags/v1", "v1").await.last().unwrap();
+    assert_eq!(w.jobs(held).await[0].1, "waiting", "v1 matches tags/v*, so it waits for its reviewer");
+    let refused = *w.push_ref(s.repo, &s.git, "refs/tags/x1", "x1").await.last().unwrap();
+    assert_eq!(w.run_status(refused).await.1.as_deref(), Some("failure"));
+    // The branch main is not a tag, so the same filter refuses it.
+    let branch = *w.push(s.repo, &s.git, "main", None).await.last().unwrap();
+    assert_eq!(w.run_status(branch).await.1.as_deref(), Some("failure"));
+}
+
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
 async fn a_wait_timer_holds_the_job_until_it_runs_out(pool: PgPool) {
     let s = setup(pool, EnvironmentDraft { wait_minutes: 10, branches: vec![], reviewers: vec![] }).await;

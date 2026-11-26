@@ -74,6 +74,16 @@ pub struct TwoFactorOn {
     pub session: NewSession,
 }
 
+/// A passkey was added. `recovery_codes` and `session` are set only when it was the account's
+/// first second factor (two-factor is on now, every session ended, and the page must set the new
+/// cookie in the same response).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasskeyOn {
+    pub passkey: crate::identity::PasskeyInfo,
+    pub recovery_codes: Vec<String>,
+    pub session: Option<NewSession>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkPeek {
     pub username: String,
@@ -93,6 +103,22 @@ pub trait Sessions: Send + Sync {
     async fn sign_in(&self, username: &str, password: &str, client: &ClientInfo) -> Result<SignInOutcome>;
     /// Step two. `code` is a TOTP code or a recovery code.
     async fn complete_two_factor(&self, pending: &str, code: &str, client: &ClientInfo) -> Result<Option<NewSession>>;
+    /// Which second factors the pending sign-in can answer with. `None` for a pending value that
+    /// is expired or made up.
+    async fn pending_factors(&self, pending: &str) -> Result<Option<crate::identity::PendingFactors>> {
+        let _ = pending;
+        Ok(None)
+    }
+    /// A passkey for step two: the options JSON for the browser.
+    async fn begin_passkey_sign_in(&self, pending: &str, client: &ClientInfo) -> Result<String> {
+        let _ = (pending, client);
+        Err(Error::unavailable("passkeys are not built here"))
+    }
+    /// The authenticator's answer as JSON. `None` when it did not check out.
+    async fn complete_passkey_sign_in(&self, pending: &str, credential: &str, client: &ClientInfo) -> Result<Option<NewSession>> {
+        let _ = (pending, credential, client);
+        Ok(None)
+    }
     async fn sign_out(&self, cookie_value: &str, client: &ClientInfo) -> Result<()>;
     /// The caller's own sessions. `current_cookie` marks which one is this browser.
     async fn sessions(&self, actor: &Actor, current_cookie: &str) -> Result<Vec<SessionInfo>>;
@@ -103,8 +129,62 @@ pub trait Sessions: Send + Sync {
     /// Checks the first code and turns two-factor on. Returns the recovery codes, shown once,
     /// and the new session cookie to set. `current_cookie` is this browser's session cookie.
     async fn confirm_two_factor_setup(&self, actor: &Actor, current_cookie: &str, code: &str, client: &ClientInfo) -> Result<TwoFactorOn>;
-    /// Needs the password. Returns the new session cookie to set.
-    async fn disable_two_factor(&self, actor: &Actor, current_cookie: &str, password: &str, client: &ClientInfo) -> Result<NewSession>;
+    /// Needs the password, and a code from the authenticator app or a recovery code when it is the
+    /// last second factor. Returns the new session cookie to set.
+    async fn disable_two_factor(
+        &self,
+        actor: &Actor,
+        current_cookie: &str,
+        password: &str,
+        code: &str,
+        client: &ClientInfo,
+    ) -> Result<NewSession>;
+    /// Needs the password. Replaces the recovery codes and returns the new ones, shown once.
+    async fn regenerate_recovery_codes(&self, actor: &Actor, password: &str, client: &ClientInfo) -> Result<Vec<String>> {
+        let _ = (actor, password, client);
+        Err(Error::unavailable("recovery codes are not built here"))
+    }
+    /// Which second factors the account has and how many recovery codes are left.
+    async fn two_factor_status(&self, actor: &Actor) -> Result<crate::identity::TwoFactorStatus> {
+        let _ = actor;
+        Err(Error::unavailable("two-factor status is not built here"))
+    }
+    async fn passkeys_available(&self) -> bool {
+        false
+    }
+    async fn passkeys(&self, actor: &Actor) -> Result<Vec<crate::identity::PasskeyInfo>> {
+        let _ = actor;
+        Ok(Vec::new())
+    }
+    async fn begin_passkey_registration(&self, actor: &Actor, client: &ClientInfo) -> Result<String> {
+        let _ = (actor, client);
+        Err(Error::unavailable("passkeys are not built here"))
+    }
+    async fn finish_passkey_registration(
+        &self,
+        actor: &Actor,
+        current_cookie: &str,
+        name: &str,
+        credential: &str,
+        client: &ClientInfo,
+    ) -> Result<PasskeyOn> {
+        let _ = (actor, current_cookie, name, credential, client);
+        Err(Error::unavailable("passkeys are not built here"))
+    }
+    /// Needs the password, and a current factor when it is the last. `Some` is the new cookie to set
+    /// when two-factor went off with it.
+    async fn remove_passkey(
+        &self,
+        actor: &Actor,
+        current_cookie: &str,
+        id: i64,
+        password: &str,
+        code: &str,
+        client: &ClientInfo,
+    ) -> Result<Option<NewSession>> {
+        let _ = (actor, current_cookie, id, password, code, client);
+        Err(Error::unavailable("passkeys are not built here"))
+    }
     /// `Error::NotFound` for a link that is expired, used or made up.
     async fn peek_link(&self, token: &str) -> Result<LinkPeek>;
     /// Sets the password and uses the link up. Weak passwords are `Error::Validation`.
@@ -586,7 +666,14 @@ impl Sessions for NotBuilt {
     async fn confirm_two_factor_setup(&self, actor: &Actor, current_cookie: &str, code: &str, client: &ClientInfo) -> Result<TwoFactorOn> {
         Err(nb("sessions"))
     }
-    async fn disable_two_factor(&self, actor: &Actor, current_cookie: &str, password: &str, client: &ClientInfo) -> Result<NewSession> {
+    async fn disable_two_factor(
+        &self,
+        actor: &Actor,
+        current_cookie: &str,
+        password: &str,
+        code: &str,
+        client: &ClientInfo,
+    ) -> Result<NewSession> {
         Err(nb("sessions"))
     }
     async fn peek_link(&self, token: &str) -> Result<LinkPeek> {

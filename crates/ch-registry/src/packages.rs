@@ -41,6 +41,7 @@ struct Row {
     kind: String,
     name: String,
     orphaned: bool,
+    orphan_reason: Option<String>,
     repo_name: Option<String>,
     latest: Option<String>,
     versions: i64,
@@ -48,7 +49,7 @@ struct Row {
     updated_at: DateTime<Utc>,
 }
 
-const SELECT: &str = "SELECT p.id, p.owner_id, p.repo_id, u.username::text AS owner_name, u.kind AS owner_kind, p.kind, p.name::text AS name, p.orphaned,
+const SELECT: &str = "SELECT p.id, p.owner_id, p.repo_id, u.username::text AS owner_name, u.kind AS owner_kind, p.kind, p.name::text AS name, p.orphaned, p.orphan_reason,
         (SELECT ru.username::text || '/' || r.name::text FROM repositories r JOIN users ru ON ru.id = r.owner_id WHERE r.id = p.repo_id) AS repo_name,
         CASE WHEN p.kind = 'container'
              THEN (SELECT t.name FROM oci_tags t WHERE t.package_id = p.id ORDER BY t.updated_at DESC, t.name LIMIT 1)
@@ -82,6 +83,7 @@ impl Row {
             name: self.name.clone(),
             repo: self.repo_name.clone(),
             orphaned: self.orphaned,
+            orphan_reason: self.orphan_reason.clone(),
             latest: self.latest.clone(),
             versions: self.versions,
             size: self.size,
@@ -315,7 +317,7 @@ impl Packages for RegistryPackages {
             return Err(Error::invalid("Package", "confirm", "Confirm who gains access before linking."));
         }
         let (id, tier) = self.link_target(actor, &row, repo).await?;
-        sqlx::query("UPDATE packages SET repo_id = $2, orphaned = false WHERE id = $1")
+        sqlx::query("UPDATE packages SET repo_id = $2, orphaned = false, orphan_reason = NULL WHERE id = $1")
             .bind(row.id)
             .bind(id)
             .execute(&self.state.db)
@@ -331,7 +333,10 @@ impl Packages for RegistryPackages {
         }
         // Orphaned means the owner alone (an organization's owners), never more than the
         // repository gave: an unlinked organization package would otherwise open to every member.
-        sqlx::query("UPDATE packages SET repo_id = NULL, orphaned = true WHERE id = $1").bind(row.id).execute(&self.state.db).await?;
+        sqlx::query("UPDATE packages SET repo_id = NULL, orphaned = true, orphan_reason = 'unlinked' WHERE id = $1")
+            .bind(row.id)
+            .execute(&self.state.db)
+            .await?;
         self.record(actor, client, action::PACKAGE_UNLINKED, &row, serde_json::json!({"was": row.repo_name})).await;
         Ok(())
     }

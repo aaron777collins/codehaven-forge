@@ -40,8 +40,10 @@ anyhow.workspace = true
 rustix.workspace = true
 url.workspace = true
 reqwest.workspace = true
+webauthn-rs.workspace = true
 
 [dev-dependencies]
+webauthn-authenticator-rs.workspace = true
 ch-testkit.workspace = true
 tower.workspace = true
 http-body-util.workspace = true

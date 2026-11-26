@@ -12,7 +12,8 @@ use ch_core::identity::{Profile, SessionGrant, SignInStep};
 use ch_core::model::{ClientInfo, User};
 use ch_core::services::{Accounts, Credentials, Directory, Orgs, TwoFactor};
 use ch_core::web_contract::{
-    LinkPeek, Member, NewSession, People, SessionInfo, Sessions, SignInOutcome, SiteStats, Team, TwoFactorOn, TwoFactorSetup, UpdateProfile,
+    LinkPeek, Member, NewSession, PasskeyOn, People, SessionInfo, Sessions, SignInOutcome, SiteStats, Team, TwoFactorOn, TwoFactorSetup,
+    UpdateProfile,
 };
 use ch_core::{Actor, AuditId, Error, OrgId, Result, SessionId, TeamId, UserId};
 use std::net::IpAddr;
@@ -46,6 +47,26 @@ impl Sessions for SessionsSvc {
 
     async fn complete_two_factor(&self, pending: &str, code: &str, client: &ClientInfo) -> Result<Option<NewSession>> {
         match self.credentials.complete_two_factor(pending, code, client).await {
+            Ok(s) => Ok(Some(new_session(s.grant))),
+            Err(Error::Unauthorized(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn pending_factors(&self, pending: &str) -> Result<Option<ch_core::identity::PendingFactors>> {
+        match self.credentials.pending_factors(pending).await {
+            Ok(f) => Ok(Some(f)),
+            Err(Error::Unauthorized(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn begin_passkey_sign_in(&self, pending: &str, client: &ClientInfo) -> Result<String> {
+        self.credentials.begin_passkey_sign_in(pending, client).await
+    }
+
+    async fn complete_passkey_sign_in(&self, pending: &str, credential: &str, client: &ClientInfo) -> Result<Option<NewSession>> {
+        match self.credentials.complete_passkey_sign_in(pending, credential, client).await {
             Ok(s) => Ok(Some(new_session(s.grant))),
             Err(Error::Unauthorized(_)) => Ok(None),
             Err(e) => Err(e),
@@ -116,8 +137,59 @@ impl Sessions for SessionsSvc {
         Ok(TwoFactorOn { recovery_codes: on.recovery_codes, session: new_session(on.grant) })
     }
 
-    async fn disable_two_factor(&self, actor: &Actor, current_cookie: &str, password: &str, client: &ClientInfo) -> Result<NewSession> {
-        Ok(new_session(self.twofactor.disable(actor, current_cookie, password, client).await?))
+    async fn disable_two_factor(
+        &self,
+        actor: &Actor,
+        current_cookie: &str,
+        password: &str,
+        code: &str,
+        client: &ClientInfo,
+    ) -> Result<NewSession> {
+        Ok(new_session(self.twofactor.disable(actor, current_cookie, password, code, client).await?))
+    }
+
+    async fn regenerate_recovery_codes(&self, actor: &Actor, password: &str, client: &ClientInfo) -> Result<Vec<String>> {
+        self.twofactor.regenerate_recovery_codes(actor, password, client).await
+    }
+
+    async fn two_factor_status(&self, actor: &Actor) -> Result<ch_core::identity::TwoFactorStatus> {
+        self.twofactor.status(actor).await
+    }
+
+    async fn passkeys_available(&self) -> bool {
+        self.twofactor.passkeys_available().await
+    }
+
+    async fn passkeys(&self, actor: &Actor) -> Result<Vec<ch_core::identity::PasskeyInfo>> {
+        self.twofactor.passkeys(actor).await
+    }
+
+    async fn begin_passkey_registration(&self, actor: &Actor, client: &ClientInfo) -> Result<String> {
+        self.twofactor.begin_passkey(actor, client).await
+    }
+
+    async fn finish_passkey_registration(
+        &self,
+        actor: &Actor,
+        current_cookie: &str,
+        name: &str,
+        credential: &str,
+        client: &ClientInfo,
+    ) -> Result<PasskeyOn> {
+        let added = self.twofactor.finish_passkey(actor, current_cookie, name, credential, client).await?;
+        Ok(PasskeyOn { passkey: added.passkey, recovery_codes: added.recovery_codes, session: added.grant.map(new_session) })
+    }
+
+    async fn remove_passkey(
+        &self,
+        actor: &Actor,
+        current_cookie: &str,
+        id: i64,
+        password: &str,
+        code: &str,
+        client: &ClientInfo,
+    ) -> Result<Option<NewSession>> {
+        Ok(self.twofactor.remove_passkey(actor, current_cookie, id, password, code, client).await?.map(new_session))
     }
 
     async fn peek_link(&self, token: &str) -> Result<LinkPeek> {

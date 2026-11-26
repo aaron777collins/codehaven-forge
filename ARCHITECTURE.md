@@ -574,6 +574,7 @@ branch and open a pull request".
 | --- | --- | --- |
 | Username and password | web, git HTTP (accounts without two-factor) | Argon2id. Rate limits and lockout in section 7.6 |
 | TOTP | web | `totp-rs`, 10 recovery codes. Optional for everyone, required before a site admin can open the admin pages |
+| Passkey (WebAuthn) | web | A second factor beside TOTP, with `webauthn-rs` (pure Rust, no new service). The relying party id is the host of `server.external_url` and the origin is that address, so it needs a domain name (an IP address turns passkeys off). Register, name, remove and sign in with either; recovery codes belong to the account and work for both. Taking away the last factor needs the password and a current factor (an app code or a recovery code). `ch_has_second_factor(user)` is the one definition of "has two-factor" (admin gate, Basic auth, connected apps) |
 | OIDC | web | `openidconnect`. Off by default. When configured it can only sign in an account that already exists and has linked that identity, or finish an invite. It never creates an account on its own |
 | Session cookie | web | `__Host-ch_session`: 256-bit random id, stored hashed, `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`. 7 days idle, 30 days absolute. Section 7.6 |
 | Personal access token | API, git HTTP, CLI, registry | Format `chp_` plus 40 base62 characters, so secret scanners can match it. Scopes below. Expiry required, 90 days by default, 1 year at most |
@@ -632,6 +633,7 @@ routes:
 | Route | Why |
 | --- | --- |
 | `GET /login`, `POST /login`, `GET/POST /login/two-factor` | Signing in |
+| `POST /login/two-factor/passkey/begin`, `POST /login/two-factor/passkey` | Second step with a passkey. Both need the half signed-in session the password step set, and count as wrong codes when they fail (ch-wf0) |
 | `GET /invite/{token}`, `POST /invite/{token}` | Accepting an invite (section 7.4) |
 | `GET /password/{token}`, `POST /password/{token}` | One-time set-password and reset links (section 7.5) |
 | `GET /login/oidc/{provider}`, `GET /login/oidc/{provider}/callback` | Only when a provider is configured |

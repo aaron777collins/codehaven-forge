@@ -605,7 +605,7 @@ impl TwoFactor for NotBuilt {
     async fn confirm_setup(&self, actor: &Actor, current_cookie: &str, code: &str, client: &ClientInfo) -> Result<TwoFactorEnabled> {
         Err(nb("two-factor"))
     }
-    async fn disable(&self, actor: &Actor, current_cookie: &str, password: &str, client: &ClientInfo) -> Result<SessionGrant> {
+    async fn disable(&self, actor: &Actor, current_cookie: &str, password: &str, code: &str, client: &ClientInfo) -> Result<SessionGrant> {
         Err(nb("two-factor"))
     }
     async fn regenerate_recovery_codes(&self, actor: &Actor, password: &str, client: &ClientInfo) -> Result<Vec<String>> {

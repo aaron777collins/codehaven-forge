@@ -2,7 +2,8 @@
 //!
 //! A job that names `environment:` waits for what that environment of the repository asks:
 //!
-//! * a **branch filter**: only runs of matching branches and tags may deploy. A pull request from
+//! * a **branch filter**: only runs of matching branches may deploy (a pattern `tags/v*` is how a
+//!   tag is allowed, and a plain pattern never matches a tag). A pull request from
 //!   a fork never matches a filter.
 //! * **required reviewers**: someone on the list, with Write on the repository, approves or
 //!   rejects the job. One of them is enough.
@@ -61,33 +62,63 @@ pub(crate) async fn find_in(conn: &mut PgConnection, repo: i64, name: &str) -> R
         .await?)
 }
 
-/// The branch or tag a run deploys, as the branch filter sees it. A pull request run has no
-/// branch of its own, so it uses the pull request's head branch.
-fn deploy_name(run: &RunRow) -> String {
+/// The branch or tag a run deploys, as the branch filter sees it, and whether it is a tag. A pull
+/// request run has no branch of its own, so it uses the pull request's head branch. Only
+/// `refs/tags/` is a tag: anything else is a branch, so a tag can never pass for one.
+fn deploy_name(run: &RunRow) -> (String, bool) {
     let r = run.git_ref.as_deref().unwrap_or_default();
-    r.strip_prefix("refs/heads/")
-        .or_else(|| r.strip_prefix("refs/tags/"))
-        .map(str::to_string)
-        .unwrap_or_else(|| run.head_branch.clone().unwrap_or_default())
+    if let Some(t) = r.strip_prefix("refs/tags/") {
+        (t.to_string(), true)
+    } else if let Some(b) = r.strip_prefix("refs/heads/") {
+        (b.to_string(), false)
+    } else {
+        (run.head_branch.clone().unwrap_or_default(), false)
+    }
+}
+
+/// The patterns that apply to one kind of ref. A pattern that starts with `tags/` (after an
+/// optional `!`) is a tag pattern and applies to tags only, with the prefix removed. Every
+/// other pattern is a branch pattern and applies to branches only. A branch named `tags/x`
+/// therefore cannot be matched by a filter: nothing deploys by a name that looks like a tag.
+fn patterns_for(patterns: &[String], tag: bool) -> Vec<String> {
+    patterns
+        .iter()
+        .filter_map(|p| {
+            let (neg, body) = p.strip_prefix('!').map_or(("", p.as_str()), |b| ("!", b));
+            match (tag, body.strip_prefix("tags/")) {
+                (true, Some(rest)) => Some(format!("{neg}{rest}")),
+                (false, None) => Some(p.clone()),
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 /// Whether a run may deploy to an environment by its branch filter. An empty filter lets every run
 /// through, a fork's pull request included (it still waits for reviewers, and gets no secrets).
-/// A filter lets no fork pull request through.
-pub fn branch_allowed(patterns: &[String], name: &str, fork: bool) -> bool {
-    patterns.is_empty() || (!fork && ch_workflow::glob::filter(patterns, name))
+/// A filter matches branches only, by their plain name (`main`, `release/*`), and tags only
+/// through a `tags/` pattern (`tags/v*`). A kind with no pattern of its own matches nothing. A
+/// filter lets no fork pull request through.
+pub fn branch_allowed(patterns: &[String], name: &str, tag: bool, fork: bool) -> bool {
+    if patterns.is_empty() {
+        return true;
+    }
+    let own = patterns_for(patterns, tag);
+    !fork && !own.is_empty() && ch_workflow::glob::filter(&own, name)
 }
 
 /// Decides what happens to a job that reached its environment. Creates the gate on the first
 /// call. Called inside the run's own transaction from `advance_run`.
 pub(crate) async fn check_gate(conn: &mut PgConnection, run: &RunRow, meta: &RunMeta, job: &JobRow, env_name: &str) -> Result<Gate> {
     let Some(env) = find_in(conn, run.repo_id, env_name).await? else { return Ok(Gate::Open) };
-    let name = deploy_name(run);
-    if !branch_allowed(&env.branches, &name, meta.fork) {
+    let (name, tag) = deploy_name(run);
+    if !branch_allowed(&env.branches, &name, tag, meta.fork) {
         let why = if meta.fork {
             "a pull request from a fork cannot deploy to it".to_string()
+        } else if tag {
+            format!("the tag `{name}` is not allowed (tags need a `tags/` pattern in its filter)")
         } else {
-            format!("`{name}` is not one of the branches and tags it allows")
+            format!("`{name}` is not one of the branches it allows")
         };
         return Ok(Gate::Fail(format!("The environment {} does not accept this run: {why}.", env.name)));
     }
@@ -524,11 +555,38 @@ mod tests {
     #[test]
     fn a_branch_filter_lets_matching_names_through_and_never_a_fork() {
         let p = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert!(branch_allowed(&[], "anything", false));
-        assert!(branch_allowed(&[], "anything", true), "no filter: reviewers decide");
-        assert!(branch_allowed(&p(&["main", "release/*"]), "main", false));
-        assert!(branch_allowed(&p(&["main", "release/*"]), "release/1.2", false));
-        assert!(!branch_allowed(&p(&["main", "release/*"]), "feature/x", false));
-        assert!(!branch_allowed(&p(&["main"]), "main", true), "a fork's branch named main is not main");
+        assert!(branch_allowed(&[], "anything", false, false));
+        assert!(branch_allowed(&[], "anything", false, true), "no filter: reviewers decide");
+        assert!(branch_allowed(&p(&["main", "release/*"]), "main", false, false));
+        assert!(branch_allowed(&p(&["main", "release/*"]), "release/1.2", false, false));
+        assert!(!branch_allowed(&p(&["main", "release/*"]), "feature/x", false, false));
+        assert!(!branch_allowed(&p(&["main"]), "main", false, true), "a fork's branch named main is not main");
+    }
+
+    #[test]
+    fn a_plain_pattern_never_matches_a_tag_and_a_tags_pattern_never_matches_a_branch() {
+        let p = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // The reported case: a tag named main must not pass a filter for the branch main.
+        assert!(!branch_allowed(&p(&["main"]), "main", true, false));
+        assert!(branch_allowed(&p(&["main"]), "main", false, false));
+        assert!(!branch_allowed(&p(&["*"]), "v1", true, false), "a plain star is branches only");
+        assert!(!branch_allowed(&p(&["**"]), "v1", true, false));
+        // A tags/ pattern is for tags.
+        assert!(branch_allowed(&p(&["tags/v*"]), "v1", true, false));
+        assert!(!branch_allowed(&p(&["tags/v*"]), "x1", true, false));
+        assert!(!branch_allowed(&p(&["tags/v*"]), "v1", false, false), "a branch named v1 is not a tag");
+        assert!(!branch_allowed(&p(&["tags/v*"]), "tags/v1", false, false), "nor is a branch named tags/v1");
+        assert!(!branch_allowed(&p(&["tags/main"]), "main", false, false));
+        // Both kinds together, with an exclusion.
+        let both = p(&["main", "tags/v*", "!tags/v0*"]);
+        assert!(branch_allowed(&both, "main", false, false));
+        assert!(branch_allowed(&both, "v2", true, false));
+        assert!(!branch_allowed(&both, "v0.1", true, false));
+        assert!(!branch_allowed(&both, "dev", false, false));
+        // Only exclusions of one kind start that kind out as everything, and never the other.
+        assert!(branch_allowed(&p(&["!release/*"]), "main", false, false));
+        assert!(!branch_allowed(&p(&["!release/*"]), "v1", true, false));
+        assert!(!branch_allowed(&p(&["!tags/v0*"]), "main", false, false));
+        assert!(!branch_allowed(&p(&["tags/v*"]), "v1", true, true), "never a fork");
     }
 }

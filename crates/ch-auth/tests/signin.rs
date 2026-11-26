@@ -364,12 +364,16 @@ async fn two_factor_setup_rules(pool: PgPool) {
     assert!(c.state.twofactor.begin_setup(&ch_testkit::fixtures::token_actor(ch_core::UserId(1), &["repo"])).await.is_err());
     assert!(c.state.twofactor.begin_setup(&Actor::Anonymous).await.is_err());
 
-    let (_, _, cookie2, actor2) = enable_2fa(&c, &cookie, &actor).await;
+    let (secret2, codes2, cookie2, actor2) = enable_2fa(&c, &cookie, &actor).await;
     assert!(c.state.twofactor.begin_setup(&actor2).await.is_err(), "already on");
     assert_eq!(c.state.twofactor.status(&actor2).await.unwrap().recovery_codes_left, 10);
-    // Turning it off needs the password, and ends every session.
-    assert!(c.state.twofactor.disable(&actor2, &cookie2, "not the password!", &c1()).await.is_err());
-    let grant = c.state.twofactor.disable(&actor2, &cookie2, PW, &c1()).await.unwrap();
+    // Turning it off needs the password and, as it is the last second factor, a current code (an
+    // app code or a recovery code), and ends every session.
+    assert!(c.state.twofactor.disable(&actor2, &cookie2, "not the password!", &codes2[0], &c1()).await.is_err());
+    assert!(c.state.twofactor.disable(&actor2, &cookie2, PW, "", &c1()).await.is_err(), "no current factor");
+    assert!(c.state.twofactor.disable(&actor2, &cookie2, PW, "000000", &c1()).await.is_err(), "a wrong code");
+    let _ = &secret2;
+    let grant = c.state.twofactor.disable(&actor2, &cookie2, PW, &codes2[0], &c1()).await.unwrap();
     assert!(matches!(actor_for_cookie(&c, &cookie2).await, Actor::Anonymous));
     assert!(matches!(actor_for_cookie(&c, &grant.cookie).await, Actor::User { has_2fa: false, .. }));
     assert_eq!(sign_in(&c, "alice", PW).await.step, SignInStep::Complete);

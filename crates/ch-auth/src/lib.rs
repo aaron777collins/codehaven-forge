@@ -26,6 +26,7 @@ pub mod guard;
 pub mod invites;
 pub mod lockout;
 pub mod orgs;
+pub mod passkeys;
 pub mod password;
 pub mod ratelimit;
 pub mod rest;

@@ -181,15 +181,24 @@ async fn register(
 ///
 /// A job queued before its fork became locked (ch-4pn.16) is never handed out: the claim is
 /// rolled back, the run is cancelled with a line saying why, and the next job is tried (ch-mpv).
+/// A job whose run cannot be cancelled is marked failed instead, so it is not found again, and one
+/// request looks at a bounded number of locked jobs before it gives up (ch-6ko).
 pub async fn try_claim(ctx: &Ctx, runner: i64, labels: &[String], repo_scope: Option<i64>) -> Result<Option<(JobRow, String)>> {
-    loop {
+    for _ in 0..MAX_LOCKED_PER_CLAIM {
         match claim_once(ctx, runner, labels, repo_scope).await? {
             Claim::None => return Ok(None),
             Claim::Got(job, token) => return Ok(Some((*job, token))),
             Claim::Locked => {}
         }
     }
+    tracing::warn!(runner, "a runner's request met many jobs on locked forks and was told there is nothing for it");
+    Ok(None)
 }
+
+/// Locked jobs one request clears before it answers with nothing. The runner asks again at once.
+const MAX_LOCKED_PER_CLAIM: u32 = 50;
+/// Tries to cancel, then to fail, the run of a job on a locked fork before the job is left alone.
+const LOCKED_RETRIES: u32 = 3;
 
 enum Claim {
     None,
@@ -219,8 +228,10 @@ async fn claim_once(ctx: &Ctx, runner: i64, labels: &[String], repo_scope: Optio
     .await?;
     let Some(job) = claimed else { return Ok(Claim::None) };
     if crate::triggers::fork_locked(ctx, ch_core::RepoId(job.repo_id)).await? {
-        // Not claimed after all: the job goes back as it was, and the run is cancelled.
-        drop(tx);
+        // Not claimed after all: the job goes back as it was, and the run is cancelled. The claim
+        // is rolled back now, not when the connection is next used, so its row lock is gone
+        // before anything below touches the job.
+        tx.rollback().await?;
         tracing::warn!(job = job.id, repo = job.repo_id, "a queued job on a locked fork is cancelled, not handed out");
         if let Ok(run) = runs::fetch_run(ctx, job.run_id).await {
             crate::logs::append_system_line(
@@ -231,7 +242,11 @@ async fn claim_once(ctx: &Ctx, runner: i64, labels: &[String], repo_scope: Optio
             )
             .await;
         }
-        runs::cancel_run(ctx, job.run_id).await.ok();
+        if !retire_locked_job(ctx, &job).await {
+            // Neither a cancel nor a failure could be written. Stop here: asking again at once
+            // would find the same job and spin on it. The runner's next poll tries again.
+            return Ok(Claim::None);
+        }
         return Ok(Claim::Locked);
     }
     let mut fx = Effects::default();
@@ -239,6 +254,36 @@ async fn claim_once(ctx: &Ctx, runner: i64, labels: &[String], repo_scope: Optio
     fx.emit(ctx, &mut tx).await?;
     tx.commit().await?;
     Ok(Claim::Got(Box::new(job), token))
+}
+
+/// Takes a queued job of a locked fork out of the queue for good: the run is cancelled, and when
+/// that keeps failing the job is marked failed with a plain line in its log. Each is tried a few
+/// times, never without end. False when the job could not be taken out of the queue at all.
+async fn retire_locked_job(ctx: &Ctx, job: &JobRow) -> bool {
+    for attempt in 1..=LOCKED_RETRIES {
+        match runs::cancel_run(ctx, job.run_id).await {
+            Ok(()) => return true,
+            Err(e) => {
+                tracing::warn!(job = job.id, run = job.run_id, attempt, error = %e, "could not cancel the run of a job on a locked fork")
+            }
+        }
+    }
+    if let Ok(run) = runs::fetch_run(ctx, job.run_id).await {
+        crate::logs::append_system_line(
+            ctx,
+            &run,
+            job,
+            "This run could not be cancelled, so the job was marked failed. Its fork is locked and it does not run.",
+        )
+        .await;
+    }
+    for attempt in 1..=LOCKED_RETRIES {
+        match runs::finish_job(ctx, job.id, "failure", &BTreeMap::new()).await {
+            Ok(_) => return true,
+            Err(e) => tracing::error!(job = job.id, attempt, error = %e, "could not mark the job of a locked fork failed"),
+        }
+    }
+    false
 }
 
 async fn request_job(

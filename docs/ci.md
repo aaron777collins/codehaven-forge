@@ -167,7 +167,9 @@ name is plain text, not an expression). Repository admins set up what that envir
   lists someone else.
 - **Wait timer**: 0 to 43,200 minutes counted from when the job reaches the environment. It runs
   beside the review, and both have to be done. The timer is checked every 15 seconds.
-- **Branch filter**: patterns for the branches and tags that may deploy (`main`, `release/*`). A run
+- **Branch filter**: patterns for the branches that may deploy (`main`, `release/*`). A plain pattern
+  matches branches only, never a tag of the same name. A tag is allowed by a pattern that starts with
+  `tags/` (`tags/v*`), which matches tags only (so a branch named `tags/x` is never matched). A run
   from any other ref fails the job at once, with the reason in its log. A pull request from a fork never
   matches a filter. With no filter, any ref may deploy (a fork's pull request still waits for a reviewer, if the
   environment has one).

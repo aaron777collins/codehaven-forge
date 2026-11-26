@@ -3,15 +3,27 @@
 {% block content %}
 <main id="main" class="auth-wrap">
   <section class="auth-card">
-    <h1>Enter your code</h1>
-    <p class="muted">Open your authenticator app and type the six digit code for {{ c.instance }}. You can also use one of your recovery codes.</p>
+    <h1>{% if passkeys %}Confirm it is you{% else %}Enter your code{% endif %}</h1>
+    {% if passkeys %}
+    <form method="post" action="/login/two-factor/passkey" class="stack" data-passkey-signin data-begin-url="/login/two-factor/passkey/begin">
+      {% call ui::csrf_field(csrf) %}
+      <input type="hidden" name="next" value="{{ next }}">
+      <input type="hidden" name="credential" value="">
+      <p class="muted">Use the passkey you set up for {{ c.instance }}: your fingerprint, face, screen lock or security key.</p>
+      <p class="form-error" role="alert" data-passkey-error hidden></p>
+      <button class="btn btn-primary btn-block" type="submit" data-passkey-go>Use my passkey</button>
+      <p class="hint" data-passkey-unsupported hidden>This browser cannot use passkeys. {% if totp %}Use the code from your app{% else %}Use a recovery code{% endif %} instead.</p>
+    </form>
+    <hr>
+    {% endif %}
+    <p class="muted">{% if totp %}Open your authenticator app and type the six digit code for {{ c.instance }}. You can also use one of your recovery codes.{% else %}Lost your passkey? Type one of your recovery codes.{% endif %}</p>
     <form method="post" action="/login/two-factor" class="stack">
       {% call ui::csrf_field(csrf) %}
       <input type="hidden" name="next" value="{{ next }}">
       {% if !error.is_empty() %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
       <div class="field">
-        <label for="code">Code</label>
-        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" autocapitalize="none" spellcheck="false" required autofocus>
+        <label for="code">{% if totp %}Code{% else %}Recovery code{% endif %}</label>
+        <input id="code" name="code" type="text" {% if totp %}inputmode="numeric" {% endif %}autocomplete="one-time-code" autocapitalize="none" spellcheck="false" required{% if !passkeys %} autofocus{% endif %}>
       </div>
       <button class="btn btn-primary btn-block" type="submit">Continue</button>
     </form>

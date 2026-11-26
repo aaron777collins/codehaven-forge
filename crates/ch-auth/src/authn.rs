@@ -101,7 +101,7 @@ impl AuthnService {
     /// concurrent guesses share one budget.
     async fn basic_password(&self, username: &str, password: &str, client: &ClientInfo) -> Result<Actor> {
         let row: Option<(i64, Option<String>, bool, bool)> = sqlx::query_as(
-            "SELECT id, password_hash, suspended_at IS NOT NULL, totp_enabled_at IS NOT NULL FROM users WHERE username = $1::citext AND kind = 'user'",
+            "SELECT id, password_hash, suspended_at IS NOT NULL, ch_has_second_factor(id) FROM users WHERE username = $1::citext AND kind = 'user'",
         )
         .bind(username)
         .fetch_optional(&self.core.db)
@@ -340,7 +340,7 @@ impl Authn for AuthnService {
             }
             Credential::Basic { user_id, fingerprint } => {
                 let row: Option<(Option<String>, bool)> = sqlx::query_as(
-                    "SELECT password_hash, totp_enabled_at IS NOT NULL FROM users WHERE id = $1 AND suspended_at IS NULL AND kind = 'user'",
+                    "SELECT password_hash, ch_has_second_factor(id) FROM users WHERE id = $1 AND suspended_at IS NULL AND kind = 'user'",
                 )
                 .bind(user_id.0)
                 .fetch_optional(db)

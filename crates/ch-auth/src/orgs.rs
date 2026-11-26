@@ -355,6 +355,13 @@ impl Orgs for OrgsService {
             .execute(&mut *tx)
             .await?;
         sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2").bind(org.0).bind(user.0).execute(&mut *tx).await?;
+        // A hold on one of the organization's repositories (ch-ze4) ends with the membership it
+        // was holding back.
+        sqlx::query("DELETE FROM repo_access_holds WHERE user_id = $2 AND repo_id IN (SELECT id FROM repositories WHERE owner_id = $1)")
+            .bind(org.0)
+            .bind(user.0)
+            .execute(&mut *tx)
+            .await?;
         self.core.audit_tx(&mut tx, actor, client, action::ORG_MEMBER_REMOVED, Some(("org", org.0)), json!({"user_id": user.0})).await?;
         tx.commit().await?;
         Ok(())

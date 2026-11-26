@@ -25,11 +25,12 @@ Pages call traits on `AppState`. Nothing in `ch-web` needs to depend on `ch-auth
 | --- | --- |
 | `POST /login` | `state.credentials.sign_in(login, password, &client)` returns `SignIn { user, grant, step, notice }` |
 | `POST /login/two-factor` | `state.credentials.complete_two_factor(pending_cookie, code, &client)`. The code is a 6 digit TOTP code or a recovery code like `abcde-fghjk` |
+| `POST /login/two-factor/passkey/begin`, `POST /login/two-factor/passkey` | `state.credentials.pending_factors`, `begin_passkey_sign_in` (options as JSON) and `complete_passkey_sign_in` (the authenticator's answer as JSON). Same attempt limits as a code |
 | sign out | `state.credentials.sign_out(cookie, &client)` |
 | `GET/POST /invite/{token}` | `state.invites.peek(token)` to render, `state.invites.accept(token, NewAccount, &client)` to finish. Then call `sign_in` with the password the person just chose |
 | `GET/POST /password/{token}` | `state.credentials.peek_link(token)` (shows the username) and `redeem_link(token, new_password, &client)`. Then `sign_in` |
 | Settings > Sessions | `sessions`, `revoke_session`, `sign_out_others` |
-| Settings > Security | `change_password`, `sign_in_history`, and the `state.twofactor` calls: `status`, `begin_setup`, `confirm_setup`, `disable`, `regenerate_recovery_codes` |
+| Settings > Security | `change_password`, `sign_in_history`, and the `state.twofactor` calls: `status`, `begin_setup`, `confirm_setup`, `disable` (a current code too when no passkey is left), `regenerate_recovery_codes`, and for passkeys `passkeys_available`, `passkeys`, `begin_passkey`, `finish_passkey`, `remove_passkey` |
 | Settings > Emails, profile | `state.directory` |
 | Site admin > Users | `state.directory.list_users`, `set_admin`, `unsuspend`; `state.accounts.suspend`, `unlock`, `set_can_run_ci` |
 | Site admin > Invites | `state.invites.create`, `list`, `revoke` |

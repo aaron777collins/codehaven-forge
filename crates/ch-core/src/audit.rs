@@ -37,6 +37,9 @@ pub mod action {
     pub const TWO_FACTOR_ON: &str = "auth.two_factor_on";
     pub const TWO_FACTOR_OFF: &str = "auth.two_factor_off";
     pub const RECOVERY_CODE_USED: &str = "auth.recovery_code_used";
+    pub const PASSKEY_ADDED: &str = "auth.passkey_added";
+    pub const PASSKEY_REMOVED: &str = "auth.passkey_removed";
+    pub const PASSKEY_USED: &str = "auth.passkey_used";
     pub const INVITE_CREATED: &str = "invite.created";
     pub const INVITE_REVOKED: &str = "invite.revoked";
     pub const INVITE_ACCEPTED: &str = "invite.accepted";

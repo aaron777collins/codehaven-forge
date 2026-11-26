@@ -66,7 +66,8 @@
 </section>
 {% endif %}
 {% if rows.is_empty() %}
-  {% if filtered %}{% call ui::empty("No issues match", "Try fewer filters.") %}{% else %}{% call ui::empty("No issues yet", "Open one to track a bug, a task or an idea.") %}{% endif %}
+  {% if !pinned_rows.is_empty() %}
+  {% else if filtered %}{% call ui::empty("No issues match", "Try fewer filters.") %}{% else %}{% call ui::empty("No issues yet", "Open one to track a bug, a task or an idea.") %}{% endif %}
 {% else %}
 {% if !pinned_rows.is_empty() %}<h2 class="small muted pinned-divider">Other issues</h2>
 {% endif %}<ul class="issue-list card">{% for r in rows %}{% call m::issue_row(r) %}{% endfor %}</ul>

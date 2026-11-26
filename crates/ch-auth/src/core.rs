@@ -47,6 +47,8 @@ pub struct Core {
     pub lockout: Lockout,
     /// Failed Basic and bearer attempts per address: 30 a minute.
     pub failed_auth: Limiter,
+    /// This site as a WebAuthn relying party (ch-wf0).
+    pub rp: crate::passkeys::Rp,
 }
 
 impl Core {
@@ -56,6 +58,7 @@ impl Core {
             None => MasterKey::load_or_create(&config.master_key_path())?,
         };
         Ok(Self {
+            rp: crate::passkeys::Rp::new(&config.server.external_url, &config.server.name),
             lockout: Lockout::new(db.clone()),
             hasher: PasswordHasher::new(opts.hash_params)?,
             failed_auth: Limiter::new(30, 30),
@@ -162,7 +165,7 @@ pub async fn reserve_login(core: &Core, acct_key: &str, ip_key: &str) -> Result<
 }
 
 pub const USER_COLS: &str = "u.id, u.kind, u.username::text AS username, u.display_name, u.is_admin, u.can_run_ci, u.suspended_at, \
-     u.totp_enabled_at, (u.password_hash IS NOT NULL) AS has_password, u.invited_by, u.created_at, \
+     u.totp_enabled_at, ch_has_second_factor(u.id) AS second_factor, (u.password_hash IS NOT NULL) AS has_password, u.invited_by, u.created_at, \
      (SELECT e.email::text FROM user_emails e WHERE e.user_id = u.id ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email";
 
 #[derive(sqlx::FromRow)]
@@ -175,6 +178,8 @@ pub struct UserRow {
     pub can_run_ci: bool,
     pub suspended_at: Option<DateTime<Utc>>,
     pub totp_enabled_at: Option<DateTime<Utc>>,
+    /// An authenticator app or a passkey is on (what `has_2fa` means).
+    pub second_factor: bool,
     pub has_password: bool,
     pub invited_by: Option<i64>,
     pub created_at: DateTime<Utc>,
@@ -192,7 +197,7 @@ impl From<UserRow> for User {
             is_admin: r.is_admin,
             can_run_ci: r.can_run_ci,
             suspended: r.suspended_at.is_some(),
-            has_2fa: r.totp_enabled_at.is_some(),
+            has_2fa: r.second_factor,
             has_password: r.has_password,
             invited_by: r.invited_by.map(UserId),
             created_at: r.created_at,
@@ -311,5 +316,5 @@ pub async fn delete_sessions_except<'e, E: sqlx::PgExecutor<'e>>(ex: E, user: Us
 
 /// A signed-in actor from a user row, for a given way in.
 pub fn actor_for(row: &UserRow, via: AuthVia) -> Actor {
-    Actor::User { id: UserId(row.id), is_admin: row.is_admin, has_2fa: row.totp_enabled_at.is_some(), via }
+    Actor::User { id: UserId(row.id), is_admin: row.is_admin, has_2fa: row.second_factor, via }
 }

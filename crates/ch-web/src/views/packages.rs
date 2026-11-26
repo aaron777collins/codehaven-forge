@@ -51,7 +51,8 @@ pub struct PackageView {
     pub is_container: bool,
     pub repo_text: String,
     pub repo_href: Option<String>,
-    pub orphaned: bool,
+    /// The line under the heading about who can use it, when it has no repository.
+    pub note: Option<&'static str>,
     pub latest: Option<String>,
     pub when: TimeView,
     pub can_admin: bool,
@@ -84,6 +85,22 @@ fn repo_cell(repo: &Option<String>, orphaned: bool) -> (String, Option<String>) 
         (None, true) => ("Owner only".into(), None),
         (None, false) => ("Not linked".into(), None),
     }
+}
+
+/// What the package page says when there is no repository, by cause: never linked, unlinked by its
+/// owner, its repository deleted, or its repository moved to another owner (ch-0kp). A package
+/// orphaned before the cause was kept gets the wording for any of them.
+fn orphan_note(repo: &Option<String>, orphaned: bool, reason: Option<&str>) -> Option<&'static str> {
+    if repo.is_some() {
+        return None;
+    }
+    Some(match (orphaned, reason) {
+        (false, _) => "Not linked to a repository, so only its owner can use it.",
+        (true, Some("unlinked")) => "It was unlinked from its repository, so only its owner can use it.",
+        (true, Some("repo_deleted")) => "Its repository was deleted, so only its owner can use it.",
+        (true, Some("repo_moved")) => "Its repository moved to another owner, so only its owner can use it.",
+        (true, _) => "Its repository was deleted, moved or unlinked, so only its owner can use it.",
+    })
 }
 
 fn row(s: PackageSummary) -> PackageRow {
@@ -123,7 +140,7 @@ fn view(d: PackageDetail) -> PackageView {
         versions: d.versions.into_iter().map(version_row).collect(),
         name: d.summary.name,
         owner: d.summary.owner,
-        orphaned: d.summary.orphaned,
+        note: orphan_note(&d.summary.repo, d.summary.orphaned, d.summary.orphan_reason.as_deref()),
         can_admin: d.can_admin,
         linkable: d.linkable,
     }
@@ -291,7 +308,22 @@ async fn failed(ctx: &Ctx, owner: &str, kind: &str, name: &str, e: Error) -> Web
 
 #[cfg(test)]
 mod tests {
-    use super::docker_host;
+    use super::{docker_host, orphan_note};
+
+    #[test]
+    fn the_page_tells_never_linked_unlinked_and_deleted_apart() {
+        let none = None;
+        let linked = Some("alice/app".to_string());
+        assert_eq!(orphan_note(&linked, false, None), None, "a linked package says nothing");
+        assert_eq!(orphan_note(&none, false, None), Some("Not linked to a repository, so only its owner can use it."));
+        assert_eq!(orphan_note(&none, true, Some("unlinked")), Some("It was unlinked from its repository, so only its owner can use it."));
+        assert_eq!(orphan_note(&none, true, Some("repo_deleted")), Some("Its repository was deleted, so only its owner can use it."));
+        assert_eq!(
+            orphan_note(&none, true, Some("repo_moved")),
+            Some("Its repository moved to another owner, so only its owner can use it.")
+        );
+        assert_eq!(orphan_note(&none, true, None), Some("Its repository was deleted, moved or unlinked, so only its owner can use it."));
+    }
 
     #[test]
     fn docker_gets_a_host_and_never_a_scheme() {

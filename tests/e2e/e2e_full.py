@@ -1937,7 +1937,7 @@ def step34():
 
     page = alice.get("/packages/alice/container/img")
     check(page.status == 200, f"the package page: {page.status}")
-    pull = re.search(r"<pre><code>(docker pull [^\n<]*)", page.text)
+    pull = re.search(r"<pre[^>]*><code>(docker pull [^\n<]*)", page.text)
     login = re.search(r"(echo \$TOKEN \| docker login [^\n<]*)", page.text)
     check(pull and login, f"the page shows no docker commands: {page.text[:400]}")
     pull_line, login_line = htmllib.unescape(pull.group(1)), htmllib.unescape(login.group(1))

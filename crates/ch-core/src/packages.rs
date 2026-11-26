@@ -25,6 +25,9 @@ pub struct PackageSummary {
     /// `owner/repo` it follows, when linked.
     pub repo: Option<String>,
     pub orphaned: bool,
+    /// Why it has no repository: `unlinked`, `repo_deleted` or `repo_moved`. None for a package that
+    /// was never linked, and for one orphaned before the reason was kept.
+    pub orphan_reason: Option<String>,
     pub latest: Option<String>,
     pub versions: i64,
     pub size: i64,

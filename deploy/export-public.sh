@@ -18,6 +18,8 @@
 #   - the working tree has changes (the snapshot is of HEAD, so commit or stash first)
 #   - <out-dir> already exists, or is inside this repository
 #   - there is no usable author (above)
+#   - the snapshot has no LICENSE file, or it is empty or is not the MIT license. A published copy
+#     without its license is not free to use, so this is checked before anything else is
 #   - CH_OWNER_PATTERNS_FILE is not set. That file is yours and stays private: one fixed text per
 #     line, the details of YOUR server (its domain, host names, addresses, ssh alias, server paths,
 #     runner name), matched in any case. Your own name and email do not belong in it
@@ -72,6 +74,10 @@ cleanup_on_fail() { rc=$?; [ -z "$metad" ] || rm -rf "$metad"; [ "$rc" = 0 ] || 
 trap cleanup_on_fail EXIT
 
 git -C "$dir" archive --format=tar HEAD | tar -x -C "$abs"
+
+# 0. The license travels with the code. An export without it is refused (it would be published
+# with no terms at all).
+[ -s "$abs/LICENSE" ] && grep -q '^MIT License$' "$abs/LICENSE" || die "the snapshot has no LICENSE, or it is not the MIT license. Add LICENSE to the repository and commit it."
 
 # 1. The portability guard, on the snapshot itself.
 python3 "$dir/deploy/check-portable.py" --root "$abs" --patterns "$CH_OWNER_PATTERNS_FILE" || die "the snapshot holds owner-specific text (see above)"

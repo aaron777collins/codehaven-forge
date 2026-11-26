@@ -397,6 +397,112 @@
   doc.addEventListener('htmx:afterSwap', setUpScrollers);
   if (doc.readyState !== 'loading') setUpScrollers(); else doc.addEventListener('DOMContentLoaded', setUpScrollers);
 
+  // ---- passkeys (WebAuthn): the ceremony runs here, the server checks it. A form with
+  // data-passkey-register (settings) or data-passkey-signin (second step) asks the server for
+  // options, has the browser's authenticator answer, puts the answer in the hidden `credential`
+  // field and submits the form as an ordinary post, so the server answers with a page.
+  function b64uToBuf(s) {
+    s = String(s).replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    var bin = atob(s), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
+  }
+  function bufToB64u(buf) {
+    var a = new Uint8Array(buf), s = '';
+    for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function passkeyFail(form, text) {
+    var p = form.querySelector('[data-passkey-error]');
+    if (p) { p.textContent = text; p.hidden = false; }
+    var b = form.querySelector('[data-passkey-go]');
+    if (b) b.disabled = false;
+  }
+  function passkeyBegin(form) {
+    return fetch(form.getAttribute('data-begin-url'), {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrf() }, body: ''
+    }).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) throw new Error(j && j.error ? j.error : 'That did not work. Try again.');
+        return j;
+      });
+    });
+  }
+  function passkeyRegister(form) {
+    return passkeyBegin(form).then(function (j) {
+      var o = j.publicKey;
+      o.challenge = b64uToBuf(o.challenge);
+      o.user.id = b64uToBuf(o.user.id);
+      (o.excludeCredentials || []).forEach(function (c) { c.id = b64uToBuf(c.id); });
+      return navigator.credentials.create({ publicKey: o });
+    }).then(function (c) {
+      if (!c) throw new Error('No passkey was made.');
+      var r = c.response;
+      return {
+        id: c.id, rawId: bufToB64u(c.rawId), type: c.type,
+        response: {
+          attestationObject: bufToB64u(r.attestationObject), clientDataJSON: bufToB64u(r.clientDataJSON),
+          transports: r.getTransports ? r.getTransports() : null
+        },
+        extensions: {}
+      };
+    });
+  }
+  function passkeyAssert(form) {
+    return passkeyBegin(form).then(function (j) {
+      var o = j.publicKey;
+      o.challenge = b64uToBuf(o.challenge);
+      (o.allowCredentials || []).forEach(function (c) { c.id = b64uToBuf(c.id); });
+      return navigator.credentials.get({ publicKey: o });
+    }).then(function (c) {
+      if (!c) throw new Error('No passkey answered.');
+      var r = c.response;
+      return {
+        id: c.id, rawId: bufToB64u(c.rawId), type: c.type,
+        response: {
+          authenticatorData: bufToB64u(r.authenticatorData), clientDataJSON: bufToB64u(r.clientDataJSON),
+          signature: bufToB64u(r.signature), userHandle: r.userHandle ? bufToB64u(r.userHandle) : null
+        },
+        extensions: {}
+      };
+    });
+  }
+  function setUpPasskeys() {
+    qsa('form[data-passkey-register], form[data-passkey-signin]').forEach(function (form) {
+      if (form.__passkeys) return;
+      form.__passkeys = true;
+      var supported = !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
+      var go = form.querySelector('[data-passkey-go]');
+      if (!supported) {
+        if (go) go.hidden = true;
+        var u = form.querySelector('[data-passkey-unsupported]');
+        if (u) u.hidden = false;
+        return;
+      }
+      form.addEventListener('submit', function (e) {
+        var field = form.querySelector('input[name="credential"]');
+        if (field && field.value) return; // the answer is in: let the post go
+        e.preventDefault();
+        var err = form.querySelector('[data-passkey-error]');
+        if (err) err.hidden = true;
+        if (go) go.disabled = true;
+        var run = form.hasAttribute('data-passkey-register') ? passkeyRegister : passkeyAssert;
+        run(form).then(function (cred) {
+          field.value = JSON.stringify(cred);
+          form.submit();
+        }).catch(function (x) {
+          var text = x && x.name === 'NotAllowedError' ? 'The passkey step was cancelled or timed out. Try again.'
+            : x && x.name === 'InvalidStateError' ? 'This device already has a passkey for you here.'
+            : (x && x.message) || 'That did not work. Try again.';
+          passkeyFail(form, text);
+        });
+      });
+    });
+  }
+  if (doc.readyState !== 'loading') setUpPasskeys(); else doc.addEventListener('DOMContentLoaded', setUpPasskeys);
+
   // ---- a banner so people notice when htmx fails to load a partial
   doc.addEventListener('htmx:responseError', function (e) {
     var t = e.target; if (t && t.insertAdjacentHTML) t.insertAdjacentHTML('afterend', '<p class="form-error" role="alert">That did not work. Reload the page and try again.</p>');

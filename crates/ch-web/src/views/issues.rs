@@ -291,6 +291,8 @@ pub async fn list(ctx: Ctx, Path((owner, name)): Path<(String, String)>, Query(q
         Vec::new()
     };
     let pinned_rows = rows_for(&ctx, &rc, &pinned_issues, "issues").await;
+    // A pinned issue sits in the Pinned block and is not listed again under Other issues (ch-4ls).
+    let rows: Vec<IssueRow> = rows.into_iter().filter(|r| !pinned_rows.iter().any(|p| p.number == r.number)).collect();
     let can_pin = rc.perm.allows(Permission::Triage) && !rc.repo.archived;
     let c = rc.chrome(&ctx, "Issues", "issues").await;
     ctx.page(&ListPage {

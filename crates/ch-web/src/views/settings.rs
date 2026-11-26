@@ -36,6 +36,9 @@ fn friendly_action(name: &str) -> &str {
         action::TWO_FACTOR_ON => "Two-factor turned on",
         action::TWO_FACTOR_OFF => "Two-factor turned off",
         action::RECOVERY_CODE_USED => "Recovery code used",
+        action::PASSKEY_ADDED => "Passkey added",
+        action::PASSKEY_REMOVED => "Passkey removed",
+        action::PASSKEY_USED => "Signed in with a passkey",
         action::SESSION_REVOKED => "Session signed out",
         action::TOKEN_CREATED => "Access token created",
         action::TOKEN_DELETED => "Access token deleted",
@@ -290,12 +293,26 @@ fn security_row(event: &StoredAudit) -> SecurityRow {
     }
 }
 
+struct PasskeyRow {
+    id: i64,
+    name: String,
+    created: TimeView,
+    last_used: Option<TimeView>,
+    /// Removing it takes away the last second factor, so a recovery code is asked for too.
+    needs_code: bool,
+}
+
 #[derive(Template)]
 #[template(path = "settings/security.html")]
 struct SecurityPage {
     c: Chrome,
     section: String,
     has_2fa: bool,
+    /// The authenticator app is on.
+    totp: bool,
+    passkeys_available: bool,
+    passkeys: Vec<PasskeyRow>,
+    recovery_left: u32,
     admin_needs_2fa: bool,
     rows: Vec<SecurityRow>,
     errors: FieldErrors,
@@ -305,6 +322,20 @@ async fn security_page(ctx: &Ctx, errors: FieldErrors, status: StatusCode) -> We
     let user = ctx.state.accounts.get_user(ctx.user_id()?).await?;
     let log = ctx.state.sessions.security_log(&ctx.actor, 30).await?;
     let rows = log.iter().map(security_row).collect();
+    let factors = ctx.state.sessions.two_factor_status(&ctx.actor).await.ok();
+    let totp = factors.as_ref().map(|f| f.totp).unwrap_or(user.has_2fa);
+    let list = ctx.state.sessions.passkeys(&ctx.actor).await.unwrap_or_default();
+    let last_is_passkey = !totp && list.len() == 1;
+    let passkeys = list
+        .into_iter()
+        .map(|k| PasskeyRow {
+            id: k.id,
+            name: k.name,
+            created: fmt::time(k.created_at),
+            last_used: k.last_used_at.map(fmt::time),
+            needs_code: last_is_passkey,
+        })
+        .collect();
     let c = ctx.chrome("Two-factor and security").await.nav("settings");
     ctx.page_status(
         status,
@@ -312,11 +343,24 @@ async fn security_page(ctx: &Ctx, errors: FieldErrors, status: StatusCode) -> We
             c,
             section: "security".into(),
             has_2fa: user.has_2fa,
+            totp,
+            passkeys_available: ctx.state.sessions.passkeys_available().await,
+            passkeys,
+            recovery_left: factors.map(|f| f.recovery_codes_left).unwrap_or(0),
             admin_needs_2fa: ctx.actor.is_admin_without_2fa(),
             rows,
             errors,
         },
     )
+}
+
+/// Errors a security form can show: a field or general message, and a wrong password or code
+/// (`Unauthorized`) as the message under the password.
+fn security_errors(e: &ch_core::Error) -> Option<FieldErrors> {
+    match e {
+        ch_core::Error::Unauthorized(m) => Some(FieldErrors::default().with("password", m)),
+        other => FieldErrors::from_error(other),
+    }
 }
 
 pub async fn security_get(ctx: Ctx) -> WebResult<Response> {
@@ -355,6 +399,8 @@ pub async fn two_factor_start(ctx: Ctx, _form: FormData) -> WebResult<Response> 
 struct TwoFactorDonePage {
     c: Chrome,
     section: String,
+    heading: String,
+    lead: String,
     codes: Vec<String>,
     codes_text: String,
 }
@@ -379,7 +425,14 @@ pub async fn two_factor_confirm(ctx: Ctx, form: FormData) -> WebResult<Response>
             if let Some(u) = c.user.as_mut() {
                 u.admin_needs_2fa = false;
             }
-            let mut r = ctx.page(&TwoFactorDonePage { c, section: "security".into(), codes, codes_text })?;
+            let mut r = ctx.page(&TwoFactorDonePage {
+                c,
+                section: "security".into(),
+                heading: "Two-factor is on".into(),
+                lead: "From now on, signing in asks for a code from your app as well as your password.".into(),
+                codes,
+                codes_text,
+            })?;
             // Turning two-factor on ended every session. This is the new one.
             add_cookie(&mut r, &session_cookie(&ctx, &on.session));
             Ok(r)
@@ -400,13 +453,121 @@ pub async fn two_factor_confirm(ctx: Ctx, form: FormData) -> WebResult<Response>
 
 pub async fn two_factor_disable(ctx: Ctx, form: FormData) -> WebResult<Response> {
     let current = ctx.session_cookie().unwrap_or("").to_string();
-    match ctx.state.sessions.disable_two_factor(&ctx.actor, &current, form.get("password"), &ctx.client).await {
+    let code: String = form.get("code").chars().filter(|c| !c.is_whitespace()).collect();
+    match ctx.state.sessions.disable_two_factor(&ctx.actor, &current, form.get("password"), &code, &ctx.client).await {
         Ok(session) => {
-            let mut r = ctx.redirect_flash("/settings/security", "ok", "Two-factor is off.");
+            let mut r = ctx.redirect_flash("/settings/security", "ok", "The authenticator app is off.");
             add_cookie(&mut r, &session_cookie(&ctx, &session));
             Ok(r)
         }
-        Err(e) => match FieldErrors::from_error(&e) {
+        Err(e) => match security_errors(&e) {
+            Some(errors) => security_page(&ctx, errors, StatusCode::UNPROCESSABLE_ENTITY).await,
+            None => Err(e.into()),
+        },
+    }
+}
+
+// ---------------------------------------------------------------- passkeys
+
+/// A JSON answer for the page script. Never cached.
+fn json_response(status: StatusCode, body: String) -> Response {
+    let mut r = axum::response::IntoResponse::into_response((status, body));
+    r.headers_mut().insert(axum::http::header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json"));
+    r.headers_mut().insert(axum::http::header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"));
+    r
+}
+
+/// What the script shows when a step fails: a plain sentence, never a detail of the ceremony.
+pub(super) fn json_error(e: &ch_core::Error) -> Response {
+    let (status, text) = match e {
+        ch_core::Error::Conflict(m) | ch_core::Error::Unavailable(m) => (StatusCode::CONFLICT, m.clone()),
+        ch_core::Error::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "Too many tries. Wait a little and try again.".to_string()),
+        ch_core::Error::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "Your sign-in timed out. Sign in again.".to_string()),
+        _ => (StatusCode::BAD_REQUEST, "That did not work. Try again.".to_string()),
+    };
+    json_response(status, serde_json::json!({ "error": text }).to_string())
+}
+
+/// First half of adding a passkey: the options the browser asks the authenticator with.
+pub async fn passkey_begin(ctx: Ctx, _form: FormData) -> WebResult<Response> {
+    ctx.user_id()?;
+    match ctx.state.sessions.begin_passkey_registration(&ctx.actor, &ctx.client).await {
+        Ok(options) => Ok(json_response(StatusCode::OK, options)),
+        Err(e) => Ok(json_error(&e)),
+    }
+}
+
+/// Second half: the answer comes in as a form field so the page can show recovery codes and set
+/// the new session cookie in an ordinary response when this was the first second factor.
+pub async fn passkey_finish(ctx: Ctx, form: FormData) -> WebResult<Response> {
+    ctx.user_id()?;
+    let current = ctx.session_cookie().unwrap_or("").to_string();
+    match ctx.state.sessions.finish_passkey_registration(&ctx.actor, &current, form.get("name"), form.get("credential"), &ctx.client).await
+    {
+        Ok(on) => match on.session {
+            Some(session) => {
+                let codes = on.recovery_codes;
+                let codes_text = codes.join("\n");
+                let mut c = ctx.chrome("Two-factor is on").await.nav("settings");
+                // This request still carries the session from before two-factor (ch-9vo).
+                c.banner = None;
+                if let Some(u) = c.user.as_mut() {
+                    u.admin_needs_2fa = false;
+                }
+                let mut r = ctx.page(&TwoFactorDonePage {
+                    c,
+                    section: "security".into(),
+                    heading: "Passkey added, two-factor is on".into(),
+                    lead: "From now on, signing in asks for this passkey as well as your password.".into(),
+                    codes,
+                    codes_text,
+                })?;
+                add_cookie(&mut r, &session_cookie(&ctx, &session));
+                Ok(r)
+            }
+            None => Ok(ctx.redirect_flash("/settings/security", "ok", "Passkey added.")),
+        },
+        Err(e) => match security_errors(&e) {
+            Some(errors) => security_page(&ctx, errors, StatusCode::UNPROCESSABLE_ENTITY).await,
+            None => Err(e.into()),
+        },
+    }
+}
+
+pub async fn passkey_remove(ctx: Ctx, Path(id): Path<i64>, form: FormData) -> WebResult<Response> {
+    ctx.user_id()?;
+    let current = ctx.session_cookie().unwrap_or("").to_string();
+    let code: String = form.get("code").chars().filter(|c| !c.is_whitespace()).collect();
+    match ctx.state.sessions.remove_passkey(&ctx.actor, &current, id, form.get("password"), &code, &ctx.client).await {
+        Ok(Some(session)) => {
+            let mut r = ctx.redirect_flash("/settings/security", "ok", "Passkey removed. Two-factor is off.");
+            add_cookie(&mut r, &session_cookie(&ctx, &session));
+            Ok(r)
+        }
+        Ok(None) => Ok(ctx.redirect_flash("/settings/security", "ok", "Passkey removed.")),
+        Err(e) => match security_errors(&e) {
+            Some(errors) => security_page(&ctx, errors, StatusCode::UNPROCESSABLE_ENTITY).await,
+            None => Err(e.into()),
+        },
+    }
+}
+
+pub async fn recovery_codes_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
+    ctx.user_id()?;
+    match ctx.state.sessions.regenerate_recovery_codes(&ctx.actor, form.get("password"), &ctx.client).await {
+        Ok(codes) => {
+            let codes_text = codes.join("\n");
+            let c = ctx.chrome("New recovery codes").await.nav("settings");
+            ctx.page(&TwoFactorDonePage {
+                c,
+                section: "security".into(),
+                heading: "New recovery codes".into(),
+                lead: "The old codes no longer work.".into(),
+                codes,
+                codes_text,
+            })
+        }
+        Err(e) => match security_errors(&e) {
             Some(errors) => security_page(&ctx, errors, StatusCode::UNPROCESSABLE_ENTITY).await,
             None => Err(e.into()),
         },
@@ -814,6 +975,10 @@ mod tests {
 // POST /settings/security/2fa/start -> two_factor_start
 // POST /settings/security/2fa/confirm -> two_factor_confirm
 // POST /settings/security/2fa/disable -> two_factor_disable
+// POST /settings/security/passkeys/begin -> passkey_begin
+// POST /settings/security/passkeys/finish -> passkey_finish
+// POST /settings/security/passkeys/{id}/remove -> passkey_remove
+// POST /settings/security/recovery-codes -> recovery_codes_post
 // GET /settings/sessions -> sessions_get
 // POST /settings/sessions/{id}/revoke -> session_revoke
 // GET+POST /settings/keys -> keys_get, keys_post

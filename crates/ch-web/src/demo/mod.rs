@@ -1263,7 +1263,7 @@ impl Sessions for Demo {
             session: NewSession { cookie_value: current.into(), max_age_secs: 3600 },
         })
     }
-    async fn disable_two_factor(&self, _a: &Actor, current: &str, _p: &str, _c: &ClientInfo) -> Result<NewSession> {
+    async fn disable_two_factor(&self, _a: &Actor, current: &str, _p: &str, _code: &str, _c: &ClientInfo) -> Result<NewSession> {
         Ok(NewSession { cookie_value: current.into(), max_age_secs: 3600 })
     }
     async fn peek_link(&self, token: &str) -> Result<LinkPeek> {

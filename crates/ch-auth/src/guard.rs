@@ -246,7 +246,12 @@ impl Guard {
 
 fn is_auth_page(method: &Method, path: &str) -> bool {
     if *method == Method::POST {
-        return path == "/login" || path == "/login/two-factor" || path.starts_with("/invite/") || path.starts_with("/password/");
+        return path == "/login"
+            || path == "/login/two-factor"
+            || path == "/login/two-factor/passkey"
+            || path == "/login/two-factor/passkey/begin"
+            || path.starts_with("/invite/")
+            || path.starts_with("/password/");
     }
     // Looking up a token is a guess at a secret, so a GET of an invite or link page counts too.
     path.starts_with("/invite/") || path.starts_with("/password/")
@@ -345,6 +350,8 @@ mod tests {
     fn auth_page_set() {
         assert!(is_auth_page(&Method::POST, "/login"));
         assert!(is_auth_page(&Method::POST, "/login/two-factor"));
+        assert!(is_auth_page(&Method::POST, "/login/two-factor/passkey"));
+        assert!(is_auth_page(&Method::POST, "/login/two-factor/passkey/begin"));
         assert!(is_auth_page(&Method::GET, "/invite/chi_x"));
         assert!(is_auth_page(&Method::GET, "/password/cho_x"));
         assert!(!is_auth_page(&Method::GET, "/login"));

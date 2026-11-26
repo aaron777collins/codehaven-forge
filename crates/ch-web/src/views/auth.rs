@@ -20,6 +20,7 @@ use std::collections::HashMap;
 const BAD_LOGIN: &str = "That username and password don't match.";
 /// The one answer to "forgot your password", whether or not an account matched.
 const RESET_SENT: &str = "If an account here matches, we have emailed it a link to choose a new password. The link works for an hour.";
+const BAD_PASSKEY: &str = "That passkey did not work. Try again, or use a recovery code.";
 const BAD_CODE: &str = "That code did not work. Try the next one, or use a recovery code.";
 
 fn notice_text(code: &str) -> Option<&'static str> {
@@ -120,13 +121,23 @@ struct TwoFactorPage {
     csrf: String,
     next: String,
     error: String,
+    /// The account has an authenticator app (a recovery code works whatever this says).
+    totp: bool,
+    /// The account has a passkey and this site can ask for it.
+    passkeys: bool,
 }
 
 async fn two_factor_page(ctx: &Ctx, next: &str, error: &str) -> WebResult<Response> {
     let (token, cookie) = ctx.anon_csrf();
     let mut c = ctx.chrome("Two-factor code").await;
     c.csrf = token.clone();
-    let mut r = ctx.page(&TwoFactorPage { c, csrf: token, next: next.into(), error: error.into() })?;
+    // What the pending sign-in can answer with. When it cannot be looked up, ask for a code.
+    let pending = ctx.cookie(PENDING_COOKIE).unwrap_or("").to_string();
+    let (totp, passkeys) = match ctx.state.sessions.pending_factors(&pending).await {
+        Ok(Some(f)) => (f.totp, f.passkeys),
+        _ => (true, false),
+    };
+    let mut r = ctx.page(&TwoFactorPage { c, csrf: token, next: next.into(), error: error.into(), totp, passkeys })?;
     if let Some(cookie) = cookie {
         add_cookie(&mut r, &cookie);
     }
@@ -158,6 +169,42 @@ pub async fn two_factor_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
             Ok(r)
         }
         None => two_factor_page(&ctx, &next, BAD_CODE).await,
+    }
+}
+
+/// First half of a passkey sign-in: the options the browser asks the authenticator with. Needs the
+/// pending cookie the password step set, and the same CSRF check as every post.
+pub async fn passkey_begin(ctx: Ctx, _form: FormData) -> WebResult<Response> {
+    let Some(pending) = ctx.cookie(PENDING_COOKIE).map(str::to_string) else {
+        return Ok(super::settings::json_error(&Error::unauthorized()));
+    };
+    match ctx.state.sessions.begin_passkey_sign_in(&pending, &ctx.client).await {
+        Ok(options) => {
+            let mut r = axum::response::IntoResponse::into_response((StatusCode::OK, options));
+            r.headers_mut().insert(axum::http::header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json"));
+            r.headers_mut().insert(axum::http::header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"));
+            Ok(r)
+        }
+        Err(e) => Ok(super::settings::json_error(&e)),
+    }
+}
+
+/// Second half: the authenticator's answer arrives as a form field, like a code does.
+pub async fn passkey_post(ctx: Ctx, form: FormData) -> WebResult<Response> {
+    let next = next_of(form.get("next"));
+    let Some(pending) = ctx.cookie(PENDING_COOKIE).map(str::to_string) else { return Ok(redirect("/login")) };
+    let credential = form.get("credential");
+    if credential.is_empty() {
+        return two_factor_page(&ctx, &next, BAD_PASSKEY).await;
+    }
+    match ctx.state.sessions.complete_passkey_sign_in(&pending, credential, &ctx.client).await? {
+        Some(s) => {
+            let mut r = redirect(&next);
+            add_cookie(&mut r, &session_cookie(&ctx, &s));
+            add_cookie(&mut r, &ctx.clear_cookie(PENDING_COOKIE, "/login"));
+            Ok(r)
+        }
+        None => two_factor_page(&ctx, &next, BAD_PASSKEY).await,
     }
 }
 

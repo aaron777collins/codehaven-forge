@@ -458,10 +458,12 @@ impl GitCore {
     /// parent or none. A grant that was held back until now must not start to work because the
     /// repository went away (ch-w3x). So before it goes, the grants of people who cannot see it
     /// are withdrawn from every private fork below it: collaborator grants, and a team's grant
-    /// on a fork when one of its members is such a person. Organization members cannot be held
-    /// back one by one (their base permission covers the organization's repositories), so when an
-    /// organization's fork below would open to members who cannot see this repository, the delete
-    /// is refused and says so. Site admins and owners are never held back.
+    /// on a fork when one of its members is such a person. A member's base permission in an
+    /// organization cannot be withdrawn for one person, so each such member gets a hold on that
+    /// fork (`repo_access_holds`, ch-ze4): they keep only what they could see before, which is
+    /// nothing on that fork, and the delete goes ahead. A grant made to the member by name later
+    /// works, and the hold ends when they leave the organization. Site admins and owners are
+    /// never held back.
     async fn withdraw_unseen_grants(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -521,15 +523,26 @@ impl GitCore {
                 unseeing.push(u);
             }
         }
-        if let Some((_, org, _)) = org_members.iter().find(|m| seen.get(&m.0).copied().unwrap_or(false)) {
-            return Err(Error::invalid(
-                "Repository",
-                "delete",
-                format!(
-                    "A private fork below this repository belongs to the organization {org}, and some of its members cannot see this repository. Deleting it would open that fork to them. Remove those members, or set the organization's base permission to none, and delete again."
-                ),
-            ));
+        let mut held_forks = Vec::new();
+        let mut held_users = Vec::new();
+        for (user, _, fork) in &org_members {
+            if seen.get(user).copied().unwrap_or(false) {
+                held_forks.push(*fork);
+                held_users.push(*user);
+            }
         }
+        let held = if held_forks.is_empty() {
+            0
+        } else {
+            sqlx::query(
+                "INSERT INTO repo_access_holds (repo_id, user_id) SELECT * FROM UNNEST($1::bigint[], $2::bigint[]) ON CONFLICT DO NOTHING",
+            )
+            .bind(&held_forks)
+            .bind(&held_users)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected()
+        };
         if unseeing.is_empty() {
             return Ok(());
         }
@@ -548,7 +561,7 @@ impl GitCore {
         .execute(&mut **tx)
         .await?
         .rows_affected();
-        if collab + teams > 0 {
+        if collab + teams + held > 0 {
             self.audit
                 .record(
                     tx,
@@ -562,6 +575,7 @@ impl GitCore {
                             "forks": forks.len(),
                             "collaborator_grants": collab,
                             "team_grants": teams,
+                            "org_members_held_back": held,
                             "why": "the people holding them could not see the deleted repository, so the grants did nothing until now",
                         }),
                     ),
@@ -571,9 +585,13 @@ impl GitCore {
         Ok(())
     }
 
-    /// Open pull requests into a repository that is being deleted go with it. Each one is
-    /// recorded in the audit log first (who opened it, from which fork) so it is not dropped
-    /// without a trace (ch-w3x). Returns how many there were.
+    /// Open pull requests into a repository that is being deleted go with it, and a pull request
+    /// cannot keep a note once the repository is gone. So each one is recorded in the audit log
+    /// first (who opened it, from which fork), and its author gets a closing note in their inbox
+    /// (ch-697), written here in the same transaction: the inbox row belongs to no repository, so
+    /// the delete leaves it. An author who already had a row for the pull request (a comment or a
+    /// review makes one, tied to the repository) has it rewritten into the note, unread. The person deleting is not told about their own pull request.
+    /// Returns how many there were.
     async fn note_open_pulls(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -581,15 +599,15 @@ impl GitCore {
         client: &ClientInfo,
         repo: &Repo,
     ) -> Result<usize> {
-        let open: Vec<(i64, String, String, Option<String>)> = sqlx::query_as(
-            "SELECT i.number, i.title, (SELECT username::text FROM users WHERE id = i.author_id),
+        let open: Vec<(i64, i64, String, i64, String, Option<String>)> = sqlx::query_as(
+            "SELECT i.id, i.number, i.title, i.author_id, (SELECT username::text FROM users WHERE id = i.author_id),
                     (SELECT (SELECT username::text FROM users WHERE id = h.owner_id) || '/' || h.name::text FROM repositories h WHERE h.id = p.head_repo_id AND h.id <> p.repo_id)
                FROM pull_requests p JOIN issues i ON i.id = p.issue_id WHERE p.repo_id = $1 AND i.open ORDER BY i.number",
         )
         .bind(repo.id.0)
         .fetch_all(&mut **tx)
         .await?;
-        for (number, title, author, from) in &open {
+        for (issue_id, number, title, author_id, author, from) in &open {
             let ev = AuditEvent::new(actor, client, action::PULL_CLOSED_REPO_DELETED, Outcome::Success)
                 .target("repository", repo.id.0)
                 .details(serde_json::json!({
@@ -601,6 +619,22 @@ impl GitCore {
                     "note": "closed because the repository it was open against was deleted",
                 }));
             self.audit.record(tx, ev).await?;
+            if actor.user_id().is_some_and(|u| u.0 == *author_id) {
+                continue;
+            }
+            // `state_change` reads "Its state changed" in the inbox. Only a live person gets one.
+            sqlx::query(
+                "INSERT INTO notifications (user_id, repo_id, reason, subject_type, subject_id, title, unread, done, updated_at)
+                 SELECT u.id, NULL, 'state_change', 'pull', $2, $3, true, false, now()
+                   FROM users u WHERE u.id = $1 AND u.kind = 'user' AND u.suspended_at IS NULL
+                 ON CONFLICT (user_id, subject_type, subject_id) DO UPDATE
+                    SET repo_id = NULL, reason = 'state_change', title = EXCLUDED.title, unread = true, done = false, updated_at = now()",
+            )
+            .bind(author_id)
+            .bind(issue_id)
+            .bind(format!("Your pull request #{number} \"{title}\" was closed: {} was deleted.", repo.full_name()))
+            .execute(&mut **tx)
+            .await?;
         }
         Ok(open.len())
     }

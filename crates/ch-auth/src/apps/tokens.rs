@@ -56,7 +56,7 @@ fn label_actor(user: i64, grant: i64) -> Actor {
 }
 
 async fn person_ok(conn: &mut sqlx::PgConnection, user: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT suspended_at IS NULL AND totp_enabled_at IS NOT NULL AND kind = 'user' FROM users WHERE id = $1")
+    Ok(sqlx::query_scalar("SELECT suspended_at IS NULL AND ch_has_second_factor(id) AND kind = 'user' FROM users WHERE id = $1")
         .bind(user)
         .fetch_optional(&mut *conn)
         .await?
@@ -338,7 +338,7 @@ pub(super) async fn app_actor(core: &Core, token: &str) -> Result<Option<Actor>>
          FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id JOIN users u ON u.id = g.user_id
          WHERE t.token_hash = $1 AND t.kind = 'access' AND t.revoked_at IS NULL AND t.expires_at > now()
            AND g.revoked_at IS NULL AND g.expires_at > now() AND g.activated_at IS NOT NULL AND g.resource = $2
-           AND u.suspended_at IS NULL AND u.kind = 'user' AND u.totp_enabled_at IS NOT NULL",
+           AND u.suspended_at IS NULL AND u.kind = 'user' AND ch_has_second_factor(u.id)",
     )
     .bind(dbt::hash_token(token))
     .bind(core.config.mcp_resource())

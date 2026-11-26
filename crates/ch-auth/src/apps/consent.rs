@@ -303,13 +303,12 @@ pub(super) async fn approve(
     let mut tx = svc.core.db.begin().await?;
     let Some(req) = take_request(&mut tx, user, session_cookie, &c.request_id).await? else { return Err(gone()) };
     // Rechecked inside the transaction: the person must still be allowed to do this.
-    let ok: bool = sqlx::query_scalar(
-        "SELECT suspended_at IS NULL AND totp_enabled_at IS NOT NULL AND kind = 'user' FROM users WHERE id = $1 FOR SHARE",
-    )
-    .bind(user.0)
-    .fetch_optional(&mut *tx)
-    .await?
-    .unwrap_or(false);
+    let ok: bool =
+        sqlx::query_scalar("SELECT suspended_at IS NULL AND ch_has_second_factor(id) AND kind = 'user' FROM users WHERE id = $1 FOR SHARE")
+            .bind(user.0)
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or(false);
     if !ok {
         return Err(Error::forbidden("Turn on two-factor sign-in, then connect again."));
     }

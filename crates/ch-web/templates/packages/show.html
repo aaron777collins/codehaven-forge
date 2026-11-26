@@ -4,20 +4,20 @@
 <main id="main" class="page">
   <h1>{{ p.name }} <span class="chip">{{ p.kind_label }}</span></h1>
   <p class="muted">Owned by <a href="/{{ p.owner }}">{{ p.owner }}</a>{% if let Some(h) = p.repo_href %} <span class="dot" aria-hidden="true">&middot;</span> linked to <a href="{{ h }}">{{ p.repo_text }}</a>{% endif %} <span class="dot" aria-hidden="true">&middot;</span> {% call ui::time(p.when) %}</p>
-  {% if p.orphaned %}<p class="muted">Its repository was deleted or it was unlinked, so only its owner can use it.</p>{% endif %}
+  {% if let Some(n) = p.note %}<p class="muted">{{ n }}</p>{% endif %}
   {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
 
 {% if p.is_container %}
   <section class="card pad stack">
     <h3>Pull</h3>
-    <pre><code>docker pull {{ docker_host }}/{{ p.owner }}/{{ p.name }}{% if let Some(t) = p.latest %}:{{ t }}{% endif %}
+    <pre class="wrap"><code>docker pull {{ docker_host }}/{{ p.owner }}/{{ p.name }}{% if let Some(t) = p.latest %}:{{ t }}{% endif %}
 echo $TOKEN | docker login {{ docker_host }} -u {{ username }} --password-stdin</code></pre>
     <p class="hint">Use an access token from Settings, Tokens as the password.</p>
   </section>
 {% else %}
   <section class="card pad stack">
     <h3>Install</h3>
-    <pre><code>dotnet nuget add source {{ host }}/nuget/{{ p.owner }}/v3/index.json --name codehaven --username {{ username }} --password $TOKEN --store-password-in-clear-text
+    <pre class="wrap"><code>dotnet nuget add source {{ host }}/nuget/{{ p.owner }}/v3/index.json --name codehaven --username {{ username }} --password $TOKEN --store-password-in-clear-text
 dotnet add package {{ p.name }}</code></pre>
     <p class="hint">Use an access token from Settings, Tokens as the password.</p>
   </section>

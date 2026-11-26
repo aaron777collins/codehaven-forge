@@ -72,6 +72,16 @@ pub struct PublicRoute {
 pub const PUBLIC_ROUTES: &[PublicRoute] = &[
     PublicRoute { methods: &["GET", "POST"], pattern: "/login", why: "Signing in" },
     PublicRoute { methods: &["GET", "POST"], pattern: "/login/two-factor", why: "Second step of signing in" },
+    PublicRoute {
+        methods: &["POST"],
+        pattern: "/login/two-factor/passkey/begin",
+        why: "Second step of signing in with a passkey (ch-wf0): hands out a challenge only to a half signed-in session, and says nothing otherwise",
+    },
+    PublicRoute {
+        methods: &["POST"],
+        pattern: "/login/two-factor/passkey",
+        why: "Second step of signing in with a passkey (ch-wf0): needs the half signed-in session, counts as a wrong code when it fails",
+    },
     PublicRoute { methods: &["GET", "POST"], pattern: "/invite/{token}", why: "Accepting an invite" },
     PublicRoute {
         methods: &["GET", "POST"],
@@ -771,8 +781,8 @@ mod tests {
         );
         assert_eq!(
             PUBLIC_ROUTES.len(),
-            11 + 5 + 1 + 1,
-            "the eleven that existed before, plus five, plus forgot password (ch-bfa), plus the toolkit cache link (ch-ctk.6)"
+            11 + 5 + 1 + 1 + 2,
+            "the eleven that existed before, plus five, plus forgot password (ch-bfa), plus the toolkit cache link (ch-ctk.6), plus the two passkey steps of sign-in (ch-wf0)"
         );
         for p in [
             "/oauth/register",
@@ -876,6 +886,9 @@ mod tests {
         assert!(is_public(&Method::POST, "/login"));
         assert!(is_public(&Method::HEAD, "/login"));
         assert!(is_public(&Method::GET, "/login/two-factor"));
+        assert!(is_public(&Method::POST, "/login/two-factor/passkey/begin"));
+        assert!(is_public(&Method::POST, "/login/two-factor/passkey"));
+        assert!(!is_public(&Method::GET, "/login/two-factor/passkey"));
         assert!(is_public(&Method::GET, "/invite/chi_abc"));
         assert!(is_public(&Method::POST, "/invite/chi_abc"));
         assert!(is_public(&Method::GET, "/password/tok"));

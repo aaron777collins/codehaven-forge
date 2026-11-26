@@ -622,7 +622,8 @@ async fn every_trigger_ends_every_grant_of_the_person(pool: PgPool) {
     // Turning two-factor off.
     become_person(&mut f, "p4").await;
     let t = connect(&f, RepoChoice::All, RepoChoice::None, RepoChoice::None).await;
-    f.c.state.twofactor.disable(&f.actor, &f.cookie, PW, &c1()).await.unwrap();
+    let code = f.codes.borrow()[0].clone();
+    f.c.state.twofactor.disable(&f.actor, &f.cookie, PW, &code, &c1()).await.unwrap();
     assert_eq!(live(&f).await, 0, "two-factor off");
     assert!(f.c.state.authn.from_app_bearer(&t.access_token, &c1()).await.is_err());
     // Suspension.

@@ -136,6 +136,8 @@ a:hover { text-decoration: underline; }
 code, pre, kbd, samp { font-family: var(--mono); font-size: 0.9em; }
 code { background: var(--surface-2); padding: 0.1em 0.35em; border-radius: var(--radius-sm); }
 pre { margin: 0; }
+/* A command a person copies: it wraps inside its card instead of scrolling, so none of it is cut off at a narrow width. */
+pre.wrap { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 pre.plain { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s3) var(--s4); overflow: auto; white-space: pre; }
 hr { border: 0; border-top: 1px solid var(--border); margin: var(--s4) 0; }
 ul, ol { padding-left: 1.2em; margin: 0 0 var(--s3); }

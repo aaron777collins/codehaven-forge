@@ -183,6 +183,25 @@ async fn pinned_issues_have_a_divider_and_a_closed_one_leaves_the_open_tab(pool:
     assert!(!page.contains("pinned-divider"));
 }
 
+/// ch-4ls: a pinned issue is in the Pinned block only, not again under Other issues, and a repository
+/// whose only issues are pinned does not say it has none.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_pinned_issue_is_not_listed_again_under_other_issues(pool: PgPool) {
+    let h = harness(pool).await;
+    let alice = user(&h, "alice").await;
+    let repo = make_repo(&h, &alice, "demo", Visibility::Private).await;
+    h.s.issues.create(&alice.actor, new_issue(repo, "Zebra pinned"), &c()).await.unwrap();
+    h.s.issues.set_pinned(&alice.actor, repo, 1, true, &c()).await.unwrap();
+    let (_, _, page) = send(&h, &alice, Method::GET, "/alice/demo/issues", "").await;
+    assert_eq!(page.matches("Zebra pinned").count(), 1, "listed once, in the Pinned block");
+    assert!(!page.contains("No issues yet") && !page.contains("Other issues"), "nothing else to list");
+    h.s.issues.create(&alice.actor, new_issue(repo, "Plain two"), &c()).await.unwrap();
+    let (_, _, page) = send(&h, &alice, Method::GET, "/alice/demo/issues", "").await;
+    assert_eq!(page.matches("Zebra pinned").count(), 1);
+    assert_eq!(page.matches("Plain two").count(), 1);
+    assert!(page.contains("Other issues"));
+}
+
 async fn add_collaborator(h: &H, owner: &Who, repo: RepoId, who: &Who, perm: Permission) {
     h.s.repos.set_collaborator(&owner.actor, repo, who.id, perm, &c()).await.unwrap();
 }
@@ -273,6 +292,37 @@ async fn make_package(pool: &PgPool, owner: &Who, repo: Option<RepoId>, kind: &s
 }
 
 /// ch-2fc: who sees a package, who may link and delete it, and that unlinking never widens.
+/// ch-0kp: a package without a repository says why: never linked, unlinked by its owner, or its
+/// repository was deleted. Linking again clears the reason.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_package_without_a_repository_keeps_the_reason_it_has_none(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let repo = make_repo(&h, &alice, "demo", Visibility::Private).await;
+    let gone = make_repo(&h, &alice, "gone", Visibility::Private).await;
+    make_package(&pool, &alice, None, "container", "fresh", &["latest"]).await;
+    make_package(&pool, &alice, Some(repo), "container", "demo", &["latest"]).await;
+    make_package(&pool, &alice, Some(gone), "container", "gone", &["latest"]).await;
+    let p = packages(&h);
+    let p = &p.0;
+    let state = |name: &'static str| {
+        let p = p.clone();
+        let who = alice.actor.clone();
+        async move {
+            let s = p.detail(&who, "alice", "container", name).await.unwrap().summary;
+            (s.repo.is_some(), s.orphaned, s.orphan_reason)
+        }
+    };
+    assert_eq!(state("fresh").await, (false, false, None), "never linked: not orphaned, no reason");
+    assert_eq!(state("demo").await, (true, false, None));
+    p.unlink(&alice.actor, "alice", "container", "demo", &c()).await.unwrap();
+    assert_eq!(state("demo").await, (false, true, Some("unlinked".to_string())));
+    h.s.repos.delete(&alice.actor, gone, &c()).await.unwrap();
+    assert_eq!(state("gone").await, (false, true, Some("repo_deleted".to_string())));
+    p.link(&alice.actor, "alice", "container", "demo", "alice/demo", true, &c()).await.unwrap();
+    assert_eq!(state("demo").await, (true, false, None), "linking again clears it");
+}
+
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]
 async fn packages_follow_their_repository_and_only_the_owner_changes_them(pool: PgPool) {
     let h = harness(pool.clone()).await;

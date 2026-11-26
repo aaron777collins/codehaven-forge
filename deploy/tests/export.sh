@@ -258,6 +258,35 @@ else
   skip "the author from git config (no gitleaks and no CH_GITLEAKS_IMAGE)"
 fi
 
+# 15. No LICENSE: the export is refused before anything else, and one that is empty or not the MIT
+# license is refused too. Nothing is left behind. These need no scanner: the check comes first.
+fresh_copy
+git -C "$COPY" rm -q LICENSE
+git -c core.hooksPath=/dev/null -C "$COPY" commit -q -m "drop license"
+run_export "$T/o15a" "${AUTHOR[@]}"
+want_refusal "an export without a LICENSE is refused" "LICENSE"
+[ ! -e "$T/o15a" ] && ok "no output dir was left behind (no LICENSE)" || bad "an output dir was left behind (no LICENSE)"
+fresh_copy
+: >"$COPY/LICENSE"
+git -C "$COPY" add -A
+git -c core.hooksPath=/dev/null -C "$COPY" commit -q -m "empty license"
+run_export "$T/o15b" "${AUTHOR[@]}"
+want_refusal "an empty LICENSE is refused" "LICENSE"
+fresh_copy
+printf 'All rights reserved.\n' >"$COPY/LICENSE"
+git -C "$COPY" add -A
+git -c core.hooksPath=/dev/null -C "$COPY" commit -q -m "other license"
+run_export "$T/o15c" "${AUTHOR[@]}"
+want_refusal "a LICENSE that is not the MIT license is refused" "LICENSE"
+if [ "$scanner" = yes ]; then
+  fresh_copy
+  run_export "$T/o15d" "${AUTHOR[@]}"
+  [ "$RC" -eq 0 ] && [ -s "$T/o15d/LICENSE" ] && grep -q '^MIT License$' "$T/o15d/LICENSE" \
+    && ok "the snapshot carries the LICENSE" || bad "the snapshot carries the LICENSE"
+else
+  skip "the snapshot carries the LICENSE (no gitleaks and no CH_GITLEAKS_IMAGE)"
+fi
+
 # --- the count --------------------------------------------------------------------------------------
 
 printf 'export.sh: %d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skipd"

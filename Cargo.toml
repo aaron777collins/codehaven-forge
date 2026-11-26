@@ -116,6 +116,12 @@ sha1 = "0.10"
 subtle = "2"
 url = "2"
 ssh-key = { version = "0.6", default-features = false, features = ["std", "alloc", "ecdsa"] }
+# WebAuthn passkeys as a second factor (ch-wf0). 0.6 is pure Rust (no OpenSSL). The state of a
+# ceremony in flight is kept in the database between the two requests, which needs the
+# serialisation feature; nothing but our own table ever holds it.
+webauthn-rs = { version = "0.6", default-features = false, features = ["danger-allow-state-serialisation"] }
+# A software authenticator for the tests: it makes and answers real ceremonies without a device.
+webauthn-authenticator-rs = { version = "0.6", default-features = false, features = ["softpasskey"] }
 
 # Git, SSH and compression (git stream)
 russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }

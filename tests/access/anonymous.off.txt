@@ -26,6 +26,8 @@ POST /api/runner/v1/register
 POST /invite/{token}
 POST /login
 POST /login/two-factor
+POST /login/two-factor/passkey
+POST /login/two-factor/passkey/begin
 POST /oauth/revoke
 POST /oauth/token
 POST /password/forgot

@@ -505,3 +505,217 @@ async fn deleting_a_private_root_does_not_open_its_forks_to_people_who_were_held
     assert_eq!(details["number"], pr.issue.number);
     assert_eq!(details["author"], "carol");
 }
+
+/// ch-ze4: a read collaborator can make an organization, add an account that cannot see the
+/// repository and fork the repository into it. Deleting the repository must not be blocked by
+/// that (the owner does not control the organization), and it must not open the fork to the
+/// member either: they keep only what they could see before, which is nothing.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn deleting_a_private_repository_goes_ahead_and_holds_blind_org_members_back_from_the_fork(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let bob = user(&h, "bob").await;
+    let dave = user(&h, "dave").await;
+    let erin = user(&h, "erin").await;
+    let root = private_repo(&h, &alice, "secret").await;
+    h.s.repos.set_collaborator(&alice.1, root, bob.0, Permission::Read, &c()).await.unwrap();
+    h.s.repos.set_collaborator(&alice.1, root, erin.0, Permission::Read, &c()).await.unwrap();
+    // Bob's organization (base permission read), with Dave (never saw the root) and Erin (did).
+    let org = h.s.orgs.create(&bob.1, "crew", "Crew", &c()).await.unwrap();
+    let org_id = ch_core::OrgId(org.id.0);
+    h.s.orgs.set_member(&bob.1, org_id, dave.0, ch_core::services::OrgRole::Member, &c()).await.unwrap();
+    h.s.orgs.set_member(&bob.1, org_id, erin.0, ch_core::services::OrgRole::Member, &c()).await.unwrap();
+    let fork = h.s.repos.fork(&bob.1, root, UserId(org.id.0), &c()).await.unwrap().id;
+    assert_eq!(perm(&h, &dave.1, fork).await, Permission::None, "held back by the lineage rule while the root stands");
+    assert_eq!(perm(&h, &erin.1, fork).await, Permission::Read, "Erin sees the root, so she sees the fork");
+
+    // The delete is not refused.
+    h.s.repos.delete(&alice.1, root, &c()).await.unwrap();
+
+    assert_eq!(perm(&h, &dave.1, fork).await, Permission::None, "the delete did not open the fork to Dave");
+    assert_eq!(perm(&h, &erin.1, fork).await, Permission::Read, "Erin keeps what she could see");
+    assert_eq!(perm(&h, &bob.1, fork).await, Permission::Admin, "the organization's owner keeps the fork");
+    let (holds,): (i64,) = sqlx::query_as("SELECT count(*) FROM repo_access_holds").fetch_one(&pool).await.unwrap();
+    assert_eq!(holds, 1, "one hold, for Dave");
+    let details: serde_json::Value =
+        sqlx::query_scalar("SELECT details FROM audit_events WHERE action = 'repo.fork_grants_withdrawn'").fetch_one(&pool).await.unwrap();
+    assert_eq!(details["org_members_held_back"], 1);
+
+    // A grant made to Dave by name afterwards is a decision of the fork's admin, and it works.
+    h.s.repos.set_collaborator(&bob.1, fork, dave.0, Permission::Read, &c()).await.unwrap();
+    assert_eq!(perm(&h, &dave.1, fork).await, Permission::Read);
+    h.s.repos.remove_collaborator(&bob.1, fork, dave.0, &c()).await.unwrap();
+    assert_eq!(perm(&h, &dave.1, fork).await, Permission::None, "and removing it puts him back to held");
+
+    // Leaving the organization ends the hold, so a person who joins again is an ordinary member.
+    h.s.orgs.remove_member(&bob.1, org_id, dave.0, &c()).await.unwrap();
+    let (holds,): (i64,) = sqlx::query_as("SELECT count(*) FROM repo_access_holds").fetch_one(&pool).await.unwrap();
+    assert_eq!(holds, 0);
+    h.s.orgs.set_member(&bob.1, org_id, dave.0, ch_core::services::OrgRole::Member, &c()).await.unwrap();
+    assert_eq!(perm(&h, &dave.1, fork).await, Permission::Read, "a new membership is judged anew");
+}
+
+/// ch-697: deleting a repository takes its open pull requests with it. Their authors are told in
+/// the app, and the note outlives the repository. The person deleting is not told about their own.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn deleting_a_repository_tells_the_authors_of_the_open_pull_requests_it_took(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let carol = user(&h, "carol").await;
+    let root =
+        h.s.repos
+            .create(
+                &alice.1,
+                NewRepo {
+                    owner_id: alice.0,
+                    name: "open".into(),
+                    description: String::new(),
+                    visibility: Visibility::Public,
+                    default_branch: None,
+                    auto_init: true,
+                },
+                &c(),
+            )
+            .await
+            .unwrap()
+            .id;
+    let carols = h.s.repos.fork(&carol.1, root, carol.0, &c()).await.unwrap().id;
+    topic_branch(&h, &carol.1, carols, "topic").await;
+    topic_branch(&h, &alice.1, root, "mine").await;
+    let new_pull = |title: &str, head_repo_id: RepoId, head_ref: &str| NewPull {
+        repo_id: root,
+        title: title.into(),
+        body: String::new(),
+        head_repo_id,
+        head_ref: head_ref.into(),
+        base_ref: "main".into(),
+        draft: false,
+    };
+    let theirs = h.s.pulls.create(&carol.1, new_pull("Carol's change", carols, "topic"), &c()).await.unwrap();
+    h.s.pulls.create(&alice.1, new_pull("Alice's own", root, "mine"), &c()).await.unwrap();
+    assert_eq!(h.s.notifications.unread_count(&carol.1).await.unwrap(), 0);
+
+    h.s.repos.delete(&alice.1, root, &c()).await.unwrap();
+
+    let inbox = h.s.notifications.inbox(&carol.1, false, 1, 30).await.unwrap();
+    assert_eq!(inbox.len(), 1, "{inbox:?}");
+    let n = &inbox[0];
+    assert!(n.unread && n.repo_id.is_none(), "it belongs to no repository, so the delete left it");
+    assert_eq!(n.subject_id, theirs.issue.id.0);
+    for part in ["#1", "Carol's change", "alice/open", "deleted"] {
+        assert!(n.title.contains(part), "{part} in {:?}", n.title);
+    }
+    assert_eq!(h.s.notifications.unread_count(&carol.1).await.unwrap(), 1);
+    assert_eq!(h.s.notifications.inbox(&alice.1, false, 1, 30).await.unwrap().len(), 0, "nobody tells Alice about her own pull request");
+}
+
+/// ch-697: an author who already has an inbox row for the pull request (a comment or a review
+/// made one) still gets the closing note. The old row belongs to the repository and would go with
+/// it, so it is rewritten into the note: unread, not done, no repository.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn the_closing_note_reaches_an_author_who_already_had_an_inbox_row(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let carol = user(&h, "carol").await;
+    let root =
+        h.s.repos
+            .create(
+                &alice.1,
+                NewRepo {
+                    owner_id: alice.0,
+                    name: "busy".into(),
+                    description: String::new(),
+                    visibility: Visibility::Public,
+                    default_branch: None,
+                    auto_init: true,
+                },
+                &c(),
+            )
+            .await
+            .unwrap()
+            .id;
+    let carols = h.s.repos.fork(&carol.1, root, carol.0, &c()).await.unwrap().id;
+    topic_branch(&h, &carol.1, carols, "topic").await;
+    let theirs =
+        h.s.pulls
+            .create(
+                &carol.1,
+                NewPull {
+                    repo_id: root,
+                    title: "Carol's change".into(),
+                    body: String::new(),
+                    head_repo_id: carols,
+                    head_ref: "topic".into(),
+                    base_ref: "main".into(),
+                    draft: false,
+                },
+                &c(),
+            )
+            .await
+            .unwrap();
+    // What a comment from Alice leaves behind: a row tied to the repository, already read and done.
+    sqlx::query(
+        "INSERT INTO notifications (user_id, repo_id, reason, subject_type, subject_id, title, unread, done)
+         VALUES ($1, $2, 'author', 'pull', $3, 'old', false, true)
+         ON CONFLICT (user_id, subject_type, subject_id) DO UPDATE SET repo_id = $2, reason = 'author', title = 'old', unread = false, done = true",
+    )
+    .bind(carol.0 .0)
+    .bind(root.0)
+    .bind(theirs.issue.id.0)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    h.s.repos.delete(&alice.1, root, &c()).await.unwrap();
+
+    let inbox = h.s.notifications.inbox(&carol.1, false, 1, 30).await.unwrap();
+    assert_eq!(inbox.len(), 1, "{inbox:?}");
+    let n = &inbox[0];
+    assert!(n.unread && n.repo_id.is_none(), "{n:?}");
+    assert!(n.title.contains("busy") && n.title.contains("deleted"), "{:?}", n.title);
+    assert_eq!(h.s.notifications.unread_count(&carol.1).await.unwrap(), 1);
+}
+
+/// ch-6ko: a queued job on a locked fork whose run cannot be cancelled must not be found again
+/// and again. A run that is already completed refuses a cancel, so a queued job under one stands
+/// in for a cancel that fails: the job is marked failed with a plain reason, after a few tries.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_locked_fork_job_whose_run_cannot_be_cancelled_is_failed_not_retried_without_end(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let bob = user(&h, "bob").await;
+    sqlx::query("UPDATE users SET can_run_ci = true").execute(&pool).await.unwrap();
+    let parent = private_repo(&h, &alice, "secret").await;
+    h.s.repos.set_collaborator(&alice.1, parent, bob.0, Permission::Read, &c()).await.unwrap();
+    let fork = h.s.repos.fork(&bob.1, parent, bob.0, &c()).await.unwrap().id;
+    add_workflow(&h, &bob.1, fork).await;
+    let run = dispatch(&h, &bob.1, fork).await.unwrap();
+    let runner: i64 = sqlx::query_scalar(
+        "INSERT INTO runners (name, labels, credential_hash) VALUES ('r', ARRAY['ubuntu-latest'], decode(repeat('ab', 32), 'hex')) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let ctx = ch_ci::ctx::Ctx::from_state(&h.s);
+    h.s.repos.remove_collaborator(&alice.1, parent, bob.0, &c()).await.unwrap();
+    assert!(ch_ci::triggers::fork_locked(&ctx, fork).await.unwrap());
+    // The run says it is finished while its job still waits: a cancel is refused.
+    sqlx::query("UPDATE workflow_runs SET status = 'completed', conclusion = 'cancelled' WHERE id = $1")
+        .bind(run.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let labels = vec!["ubuntu-latest".to_string()];
+    let got = tokio::time::timeout(std::time::Duration::from_secs(20), ch_ci::runner_api::try_claim(&ctx, runner, &labels, None))
+        .await
+        .expect("the request ended instead of spinning on the same job")
+        .unwrap();
+    assert!(got.is_none(), "nothing is handed out");
+    let (status, conclusion): (String, Option<String>) =
+        sqlx::query_as("SELECT status, conclusion FROM workflow_jobs WHERE run_id = $1 ORDER BY id LIMIT 1")
+            .bind(run.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((status.as_str(), conclusion.as_deref()), ("completed", Some("failure")), "the job is marked failed, not left queued");
+}

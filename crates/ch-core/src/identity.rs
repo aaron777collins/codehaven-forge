@@ -14,7 +14,7 @@
 //!   `Set-Cookie` header with `access::session_set_cookie`.
 
 use crate::actor::{Actor, Permission};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ids::*;
 use crate::model::{ClientInfo, LinkPurpose, User};
 use async_trait::async_trait;
@@ -92,6 +92,24 @@ pub trait Credentials: Send + Sync {
     /// Finishes a `TwoFactorRequired` sign-in with a TOTP code or a recovery code. Returns a
     /// fresh cookie: the id changes when the session becomes fully signed in.
     async fn complete_two_factor(&self, pending_cookie: &str, code: &str, client: &ClientInfo) -> Result<SignIn>;
+    /// Which second factors the half signed-in account has, so the form offers the right ones.
+    /// An unknown or expired pending cookie is `Unauthorized`.
+    async fn pending_factors(&self, pending_cookie: &str) -> Result<PendingFactors> {
+        let _ = pending_cookie;
+        Err(Error::unavailable("passkeys are not built here"))
+    }
+    /// Step two with a passkey, first half: the options the browser asks the authenticator with,
+    /// as JSON. The state they belong to is kept for this pending sign-in only.
+    async fn begin_passkey_sign_in(&self, pending_cookie: &str, client: &ClientInfo) -> Result<String> {
+        let _ = (pending_cookie, client);
+        Err(Error::unavailable("passkeys are not built here"))
+    }
+    /// Step two with a passkey, second half: the authenticator's answer as JSON. Counts against
+    /// the same attempt limits as a wrong code.
+    async fn complete_passkey_sign_in(&self, pending_cookie: &str, credential: &str, client: &ClientInfo) -> Result<SignIn> {
+        let _ = (pending_cookie, credential, client);
+        Err(Error::unavailable("passkeys are not built here"))
+    }
     async fn sign_out(&self, cookie: &str, client: &ClientInfo) -> Result<()>;
     /// Settings > Sessions.
     async fn sessions(&self, actor: &Actor, current_cookie: &str) -> Result<Vec<SessionInfo>>;
@@ -135,9 +153,40 @@ pub struct TwoFactorEnabled {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TwoFactorStatus {
+    /// Any second factor is on: an authenticator app or a passkey.
     pub enabled: bool,
+    /// The authenticator app is on.
+    pub totp: bool,
+    pub passkeys: u32,
     pub enabled_at: Option<DateTime<Utc>>,
     pub recovery_codes_left: u32,
+}
+
+/// The second factors a half signed-in account can answer with.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PendingFactors {
+    /// An authenticator app is set up (a recovery code works whatever this says).
+    pub totp: bool,
+    pub passkeys: bool,
+}
+
+/// One registered passkey, as its owner sees it. No key material.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasskeyInfo {
+    pub id: i64,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+/// A passkey was added. When it was the first second factor, the account has just turned
+/// two-factor on: recovery codes are shown once and every session ended, so `grant` is the new
+/// cookie to set. When another factor was already on, both are empty.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasskeyAdded {
+    pub passkey: PasskeyInfo,
+    pub recovery_codes: Vec<String>,
+    pub grant: Option<SessionGrant>,
 }
 
 #[async_trait]
@@ -148,10 +197,53 @@ pub trait TwoFactor: Send + Sync {
     /// Checks a code against the pending secret, turns two-factor on, makes recovery codes and
     /// ends every other session.
     async fn confirm_setup(&self, actor: &Actor, current_cookie: &str, code: &str, client: &ClientInfo) -> Result<TwoFactorEnabled>;
-    /// Needs the password. Returns a new cookie and ends every other session.
-    async fn disable(&self, actor: &Actor, current_cookie: &str, password: &str, client: &ClientInfo) -> Result<SessionGrant>;
+    /// Turns the authenticator app off. Needs the password. When it is the last second factor
+    /// (no passkey is registered) it also needs a current factor: `code` is an authenticator
+    /// code or an unused recovery code. Returns a new cookie and ends every other session.
+    async fn disable(&self, actor: &Actor, current_cookie: &str, password: &str, code: &str, client: &ClientInfo) -> Result<SessionGrant>;
     /// Needs the password. Replaces the old codes.
     async fn regenerate_recovery_codes(&self, actor: &Actor, password: &str, client: &ClientInfo) -> Result<Vec<String>>;
+    /// Whether this site can do passkeys at all: they need the site's address to be a domain
+    /// name, which is where a passkey is bound.
+    async fn passkeys_available(&self) -> bool {
+        false
+    }
+    async fn passkeys(&self, actor: &Actor) -> Result<Vec<PasskeyInfo>> {
+        let _ = actor;
+        Ok(Vec::new())
+    }
+    /// First half of adding a passkey: the options for the browser, as JSON.
+    async fn begin_passkey(&self, actor: &Actor, client: &ClientInfo) -> Result<String> {
+        let _ = (actor, client);
+        Err(Error::unavailable("passkeys are not built here"))
+    }
+    /// Second half: the authenticator's answer as JSON, and the name the person gave it.
+    async fn finish_passkey(
+        &self,
+        actor: &Actor,
+        current_cookie: &str,
+        name: &str,
+        credential: &str,
+        client: &ClientInfo,
+    ) -> Result<PasskeyAdded> {
+        let _ = (actor, current_cookie, name, credential, client);
+        Err(Error::unavailable("passkeys are not built here"))
+    }
+    /// Removes one passkey. Needs the password. When it is the last second factor (no authenticator
+    /// app either) it also needs a current factor in `code`, turns two-factor off and returns the
+    /// new cookie; otherwise it returns `None`.
+    async fn remove_passkey(
+        &self,
+        actor: &Actor,
+        current_cookie: &str,
+        id: i64,
+        password: &str,
+        code: &str,
+        client: &ClientInfo,
+    ) -> Result<Option<SessionGrant>> {
+        let _ = (actor, current_cookie, id, password, code, client);
+        Err(Error::unavailable("passkeys are not built here"))
+    }
 }
 
 // ---------------------------------------------------------------- orgs

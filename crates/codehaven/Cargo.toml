@@ -48,6 +48,8 @@ sqlx.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+webauthn-rs.workspace = true
+webauthn-authenticator-rs.workspace = true
 async-trait.workspace = true
 url.workspace = true
 ch-testkit.workspace = true

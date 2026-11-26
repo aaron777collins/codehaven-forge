@@ -520,6 +520,23 @@ impl World {
         self.emit_and_process(ev).await
     }
 
+    /// Records a push to the full ref name `git_ref` (a tag, say) at `rev` in the outbox and runs the
+    /// consumer over it.
+    pub async fn push_ref(&self, repo: RepoId, git: &GitRepo, git_ref: &str, rev: &str) -> Vec<i64> {
+        let after = git.git(&["rev-parse", rev]);
+        let ev = DomainEvent::Push {
+            repo_id: repo,
+            git_ref: git_ref.to_string(),
+            before: "0".repeat(40),
+            after,
+            pusher: Some(self.alice),
+            forced: false,
+            app: None,
+            server_built: false,
+        };
+        self.emit_and_process(ev).await
+    }
+
     pub async fn emit_and_process(&self, ev: DomainEvent) -> Vec<i64> {
         let mut tx = self.pool().begin().await.unwrap();
         let id = self.state.events.emit(&mut tx, ev).await.unwrap();

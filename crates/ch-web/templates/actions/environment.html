@@ -20,7 +20,7 @@
     <div class="field">
       <label for="env-branches">Branches</label>
       <textarea id="env-branches" name="branches" rows="4" spellcheck="false">{{ branches }}</textarea>
-      <p class="hint">Only runs of these branches and tags may deploy. Leave empty to allow any. A pull request from a fork never matches.</p>
+      <p class="hint">Only runs of these branches may deploy (main, release/*). Write a tag as tags/v* and it matches tags only. Leave empty to allow any. A pull request from a fork never matches.</p>
     </div>
     <fieldset class="field">
       <legend>Required reviewers</legend>

@@ -131,6 +131,7 @@ impl AuthzService {
             collab: Option<String>,
             team_perms: Option<Vec<String>>,
             usable: bool,
+            held: bool,
         }
         let row: Option<Row> = sqlx::query_as(
             "SELECT r.owner_id, o.kind AS owner_kind, r.access_tier, \
@@ -139,7 +140,8 @@ impl AuthzService {
                     (SELECT m.role FROM org_members m WHERE m.org_id = r.owner_id AND m.user_id = $2) AS org_role,
                     (SELECT c.permission FROM repo_collaborators c WHERE c.repo_id = r.id AND c.user_id = $2) AS collab,
                     (SELECT array_agg(tr.permission) FROM team_repos tr JOIN team_members tm ON tm.team_id = tr.team_id WHERE tr.repo_id = r.id AND tm.user_id = $2) AS team_perms,
-                    EXISTS (SELECT 1 FROM users me WHERE me.id = $2 AND me.suspended_at IS NULL) AS usable
+                    EXISTS (SELECT 1 FROM users me WHERE me.id = $2 AND me.suspended_at IS NULL) AS usable,
+                    EXISTS (SELECT 1 FROM repo_access_holds h WHERE h.repo_id = r.id AND h.user_id = $2) AS held
              FROM repositories r JOIN users o ON o.id = r.owner_id WHERE r.id = $1",
         )
         .bind(repo.0)
@@ -160,7 +162,10 @@ impl AuthzService {
             org_owner: is_org && r.org_role.as_deref() == Some("owner"),
             collaborator: r.collab.as_deref().and_then(Permission::parse),
             team_permissions: r.team_perms.unwrap_or_default().iter().filter_map(|s| Permission::parse(s)).collect(),
-            org_member_base: if is_org && r.org_role.is_some() { Permission::parse(&r.org_base) } else { None },
+            // A hold (ch-ze4) keeps this one member from the organization's base permission on this
+            // repository: they could not see what it was forked from. Grants made to them by name
+            // are not held back.
+            org_member_base: if is_org && r.org_role.is_some() && !r.held { Permission::parse(&r.org_base) } else { None },
             // An unknown stored tier reads as private.
             public: matches!(Visibility::parse(&r.access_tier), Some(Visibility::Internal | Visibility::Public)),
         };
