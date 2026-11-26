@@ -31,6 +31,7 @@
       <a class="side-link{% if r.section == "pulls" %} current{% endif %}" href="{{ r.base }}/pulls"><svg class="icon" aria-hidden="true"><use href="#i-git-pull-request"/></svg><span>Pull requests</span></a>
       <a class="side-link{% if r.section == "actions" %} current{% endif %}" href="{{ r.base }}/actions"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg><span>Actions</span></a>
       <a class="side-link{% if r.section == "releases" %} current{% endif %}" href="{{ r.base }}/releases"><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg><span>Releases</span></a>
+      <a class="side-link{% if r.section == "packages" %} current{% endif %}" href="{{ r.base }}/packages"><svg class="icon" aria-hidden="true"><use href="#i-package"/></svg><span>Packages</span></a>
       {% if r.social.is_some() %}<a class="side-link{% if r.section == "search" %} current{% endif %}" href="{{ r.base }}/search"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><span>Search code</span></a>{% endif %}
       {% if r.can_maintain %}<a class="side-link{% if r.section == "settings" %} current{% endif %}" href="{{ r.base }}/settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>Settings</span></a>{% endif %}
     </nav>

@@ -1,0 +1,13 @@
+{% for v in form_fields %}
+{% if v.field.is_markdown() %}
+<div class="muted">{{ v.html|safe }}</div>
+{% else if v.field.is_input() %}
+<div class="field"><label for="{{ v.field.control() }}">{{ v.field.label }}{% if v.field.required %} (required){% endif %}</label>{% if !v.field.description.is_empty() %}<p class="hint">{{ v.field.description }}</p>{% endif %}<input type="text" id="{{ v.field.control() }}" name="{{ v.field.control() }}" value="{{ v.value }}" placeholder="{{ v.field.placeholder }}" maxlength="500"{% if v.field.required %} required{% endif %}>{% call ui::field_error(v.error) %}</div>
+{% else if v.field.is_textarea() %}
+<div class="field"><label for="{{ v.field.control() }}">{{ v.field.label }}{% if v.field.required %} (required){% endif %}</label>{% if !v.field.description.is_empty() %}<p class="hint">{{ v.field.description }}</p>{% endif %}<textarea id="{{ v.field.control() }}" name="{{ v.field.control() }}" rows="6" placeholder="{{ v.field.placeholder }}"{% if v.field.required %} required{% endif %}>{{ v.value }}</textarea>{% call ui::field_error(v.error) %}</div>
+{% else if v.field.is_dropdown() %}
+<div class="field"><label for="{{ v.field.control() }}">{{ v.field.label }}{% if v.field.required %} (required){% endif %}</label>{% if !v.field.description.is_empty() %}<p class="hint">{{ v.field.description }}</p>{% endif %}<select id="{{ v.field.control() }}" name="{{ v.field.control() }}"{% if v.field.multiple %} multiple{% endif %}>{% if !v.field.required %}<option value=""></option>{% endif %}{% for o in v.options %}<option value="{{ o.label }}"{% if o.on %} selected{% endif %}>{{ o.label }}</option>{% endfor %}</select>{% call ui::field_error(v.error) %}</div>
+{% else %}
+<fieldset class="choices"><legend>{{ v.field.label }}</legend>{% if !v.field.description.is_empty() %}<p class="hint">{{ v.field.description }}</p>{% endif %}{% for o in v.options %}<label class="choice"><input type="checkbox" name="{{ v.field.control() }}" value="{{ o.value }}"{% if o.on %} checked{% endif %}> {{ o.label }}</label>{% endfor %}{% call ui::field_error(v.error) %}</fieldset>
+{% endif %}
+{% endfor %}

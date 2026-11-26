@@ -287,6 +287,10 @@ impl Core {
         let mut pull = self.pull_row(issue_id).await?;
         let repo = self.repo(pull.repo_id).await?;
         Self::ensure_writable(&repo)?;
+        // A repository with a merge queue merges only through it, which merges as the system.
+        if !matches!(actor, Actor::System) && self.merge_queue_on(pull.repo_id).await? {
+            return Err(Error::MergeBlocked(vec!["This repository merges through the merge queue. Add the pull request to it.".into()]));
+        }
         let method = match options.method.or_else(|| Self::default_method(&repo)) {
             Some(m) => m,
             None => return Err(Error::MergeBlocked(vec!["Every merge method is turned off for this repository".into()])),
@@ -681,6 +685,9 @@ impl Core {
         let user = writing_user(actor, repo)?;
         self.need(actor, repo, Permission::Write).await?;
         Self::ensure_writable(&self.repo(repo).await?)?;
+        if method.is_some() && self.merge_queue_on(repo).await? {
+            return Err(Error::invalid("PullRequest", "auto_merge", "This repository merges through the merge queue, not auto-merge"));
+        }
         let (issue, pull) = self.pull_pair(repo, number).await?;
         if !issue.open || pull.merged_at.is_some() {
             return Err(Error::invalid("PullRequest", "auto_merge", "Auto-merge needs an open pull request"));
@@ -748,6 +755,10 @@ impl Core {
             return Ok(false);
         };
         if !issue.open || pull.merged_at.is_some() {
+            return Ok(false);
+        }
+        // An auto-merge armed before the repository turned on its merge queue must not slip past it.
+        if self.merge_queue_on(pull.repo_id).await? {
             return Ok(false);
         }
         // The person who turned it on must still be allowed to merge.

@@ -235,6 +235,10 @@ async fn reaper_loop(ctx: Ctx, token: CancellationToken) {
         if let Err(e) = reap_jobs(&ctx).await {
             tracing::error!(error = %e, "lease reaper failed");
         }
+        // Jobs whose wait timer at an environment has run out start now (ch-bj5).
+        if let Err(e) = crate::environments::release_due(&ctx).await {
+            tracing::error!(error = %e, "releasing jobs at environments failed");
+        }
         if !nap(&token, Duration::from_secs(15)).await {
             return;
         }

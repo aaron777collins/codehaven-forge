@@ -452,6 +452,159 @@ impl GitCore {
         Ok(())
     }
 
+    /// Deleting a private repository takes away a barrier that was keeping some people out of the
+    /// private forks below it: the lineage rule hides a private fork from anyone who cannot see a
+    /// private ancestor (ch-4pn.16), and once the repository is gone the forks hang from a new
+    /// parent or none. A grant that was held back until now must not start to work because the
+    /// repository went away (ch-w3x). So before it goes, the grants of people who cannot see it
+    /// are withdrawn from every private fork below it: collaborator grants, and a team's grant
+    /// on a fork when one of its members is such a person. Organization members cannot be held
+    /// back one by one (their base permission covers the organization's repositories), so when an
+    /// organization's fork below would open to members who cannot see this repository, the delete
+    /// is refused and says so. Site admins and owners are never held back.
+    async fn withdraw_unseen_grants(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        actor: &Actor,
+        client: &ClientInfo,
+        repo: &Repo,
+    ) -> Result<()> {
+        if repo.visibility != Visibility::Private {
+            return Ok(());
+        }
+        let forks: Vec<i64> = sqlx::query_scalar(
+            "WITH RECURSIVE d (id, depth) AS (
+                 SELECT id, 1 FROM repositories WHERE fork_parent_id = $1
+                 UNION ALL
+                 SELECT r.id, d.depth + 1 FROM repositories r JOIN d ON r.fork_parent_id = d.id WHERE d.depth < 64)
+             SELECT r.id FROM repositories r WHERE r.id IN (SELECT id FROM d) AND r.access_tier = 'private'",
+        )
+        .bind(repo.id.0)
+        .fetch_all(&mut **tx)
+        .await?;
+        if forks.is_empty() {
+            return Ok(());
+        }
+        let collaborators: Vec<i64> = sqlx::query_scalar(
+            "SELECT DISTINCT c.user_id FROM repo_collaborators c JOIN users u ON u.id = c.user_id WHERE c.repo_id = ANY($1) AND NOT u.is_admin",
+        )
+        .bind(&forks)
+        .fetch_all(&mut **tx)
+        .await?;
+        let team_members: Vec<i64> = sqlx::query_scalar(
+            "SELECT DISTINCT m.user_id FROM team_repos t JOIN team_members m ON m.team_id = t.team_id JOIN users u ON u.id = m.user_id
+              WHERE t.repo_id = ANY($1) AND NOT u.is_admin",
+        )
+        .bind(&forks)
+        .fetch_all(&mut **tx)
+        .await?;
+        let org_members: Vec<(i64, String, i64)> = sqlx::query_as(
+            "SELECT m.user_id, o.username::text, f.id FROM repositories f
+               JOIN users o ON o.id = f.owner_id AND o.kind = 'org' AND o.org_base_permission <> 'none'
+               JOIN org_members m ON m.org_id = o.id AND m.role <> 'owner'
+               JOIN users u ON u.id = m.user_id
+              WHERE f.id = ANY($1) AND NOT u.is_admin",
+        )
+        .bind(&forks)
+        .fetch_all(&mut **tx)
+        .await?;
+        let mut seen = std::collections::HashMap::<i64, bool>::new();
+        let mut unseeing = Vec::new();
+        for u in collaborators.iter().copied().chain(team_members.iter().copied()).chain(org_members.iter().map(|m| m.0)) {
+            if seen.contains_key(&u) {
+                continue;
+            }
+            let who = Actor::User { id: UserId(u), is_admin: false, has_2fa: false, via: ch_core::AuthVia::Session };
+            let blind = self.authz.repo_permission(&who, repo.id).await? < Permission::View;
+            seen.insert(u, blind);
+            if blind {
+                unseeing.push(u);
+            }
+        }
+        if let Some((_, org, _)) = org_members.iter().find(|m| seen.get(&m.0).copied().unwrap_or(false)) {
+            return Err(Error::invalid(
+                "Repository",
+                "delete",
+                format!(
+                    "A private fork below this repository belongs to the organization {org}, and some of its members cannot see this repository. Deleting it would open that fork to them. Remove those members, or set the organization's base permission to none, and delete again."
+                ),
+            ));
+        }
+        if unseeing.is_empty() {
+            return Ok(());
+        }
+        let collab = sqlx::query("DELETE FROM repo_collaborators WHERE repo_id = ANY($1) AND user_id = ANY($2)")
+            .bind(&forks)
+            .bind(&unseeing)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected();
+        let teams = sqlx::query(
+            "DELETE FROM team_repos t WHERE t.repo_id = ANY($1)
+               AND EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = t.team_id AND m.user_id = ANY($2))",
+        )
+        .bind(&forks)
+        .bind(&unseeing)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected();
+        if collab + teams > 0 {
+            self.audit
+                .record(
+                    tx,
+                    client_audit(
+                        actor,
+                        client,
+                        action::REPO_FORK_GRANTS_WITHDRAWN,
+                        repo,
+                        serde_json::json!({
+                            "deleted": repo.full_name(),
+                            "forks": forks.len(),
+                            "collaborator_grants": collab,
+                            "team_grants": teams,
+                            "why": "the people holding them could not see the deleted repository, so the grants did nothing until now",
+                        }),
+                    ),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Open pull requests into a repository that is being deleted go with it. Each one is
+    /// recorded in the audit log first (who opened it, from which fork) so it is not dropped
+    /// without a trace (ch-w3x). Returns how many there were.
+    async fn note_open_pulls(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        actor: &Actor,
+        client: &ClientInfo,
+        repo: &Repo,
+    ) -> Result<usize> {
+        let open: Vec<(i64, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT i.number, i.title, (SELECT username::text FROM users WHERE id = i.author_id),
+                    (SELECT (SELECT username::text FROM users WHERE id = h.owner_id) || '/' || h.name::text FROM repositories h WHERE h.id = p.head_repo_id AND h.id <> p.repo_id)
+               FROM pull_requests p JOIN issues i ON i.id = p.issue_id WHERE p.repo_id = $1 AND i.open ORDER BY i.number",
+        )
+        .bind(repo.id.0)
+        .fetch_all(&mut **tx)
+        .await?;
+        for (number, title, author, from) in &open {
+            let ev = AuditEvent::new(actor, client, action::PULL_CLOSED_REPO_DELETED, Outcome::Success)
+                .target("repository", repo.id.0)
+                .details(serde_json::json!({
+                    "repository": repo.full_name(),
+                    "number": number,
+                    "title": title,
+                    "author": author,
+                    "from": from,
+                    "note": "closed because the repository it was open against was deleted",
+                }));
+            self.audit.record(tx, ev).await?;
+        }
+        Ok(open.len())
+    }
+
     pub(crate) async fn do_delete(&self, actor: &Actor, id: RepoId, client: &ClientInfo) -> Result<()> {
         let repo = self.repo_row(id).await?;
         self.authz.require(actor, id, Permission::Admin).await?;
@@ -460,9 +613,20 @@ impl GitCore {
             self.detach_alternates(borrower).await?;
         }
         let mut tx = self.db.begin().await?;
+        self.withdraw_unseen_grants(&mut tx, actor, client, &repo).await?;
+        let closed_pulls = self.note_open_pulls(&mut tx, actor, client, &repo).await?;
         self.reparent_forks(&mut tx, actor, client, &repo).await?;
         self.audit
-            .record(&mut tx, client_audit(actor, client, action::REPO_DELETED, &repo, serde_json::json!({"full_name": repo.full_name()})))
+            .record(
+                &mut tx,
+                client_audit(
+                    actor,
+                    client,
+                    action::REPO_DELETED,
+                    &repo,
+                    serde_json::json!({"full_name": repo.full_name(), "open_pulls_closed": closed_pulls}),
+                ),
+            )
             .await?;
         self.events.emit(&mut tx, DomainEvent::RepoDeleted { repo_id: id, actor: actor.user_id() }).await?;
         sqlx::query("DELETE FROM repositories WHERE id = $1").bind(id.0).execute(&mut *tx).await?;

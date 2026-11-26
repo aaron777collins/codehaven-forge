@@ -365,3 +365,143 @@ async fn private_repo(h: &H, owner: &(UserId, Actor), name: &str) -> RepoId {
         .unwrap()
         .id
 }
+
+/// ch-mpv: a job queued before its fork became locked is not handed to a runner. The claim is
+/// rolled back, the run is cancelled, and a runner that asks gets nothing.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_job_queued_before_its_fork_was_locked_is_never_claimed(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let bob = user(&h, "bob").await;
+    sqlx::query("UPDATE users SET can_run_ci = true").execute(&pool).await.unwrap();
+    let parent = private_repo(&h, &alice, "secret").await;
+    h.s.repos.set_collaborator(&alice.1, parent, bob.0, Permission::Read, &c()).await.unwrap();
+    let fork = h.s.repos.fork(&bob.1, parent, bob.0, &c()).await.unwrap().id;
+    add_workflow(&h, &bob.1, fork).await;
+    let run = dispatch(&h, &bob.1, fork).await.unwrap();
+    let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_jobs WHERE run_id = $1 AND status = 'queued'")
+        .bind(run.0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(queued >= 1, "the run has a queued job");
+    let runner: i64 = sqlx::query_scalar(
+        "INSERT INTO runners (name, labels, credential_hash) VALUES ('r', ARRAY['ubuntu-latest'], decode(repeat('ab', 32), 'hex')) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let ctx = ch_ci::ctx::Ctx::from_state(&h.s);
+    // The lock lands after the job was queued.
+    h.s.repos.remove_collaborator(&alice.1, parent, bob.0, &c()).await.unwrap();
+    assert!(ch_ci::triggers::fork_locked(&ctx, fork).await.unwrap());
+    let labels = vec!["ubuntu-latest".to_string()];
+    assert!(ch_ci::runner_api::try_claim(&ctx, runner, &labels, None).await.unwrap().is_none(), "a locked fork's job is not handed out");
+    let running: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_jobs WHERE run_id = $1 AND status = 'in_progress'")
+        .bind(run.0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(running, 0);
+    let still_queued: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_jobs WHERE run_id = $1 AND status = 'queued'")
+        .bind(run.0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(still_queued, 0, "the run was cancelled, so nothing waits to be claimed later");
+    let (status, conclusion): (String, Option<String>) =
+        sqlx::query_as("SELECT status, conclusion FROM workflow_runs WHERE id = $1").bind(run.0).fetch_one(&pool).await.unwrap();
+    assert_eq!((status.as_str(), conclusion.as_deref()), ("completed", Some("cancelled")));
+}
+
+async fn topic_branch(h: &H, who: &Actor, repo: RepoId, name: &str) {
+    let tip = h.s.git.resolve(repo, "refs/heads/main").await.unwrap();
+    h.s.git
+        .commit_file_change(
+            who,
+            CommitFileChange {
+                repo_id: repo,
+                branch: "main".into(),
+                new_branch: Some(name.into()),
+                expected_sha: Some(tip),
+                changes: vec![FileChange { path: "t.txt".into(), content: Some(b"t".to_vec()), renamed_from: None }],
+                message: "topic".into(),
+                author: Signature { name: "A".into(), email: "a@example.org".into(), at: chrono::Utc::now() },
+            },
+            &c(),
+        )
+        .await
+        .unwrap();
+}
+
+/// ch-w3x: deleting the root of a fork network re-parents the other forks. A grant on a fork that
+/// did nothing because its holder could not see the root must not start to work because the root
+/// is gone. Open pull requests into the root are recorded, not dropped without a trace.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn deleting_a_private_root_does_not_open_its_forks_to_people_who_were_held_back(pool: PgPool) {
+    let h = harness(pool.clone()).await;
+    let alice = user(&h, "alice").await;
+    let bob = user(&h, "bob").await;
+    let carol = user(&h, "carol").await;
+    let dave = user(&h, "dave").await;
+    let erin = user(&h, "erin").await;
+    let root = private_repo(&h, &alice, "secret").await;
+    h.s.repos.set_collaborator(&alice.1, root, bob.0, Permission::Read, &c()).await.unwrap();
+    h.s.repos.set_collaborator(&alice.1, root, carol.0, Permission::Read, &c()).await.unwrap();
+    // Bob forks first, so his fork becomes the root of what is left. Carol forks second.
+    let bobs = h.s.repos.fork(&bob.1, root, bob.0, &c()).await.unwrap().id;
+    let carols = h.s.repos.fork(&carol.1, root, carol.0, &c()).await.unwrap().id;
+    // Dave never saw the root. Bob lets him into his fork, Carol into hers; both grants are held
+    // back by the lineage rule while the root stands. Erin can see the root and Carol's fork.
+    h.s.repos.set_collaborator(&bob.1, bobs, dave.0, Permission::Read, &c()).await.unwrap();
+    h.s.repos.set_collaborator(&carol.1, carols, dave.0, Permission::Write, &c()).await.unwrap();
+    h.s.repos.set_collaborator(&alice.1, root, erin.0, Permission::Read, &c()).await.unwrap();
+    h.s.repos.set_collaborator(&carol.1, carols, erin.0, Permission::Read, &c()).await.unwrap();
+    assert_eq!(perm(&h, &dave.1, carols).await, Permission::None, "held back while the root stands");
+    assert_eq!(perm(&h, &dave.1, bobs).await, Permission::None);
+    assert_eq!(perm(&h, &erin.1, carols).await, Permission::Read);
+    // An open pull request from Carol's fork into the root.
+    topic_branch(&h, &carol.1, carols, "topic").await;
+    let pr =
+        h.s.pulls
+            .create(
+                &carol.1,
+                NewPull {
+                    repo_id: root,
+                    title: "Carol's change".into(),
+                    body: String::new(),
+                    head_repo_id: carols,
+                    head_ref: "topic".into(),
+                    base_ref: "main".into(),
+                    draft: false,
+                },
+                &c(),
+            )
+            .await
+            .unwrap();
+
+    h.s.repos.delete(&alice.1, root, &c()).await.unwrap();
+
+    // Bob's fork is the root now. Nobody who was held back is let in by the delete.
+    assert_eq!(perm(&h, &dave.1, bobs).await, Permission::None, "the new root's own grant stays held back too");
+    assert_eq!(perm(&h, &dave.1, carols).await, Permission::None, "Dave's grant on the other fork did not start to work");
+    // Those who could see it all along keep their access to the fork (Erin saw the root and the fork).
+    // Bob's fork is the new parent and Erin cannot see it, so she is narrowed, never widened.
+    assert_eq!(perm(&h, &erin.1, carols).await, Permission::None);
+    assert_eq!(perm(&h, &carol.1, carols).await, Permission::Admin, "the owner keeps the fork");
+    // The grants that did nothing were removed, in the audit log, and the open pull request too.
+    let held: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM repo_collaborators WHERE user_id = $1").bind(dave.0.0).fetch_one(&pool).await.unwrap();
+    assert_eq!(held, 0, "Dave's dead grants were withdrawn, so nothing can wake up later");
+    let actions: Vec<String> =
+        sqlx::query_scalar("SELECT action FROM audit_events WHERE action IN ('repo.fork_grants_withdrawn', 'pull.closed_repo_deleted')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(actions.contains(&"repo.fork_grants_withdrawn".to_string()), "{actions:?}");
+    assert!(actions.contains(&"pull.closed_repo_deleted".to_string()), "{actions:?}");
+    let details: serde_json::Value =
+        sqlx::query_scalar("SELECT details FROM audit_events WHERE action = 'pull.closed_repo_deleted'").fetch_one(&pool).await.unwrap();
+    assert_eq!(details["number"], pr.issue.number);
+    assert_eq!(details["author"], "carol");
+}

@@ -293,6 +293,25 @@ impl Pulls for PullsSvc {
         actor.deny_app("change auto-merge")?;
         self.0.pull_set_auto_merge(actor, repo, number, method, client).await
     }
+    async fn merge_queue_enabled(&self, actor: &Actor, repo: RepoId) -> Result<bool> {
+        self.0.need_read(actor, repo).await?;
+        self.0.merge_queue_on(repo).await
+    }
+    async fn set_merge_queue(&self, actor: &Actor, repo: RepoId, on: bool, client: &ClientInfo) -> Result<()> {
+        actor.deny_app("change the merge queue")?;
+        self.0.set_merge_queue(actor, repo, on, client).await
+    }
+    async fn queue_state(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Option<QueueView>> {
+        self.0.queue_state(actor, repo, number).await
+    }
+    async fn queue_add(&self, actor: &Actor, repo: RepoId, number: i64, method: MergeMethod, client: &ClientInfo) -> Result<()> {
+        actor.deny_app("join the merge queue")?;
+        self.0.queue_add(actor, repo, number, method, client).await
+    }
+    async fn queue_remove(&self, actor: &Actor, repo: RepoId, number: i64, client: &ClientInfo) -> Result<()> {
+        actor.deny_app("leave the merge queue")?;
+        self.0.queue_remove(actor, repo, number, client).await
+    }
     async fn merge_with(&self, actor: &Actor, repo: RepoId, number: i64, options: MergeOptions, client: &ClientInfo) -> Result<PullView> {
         self.0.pull_merge_with(actor, repo, number, options, client).await
     }

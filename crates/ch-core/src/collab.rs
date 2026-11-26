@@ -248,6 +248,21 @@ pub struct IssueTemplate {
     pub body: String,
     /// Path in the repository, like `.codehaven/ISSUE_TEMPLATE/bug.md`.
     pub path: String,
+    /// Set for a YAML issue form (`bug.yml`): its fields, which the new issue page draws. `body`
+    /// is empty then.
+    #[serde(default)]
+    pub form: Option<crate::issue_form::IssueForm>,
+}
+
+/// Where a pull request stands in its repository's merge queue (ch-dxk).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueView {
+    /// 1 is the one being worked on.
+    pub position: u32,
+    pub total: u32,
+    /// What it waits for, in words.
+    pub note: String,
+    pub method: MergeMethod,
 }
 
 // ---------------------------------------------------------------- pull requests

@@ -345,13 +345,34 @@ impl Core {
         let mut out = Vec::new();
         for dir in [".codehaven/ISSUE_TEMPLATE", ".github/ISSUE_TEMPLATE"] {
             let Ok(entries) = self.d.git.tree(repo, &r.default_branch, dir).await else { continue };
-            for e in entries.into_iter().filter(|e| e.kind == EntryKind::Blob && e.name.to_lowercase().ends_with(".md")).take(20) {
-                let Ok(blob) = self.d.git.blob(repo, &r.default_branch, &e.path, 16 * 1024).await else { continue };
+            let wanted = |n: &str| {
+                let n = n.to_lowercase();
+                n.ends_with(".md") || n.ends_with(".yml") || n.ends_with(".yaml")
+            };
+            for e in entries.into_iter().filter(|e| e.kind == EntryKind::Blob && wanted(&e.name) && e.name != "config.yml").take(20) {
+                let limit = if e.name.to_lowercase().ends_with(".md") { 16 * 1024 } else { ch_core::issue_form::MAX_FORM_BYTES + 1 };
+                let Ok(blob) = self.d.git.blob(repo, &r.default_branch, &e.path, limit as u64).await else { continue };
                 if blob.is_binary || blob.truncated {
                     continue;
                 }
                 let text = String::from_utf8_lossy(&blob.content).into_owned();
-                out.push(parse_template(&e.name, &e.path, &text));
+                if e.name.to_lowercase().ends_with(".md") {
+                    out.push(parse_template(&e.name, &e.path, &text));
+                } else {
+                    // A form that cannot be read is left out rather than shown half made.
+                    match ch_core::issue_form::parse(&e.name, &text) {
+                        Ok(p) => out.push(IssueTemplate {
+                            name: p.name,
+                            about: p.about,
+                            title: p.title,
+                            labels: p.labels,
+                            body: String::new(),
+                            path: e.path.clone(),
+                            form: Some(p.form),
+                        }),
+                        Err(why) => tracing::debug!(path = %e.path, %why, "an issue form could not be read"),
+                    }
+                }
             }
             if !out.is_empty() {
                 break;
@@ -390,7 +411,7 @@ pub fn parse_template(file_name: &str, path: &str, text: &str) -> IssueTemplate 
             _ => {}
         }
     }
-    IssueTemplate { name, about, title, labels, body, path: path.to_string() }
+    IssueTemplate { name, about, title, labels, body, path: path.to_string(), form: None }
 }
 
 #[cfg(test)]

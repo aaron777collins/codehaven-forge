@@ -287,6 +287,18 @@ git checkout <the older commit>
 CODEHAVEN_NO_MIGRATE=1 sudo -E bash deploy/prod/up.sh
 ```
 
+Migration 0139 added `issues.pin_position` with a CHECK that ties it to `pinned`. The image from
+before it pins and unpins with the flag alone, so migration 0140 adds a trigger that fills the
+position in (last) when an older writer pins, and clears it when it unpins. Rolling back to the
+C9 image therefore leaves pin and unpin working. Deploy 0140 before relying on a rollback to a
+version older than C10: on a database that has 0139 but not 0140, pin and unpin on that older image
+answer 500 until 0140 is applied.
+
+Migrations 0141 (environments) and 0142 (merge queue) are additive too. On the C10 image a workflow
+with `environment:` is refused as before, so a job that waited at an environment never starts there, and
+a repository that turned its merge queue on merges the ordinary way again (the older code does not know
+the queue exists), with whatever waited in it left in place until the queue code returns.
+
 Do not restore the database for a rollback of an additive migration; the old code ignores what it
 does not know. Restore from backup only when data itself was damaged. Take the next upgrade from
 a clean `up.sh` without the variable, so migrations apply again.

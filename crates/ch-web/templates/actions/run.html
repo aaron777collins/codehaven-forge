@@ -30,6 +30,36 @@
 {% if let Some(r) = hold_reason %}
 <p class="notice" role="status"><strong>Waiting for approval.</strong> {{ r }}. Someone with write access has to approve it before any job runs.</p>
 {% endif %}
+{% if !gates.is_empty() %}
+<section class="card pad stack" aria-label="Deployments">
+  <h3>Deployments</h3>
+  {% for g in gates %}
+  <div class="stack">
+    <div><strong>{{ g.environment }}</strong> <span class="muted">{{ g.job_name }}</span></div>
+    <p>{{ g.state_text }}</p>
+    {% if g.state_text == "Waiting for a reviewer" && !g.reviewers.is_empty() %}
+    <p class="muted">Reviewers: {{ g.reviewers }}</p>
+    {% endif %}
+    {% if !g.comment.is_empty() %}
+    <p class="muted">{{ g.comment }}</p>
+    {% endif %}
+    {% if g.can_review && g.state_text == "Waiting for a reviewer" %}
+    <form method="post" action="{{ g.review_action }}" class="stack">
+      {% call ui::csrf_field(c.csrf) %}
+      <div class="field">
+        <label for="gate-comment-{{ loop.index }}">Comment (optional)</label>
+        <input id="gate-comment-{{ loop.index }}" name="comment" type="text" maxlength="1000">
+      </div>
+      <div class="row">
+        <button class="btn btn-primary" type="submit" name="decision" value="approve">Approve and deploy</button>
+        <button class="btn danger" type="submit" name="decision" value="reject">Reject</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
 {% if let Some(p) = problem %}<p class="notice notice-warn" role="status"><strong>This workflow could not run.</strong> {{ p }}</p>{% endif %}
 {% if let Some(n) = queue_note %}<p class="notice notice-warn" role="status">{{ n }}</p>{% endif %}
 <div class="card pad run-summary">

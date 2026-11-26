@@ -627,6 +627,33 @@ impl<'a> Engine<'a> {
         f(&ctx)
     }
 
+    /// Takes the contexts a composite action may not read out of sight: `secrets`, `vars`,
+    /// `needs` and `matrix`. Whatever it needs from them, the step that uses it passes in `with:`
+    /// (or `env:`), which is evaluated before this. Gives them back with [`Self::show_job_contexts`].
+    fn hide_job_contexts(&mut self) -> [Value; 4] {
+        [
+            std::mem::replace(&mut self.secrets_v, json!({})),
+            std::mem::replace(&mut self.vars_v, json!({})),
+            std::mem::replace(&mut self.needs_v, json!({})),
+            std::mem::replace(&mut self.matrix_v, json!({})),
+        ]
+    }
+
+    fn show_job_contexts(&mut self, held: [Value; 4]) {
+        let [secrets, vars, needs, matrix] = held;
+        self.secrets_v = secrets;
+        self.vars_v = vars;
+        self.needs_v = needs;
+        self.matrix_v = matrix;
+    }
+
+    fn interp_hiding_job_contexts(&mut self, template: &str, step_env: Option<&BTreeMap<String, String>>) -> Result<String, String> {
+        let held = self.hide_job_contexts();
+        let r = self.interp(template, step_env);
+        self.show_job_contexts(held);
+        r
+    }
+
     fn interp(&self, template: &str, step_env: Option<&BTreeMap<String, String>>) -> Result<String, String> {
         self.with_ctx(step_env, |c| expr::interpolate(template, c)).map_err(|e| e.message)
     }
@@ -1375,7 +1402,9 @@ impl Engine<'_> {
             let v = match given.get(&i.id.to_ascii_lowercase()) {
                 Some(v) => v.clone(),
                 None => match &i.default {
-                    Some(d) => match self.interp(d, Some(step_env)) {
+                    // An action's defaults are the action author's text, so they cannot read the
+                    // job's secrets, variables, needs or matrix (as on GitHub).
+                    Some(d) => match self.interp_hiding_job_contexts(d, Some(step_env)) {
                         Ok(v) => v,
                         Err(e) => {
                             self.log.line(n, &format!("##[error]The default of input {}: {e}", i.id)).await;
@@ -1626,6 +1655,10 @@ impl Engine<'_> {
             g.insert("action_ref".into(), json!(f.git_ref));
         }
         self.depth += 1;
+        // A composite action's steps read `github`, `env`, `inputs`, `steps` and `runner`, not the
+        // job's secrets, variables, needs or matrix. An action from another repository must not be
+        // able to read a secret it was not handed.
+        let held = self.hide_job_contexts();
 
         for s in steps {
             self.observe_stops();
@@ -1666,6 +1699,7 @@ impl Engine<'_> {
         }
         let failed = self.failed;
         self.depth -= 1;
+        self.show_job_contexts(held);
         self.steps = saved_steps;
         self.inputs_v = saved_inputs;
         self.failed = saved_failed;

@@ -126,6 +126,66 @@ sed -i 's/@@/$/g' .github/actions/hi/action.yml"#;
     assert!(!h.server.step_log(4, 3).contains("say=hi"), "{log}");
 }
 
+/// ch-ctk.7: a composite action reads what it is handed, not the job's secrets, variables, needs
+/// or matrix, and an input default cannot reach them either. Passing a secret in `with:` works.
+#[tokio::test]
+async fn a_composite_action_cannot_read_the_jobs_secrets_but_can_be_handed_one() {
+    let h = Harness::new().await;
+    // `@@` becomes `$` after writing, so the outer step does not fill in the inner expressions.
+    let make = r#"mkdir -p .github/actions/peek && cat > .github/actions/peek/action.yml <<'EOF'
+name: peek
+inputs:
+  handed:
+    default: ''
+  sneaky:
+    default: @@{{ secrets.TOPSECRET }}@@{{ vars.SHOWN }}
+outputs:
+  seen:
+    value: @@{{ steps.s.outputs.seen }}
+runs:
+  using: composite
+  steps:
+    - id: s
+      shell: bash
+      run: echo "seen=[@@{{ secrets.TOPSECRET }}][@@{{ vars.SHOWN }}][@@{{ matrix.os }}][@@{{ needs.a.result }}][@@{{ inputs.handed }}][@@{{ inputs.sneaky }}][@@{{ github.repository }}]" >> "$GITHUB_OUTPUT"
+EOF
+sed -i 's/@@/$/g' .github/actions/peek/action.yml"#;
+    let job = TestJob::new(41)
+        .secret("TOPSECRET", "s3cr3t-value")
+        .var("SHOWN", "visible")
+        .run(make)
+        .uses_id("p", "./.github/actions/peek", &[("handed", "${{ secrets.TOPSECRET }}")])
+        .run("echo out=${{ steps.p.outputs.seen }}")
+        .build();
+    let r = h.run(job).await;
+    let log = h.server.log_text(41);
+    assert_eq!(r.conclusion, "success", "{log}");
+    let out = h.server.step_log(41, 3);
+    // Handed in with:, the value arrives (and the log masks it); read directly, it is empty.
+    assert!(out.contains("out=[][][][][***][][alice/demo]"), "{out}\n{log}");
+    assert!(!log.contains("s3cr3t-value") && !log.contains("visible"), "{log}");
+}
+
+/// ch-ctk.7: composite actions nest to a fixed depth and no further.
+#[tokio::test]
+async fn composite_actions_nest_to_a_fixed_depth_and_the_next_one_fails_plainly() {
+    let h = Harness::new().await;
+    let make = r#"mkdir -p .github/actions/deep && cat > .github/actions/deep/action.yml <<'EOF'
+name: deep
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo level
+    - uses: ./.github/actions/deep
+EOF"#;
+    let r = h.run(TestJob::new(42).run(make).uses("./.github/actions/deep", &[]).build()).await;
+    let log = h.server.log_text(42);
+    assert_eq!(r.conclusion, "failure", "{log}");
+    assert!(log.contains("nested at most 9 deep"), "{log}");
+    assert!(log.matches("level").count() >= 9, "it ran to the limit before failing: {log}");
+}
+
 #[tokio::test]
 async fn a_docker_container_action_is_refused_with_what_to_do_instead() {
     let h = Harness::new().await;

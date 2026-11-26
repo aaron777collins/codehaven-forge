@@ -16,6 +16,7 @@ pub mod merge;
 pub mod protect;
 pub mod pulls;
 pub mod query;
+pub mod queue;
 pub mod releases;
 pub mod rest;
 pub mod reviews;

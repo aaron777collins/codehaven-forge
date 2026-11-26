@@ -925,6 +925,21 @@ pub async fn advance_run(ctx: &Ctx, run_id: i64) -> Result<()> {
                         transition(&mut tx, &run, &mut j, "completed", Some(conclusion), &mut fx).await?;
                     }
                     Ok(true) => {
+                        // A job in a deployment environment waits for what the environment asks
+                        // before it is queued (ch-bj5).
+                        if let Some(env) = spec.job.environment.as_deref() {
+                            match crate::environments::check_gate(&mut tx, &run, &meta, &jobs[i], env).await? {
+                                crate::environments::Gate::Open => {}
+                                crate::environments::Gate::Hold => continue,
+                                crate::environments::Gate::Fail(why) => {
+                                    crate::logs::append_system_line(ctx, &run, &j, &why).await;
+                                    transition(&mut tx, &run, &mut j, "completed", Some("failure"), &mut fx).await?;
+                                    jobs[i] = j;
+                                    progressed = true;
+                                    continue;
+                                }
+                            }
+                        }
                         if let Some(mp) = spec.max_parallel {
                             let active = jobs
                                 .iter()

@@ -62,7 +62,11 @@ pub async fn build_payload(ctx: &Ctx, job: &JobRow, token: String) -> Result<rn:
     // Which secrets and variables does this job read?
     let shell = workflow_level(&meta, spec.job.called);
     let refs = job_refs(&shell, &spec.job);
-    let secrets = resolve_for_job(ctx, job.repo_id, &refs.secrets, refs.all_secrets, meta.fork).await?;
+    let mut secrets = resolve_for_job(ctx, job.repo_id, &refs.secrets, refs.all_secrets, meta.fork).await?;
+    // The environment's own secrets, behind its gate, win over the repository's (ch-bj5).
+    if let Some(env) = spec.job.environment.as_deref() {
+        secrets.extend(crate::environments::secrets_for_job(ctx, job, env, &refs.secrets, refs.all_secrets, meta.fork).await?);
+    }
     let vars = resolve_vars_for_job(ctx, job.repo_id, &refs.vars, refs.all_vars, meta.fork).await?;
 
     // What the jobs this one needs reported.

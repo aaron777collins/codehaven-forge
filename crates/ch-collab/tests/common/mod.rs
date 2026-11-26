@@ -308,11 +308,16 @@ fn user_of(r: (UserId, String, String, String, bool, chrono::DateTime<Utc>)) -> 
 pub struct FakeChecks {
     pub passing: Mutex<Vec<String>>,
     pub broken: Mutex<bool>,
+    /// Contexts that finished and failed, which `statuses_for_sha` reports.
+    pub failing: Mutex<Vec<String>>,
 }
 
 impl FakeChecks {
     pub fn pass(&self, ctx: &str) {
         self.passing.lock().unwrap().push(ctx.to_string());
+    }
+    pub fn fail(&self, ctx: &str) {
+        self.failing.lock().unwrap().push(ctx.to_string());
     }
 }
 
@@ -321,8 +326,23 @@ impl Checks for FakeChecks {
     async fn check_runs_for_sha(&self, _r: RepoId, _s: &str) -> Result<Vec<CheckRun>> {
         Ok(vec![])
     }
-    async fn statuses_for_sha(&self, _r: RepoId, _s: &str) -> Result<Vec<CommitStatus>> {
-        Ok(vec![])
+    async fn statuses_for_sha(&self, r: RepoId, s: &str) -> Result<Vec<CommitStatus>> {
+        Ok(self
+            .failing
+            .lock()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| CommitStatus {
+                id: i as i64,
+                repo_id: r,
+                sha: s.to_string(),
+                context: c.clone(),
+                state: "failure".into(),
+                description: None,
+                target_url: None,
+            })
+            .collect())
     }
     async fn combined(&self, _r: RepoId, _s: &str) -> Result<CombinedState> {
         Ok(CombinedState::Success)
@@ -570,7 +590,21 @@ impl GitService for FakeGit {
         Ok(self.st.lock().unwrap().mergeable.unwrap_or(MergeableState::Clean))
     }
     async fn merge(&self, _a: &Actor, req: MergeRequest, _c: &ClientInfo) -> Result<MergeOutcome> {
+        if req.update_branch {
+            // The real write takes a while. A concurrent caller gets the time to read the same
+            // head before this one lands.
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
         let mut st = self.st.lock().unwrap();
+        // The real layer refuses a write on top of a branch that is no longer at the sha the
+        // caller read.
+        if req.update_branch
+            && st.merge_outcome.is_none()
+            && let Some(cur) = st.refs.get(&(req.repo_id.0, req.base_ref.clone()))
+            && *cur != req.expected_base_sha
+        {
+            return Ok(MergeOutcome::BaseMoved { current_sha: cur.clone() });
+        }
         st.merges.push(req.clone());
         let out = match st.merge_outcome.clone() {
             Some(o) => o,

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block content %}
+<main id="main" class="page">
+  <h1>{{ p.name }} <span class="chip">{{ p.kind_label }}</span></h1>
+  <p class="muted">Owned by <a href="/{{ p.owner }}">{{ p.owner }}</a>{% if let Some(h) = p.repo_href %} <span class="dot" aria-hidden="true">&middot;</span> linked to <a href="{{ h }}">{{ p.repo_text }}</a>{% endif %} <span class="dot" aria-hidden="true">&middot;</span> {% call ui::time(p.when) %}</p>
+  {% if p.orphaned %}<p class="muted">Its repository was deleted or it was unlinked, so only its owner can use it.</p>{% endif %}
+  {% if !errors.general.is_empty() %}<p class="form-error" role="alert">{{ errors.general }}</p>{% endif %}
+
+{% if p.is_container %}
+  <section class="card pad stack">
+    <h3>Pull</h3>
+    <pre><code>docker pull {{ docker_host }}/{{ p.owner }}/{{ p.name }}{% if let Some(t) = p.latest %}:{{ t }}{% endif %}
+echo $TOKEN | docker login {{ docker_host }} -u {{ username }} --password-stdin</code></pre>
+    <p class="hint">Use an access token from Settings, Tokens as the password.</p>
+  </section>
+{% else %}
+  <section class="card pad stack">
+    <h3>Install</h3>
+    <pre><code>dotnet nuget add source {{ host }}/nuget/{{ p.owner }}/v3/index.json --name codehaven --username {{ username }} --password $TOKEN --store-password-in-clear-text
+dotnet add package {{ p.name }}</code></pre>
+    <p class="hint">Use an access token from Settings, Tokens as the password.</p>
+  </section>
+{% endif %}
+
+  <h2>Versions</h2>
+  {% if p.versions.is_empty() %}
+  {% call ui::empty("No versions", "Push the package again and its versions show up here.") %}
+  {% else %}
+  <table class="data-table card">
+    <thead><tr><th>{% if p.is_container %}Tag{% else %}Version{% endif %}</th><th>Digest</th><th>Platforms</th><th>Size</th><th>Pushed</th>{% if p.can_admin %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+      {% for v in p.versions %}
+      <tr>
+        <td data-label="{% if p.is_container %}Tag{% else %}Version{% endif %}"><code>{{ v.label }}</code></td>
+        <td data-label="Digest">{% if !v.digest.is_empty() %}<code>{{ v.digest }}</code>{% else %}<span class="muted">-</span>{% endif %}</td>
+        <td data-label="Platforms">{{ v.platforms }}</td>
+        <td data-label="Size">{{ v.size }}</td>
+        <td data-label="Pushed">{% call ui::time(v.when) %}</td>
+        {% if p.can_admin %}
+        <td data-label="">
+          <form method="post" action="{{ action }}" class="inline" data-confirm="Delete this version?">
+            {% call ui::csrf_field(c.csrf) %}
+            <input type="hidden" name="do" value="delete_version">
+            <input type="hidden" name="label" value="{{ v.label }}">
+            <label class="sr-only" for="del-v-{{ loop.index0 }}">Type {{ p.name }} to confirm</label>
+            <input id="del-v-{{ loop.index0 }}" name="confirm_name" type="text" placeholder="{{ p.name }}" autocomplete="off" spellcheck="false">
+            <button class="btn small danger" type="submit">Delete</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+{% if p.can_admin %}
+  <section class="card pad stack">
+    <h3>Repository</h3>
+    {% if let Some(h) = p.repo_href %}
+    <p>Linked to <a href="{{ h }}">{{ p.repo_text }}</a>.</p>
+    <form method="post" action="{{ action }}" class="inline" data-confirm="Unlink this package? Only its owner can use it afterwards.">
+      {% call ui::csrf_field(c.csrf) %}
+      <input type="hidden" name="do" value="unlink">
+      <button class="btn small" type="submit">Unlink</button>
+    </form>
+    {% endif %}
+    {% if !p.linkable.is_empty() %}
+    <form method="post" action="{{ action }}" class="stack">
+      {% call ui::csrf_field(c.csrf) %}
+      <input type="hidden" name="do" value="preview_link">
+      <div class="field">
+        <label for="link-repo">Repository</label>
+        <select id="link-repo" name="repo">
+          {% for r in p.linkable %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+        </select>
+        <p class="hint">People who can read the repository may pull the package once it is linked.</p>
+      </div>
+      <div class="row"><button class="btn btn-primary" type="submit">Link to repository</button></div>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="card pad stack">
+    <h3>Delete this package</h3>
+    <p class="muted">This removes the package and every version. There is no undo.</p>
+    <form method="post" action="{{ action }}" class="stack" data-confirm="Delete this package and every version?">
+      {% call ui::csrf_field(c.csrf) %}
+      <input type="hidden" name="do" value="delete_package">
+      <div class="field">
+        <label for="del-pkg">Type {{ p.name }} to confirm</label>
+        <input id="del-pkg" name="confirm_name" type="text" placeholder="{{ p.name }}" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="row"><button class="btn danger" type="submit">Delete package</button></div>
+    </form>
+  </section>
+{% endif %}
+</main>
+{% endblock %}

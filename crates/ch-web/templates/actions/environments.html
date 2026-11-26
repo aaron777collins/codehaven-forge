@@ -1,0 +1,40 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="tabs">
+  {% for t in tabs %}<a class="tab{% if t.current %} current{% endif %}" href="{{ t.href }}">{{ t.name }}</a>{% endfor %}
+</div>
+<h2 class="page-h">Environments</h2>
+<p class="muted">An environment is a place a workflow deploys to. Add environment: to a job to use one. It can ask for reviewers, wait, and limit which branches deploy.</p>
+{% if !error.is_empty() %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="card pad stack">
+  <h3>Create an environment</h3>
+  <form method="post" action="{{ action }}" class="stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <div class="field">
+      <label for="env-name">Name</label>
+      <input id="env-name" name="name" type="text" value="{{ name_value }}" placeholder="production" autocapitalize="none" spellcheck="false" required>
+    </div>
+    <div class="row"><button class="btn btn-primary" type="submit">Create environment</button></div>
+  </form>
+</section>
+
+{% if rows.is_empty() %}
+{% call ui::empty("No environments", "Without one, a job deploys with no review and no environment secrets.") %}
+{% else %}
+<table class="data-table card">
+  <thead><tr><th>Name</th><th>Reviewers</th><th>Wait</th><th>Branches</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td data-label="Name"><a href="{{ r.href }}">{{ r.name }}</a></td>
+      <td data-label="Reviewers">{{ r.reviewers }}</td>
+      <td data-label="Wait">{{ r.wait }}</td>
+      <td data-label="Branches">{{ r.branches }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

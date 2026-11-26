@@ -539,6 +539,47 @@ async fn write_body(
     Ok(got)
 }
 
+/// Bytes that joins in this process have reserved, by upload directory. The check against the
+/// server's cap on unfinished uploads and the reservation happen under one lock, so two joins
+/// cannot both pass on the room that only one of them may take. A running join is counted twice
+/// (its reservation and the file it has written so far), which only makes the cap stricter.
+static JOINS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, u64>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Bytes held for one join while it runs. Dropping it gives them back.
+struct JoinReservation {
+    dir: std::path::PathBuf,
+    bytes: u64,
+}
+
+impl JoinReservation {
+    /// Takes `bytes` when what the directory holds now, what other joins have reserved and
+    /// `bytes` together stay within `cap`.
+    async fn take(dir: &std::path::Path, bytes: u64, cap: u64) -> Option<JoinReservation> {
+        // Measured before the lock: a lock held across disk reads would make joins wait on each other.
+        let on_disk = inflight_bytes(dir).await;
+        let mut held = JOINS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let others = held.get(dir).copied().unwrap_or(0);
+        if on_disk.saturating_add(others).saturating_add(bytes) > cap {
+            return None;
+        }
+        *held.entry(dir.to_path_buf()).or_insert(0) += bytes;
+        Some(JoinReservation { dir: dir.to_path_buf(), bytes })
+    }
+}
+
+impl Drop for JoinReservation {
+    fn drop(&mut self) {
+        let mut held = JOINS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(n) = held.get_mut(&self.dir) {
+            *n = n.saturating_sub(self.bytes);
+            if *n == 0 {
+                held.remove(&self.dir);
+            }
+        }
+    }
+}
+
 /// Joins the blocks the list names, in its order, into the one file the artifact is made from.
 async fn commit_list(ctx: &Ctx, id: i64, body: Body) -> Response {
     let Ok(xml) = axum::body::to_bytes(body, MAX_LIST_BYTES).await else {
@@ -557,9 +598,12 @@ async fn commit_list(ctx: &Ctx, id: i64, body: Body) -> Response {
     for b in &ids {
         named = named.saturating_add(tokio::fs::metadata(block_file(ctx, id, b)).await.map(|m| m.len()).unwrap_or(0));
     }
-    if inflight_bytes(&dir).await.saturating_add(named.min(store::MAX_ARTIFACT_BYTES)) > crate::toolkit::MAX_INFLIGHT_BYTES {
+    // Reserved in this process before the check and kept until the join ends, so blocklist
+    // commits sent at the same moment cannot each see the same room and all pass (ch-bnh).
+    let Some(_reserved) = JoinReservation::take(&dir, named.min(store::MAX_ARTIFACT_BYTES), crate::toolkit::MAX_INFLIGHT_BYTES).await
+    else {
         return blob_error(StatusCode::SERVICE_UNAVAILABLE, "ServerBusy");
-    }
+    };
     let result = async {
         let mut out = tokio::fs::File::create(&tmp).await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE.into_response())?;
         let mut total = 0u64;
@@ -635,6 +679,34 @@ pub const LINK_SECONDS: i64 = GRANT_SECONDS;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn joins_started_together_cannot_pass_the_cap_together() {
+        let dir = std::path::PathBuf::from("/nonexistent/ch-bnh-test");
+        // Room for 10 bytes: the first join takes 6, so a second asking for 6 is refused.
+        let first = JoinReservation::take(&dir, 6, 10).await.expect("room for the first");
+        assert!(JoinReservation::take(&dir, 6, 10).await.is_none(), "the second does not see the same room");
+        // One that fits beside it passes.
+        let small = JoinReservation::take(&dir, 4, 10).await.expect("4 more fits");
+        assert!(JoinReservation::take(&dir, 1, 10).await.is_none(), "now it is full");
+        // Racing takers: of many at once, only as many as fit get through.
+        drop(small);
+        drop(first);
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let d = dir.clone();
+            tasks.push(tokio::spawn(async move { JoinReservation::take(&d, 4, 10).await }));
+        }
+        let mut kept = Vec::new();
+        for t in tasks {
+            if let Some(r) = t.await.unwrap() {
+                kept.push(r);
+            }
+        }
+        assert_eq!(kept.len(), 2, "8 joins of 4 bytes against 10: two pass");
+        drop(kept);
+        assert!(JoinReservation::take(&dir, 10, 10).await.is_some(), "everything is given back when the joins end");
+    }
 
     #[test]
     fn a_block_list_gives_its_ids_in_order() {

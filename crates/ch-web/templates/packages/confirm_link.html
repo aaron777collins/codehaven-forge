@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+{% block content %}
+<main id="main" class="page">
+  <h1>Link {{ name }}</h1>
+  <p class="muted">The package will follow <strong>{{ repo }}</strong>.</p>
+  <p class="notice">{{ audience }}</p>
+  {% if widens %}<p class="notice notice-warn">This link lets more people pull the package than can pull it now.</p>{% endif %}
+  <form method="post" action="{{ action }}" class="card pad stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="do" value="link">
+    <input type="hidden" name="repo" value="{{ repo }}">
+    <input type="hidden" name="confirm" value="1">
+    <div class="row">
+      <button class="btn btn-primary" type="submit">Link and let them pull</button>
+      <a class="btn" href="{{ back }}">Cancel</a>
+    </div>
+  </form>
+</main>
+{% endblock %}

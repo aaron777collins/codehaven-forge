@@ -121,11 +121,38 @@ GET /search/repositories, /search/issues, /search/users, /search/code   (code ne
 ## Not done
 
 - Cross-repository code search (the plan keeps it for `tantivy` later). Code search is per repository.
-- Issue forms in YAML (`.yml` templates are ignored, Markdown templates work).
 - Webhook payloads for the new events (the notify stream owns them).
 - Transferring or deleting an issue, and reordering pinned issues.
 - Repository-wide lists of issue comments and review comments (`/issues/comments`, `/pulls/comments`).
-- A merge queue.
+
+## Issue forms and the merge queue (ch-dxk)
+
+**Issue forms.** `.github/ISSUE_TEMPLATE/*.yml` (or `.codehaven/ISSUE_TEMPLATE`) is read as a YAML issue
+form beside the Markdown templates: `name`, `description`, `title`, `labels` and a `body` of `markdown`,
+`input`, `textarea`, `dropdown` and `checkboxes` fields with `attributes` (`label`, `description`,
+`placeholder`, `value`, `options`, `multiple`, `render`) and `validations.required`. The new issue page
+lists the templates and draws a form as plain HTML on the server, so the content security policy is
+unchanged. What is submitted is values only: the server reads the form again from the repository, checks
+each value against its field (an option that is not listed, a required answer that is empty, a second
+line in a one-line input) and builds the issue body from them: a `### Label` section per field in the
+form's order, `_No response_` for an empty optional answer, and an answer with `render:` in a fenced
+block that its own text cannot close. A form that cannot be read (bad YAML, a duplicate id, no field
+that is not markdown, more than 40 fields, a file over 64 KB) is left out of the list. A form's
+labels are applied only when the person can triage, as on the plain new issue page. `assignees` in a
+form is ignored. `config.yml` is not read.
+
+**Merge queue.** A repository admin turns it on in Settings, General. While it is on, a pull request
+merges only by being added to the queue: the Merge button, the REST merge and auto-merge all refuse. The queue
+works on one pull request per base branch at a time, oldest first. If the branch does not contain the base's
+current tip (the base moved after the branch was last checked), the base is merged into the pull request's branch (the "update branch" a person can do, written as the person who
+queued it), so that checks run on the merged result; those checks start as they do for any push, and for
+a pull request from a fork they still wait for a writer's approval of that exact commit, which the queue never
+gives. Once it is up to date, the ordinary merge gate decides (required checks, reviews, resolved threads,
+code owners) and a clear gate merges it as the person who queued it, by the method they chose. A
+pull request leaves the queue, with the reason on its timeline (`merge_queue_removed`), when a required
+check failed, it conflicts, someone pushed commits the queue did not make, the person who queued it lost
+write access, it closed, it waited more than 24 hours, or a person removed it. Turning the queue off
+empties it. At most 50 wait per base branch. The queue advances on events and once a minute.
 
 ## Testing
 

@@ -14,12 +14,22 @@ use ch_core::audit::{AuditEvent, Outcome, action};
 use ch_core::model::ClientInfo;
 use ch_core::services::Ci;
 use ch_core::web_contract::{
-    ActionUsed, ActionsPolicy, Artifact, Pipelines, Runner, SecretMeta, Variable, WorkflowDef, WorkflowInput, WorkflowJob, WorkflowStep,
+    ActionUsed, ActionsPolicy, Artifact, DeploymentGate, EnvironmentDraft, EnvironmentInfo, EnvironmentReviewer, Pipelines, Runner,
+    SecretMeta, Variable, WorkflowDef, WorkflowInput, WorkflowJob, WorkflowStep,
 };
 use ch_core::{Actor, Error, Permission, RepoId, Result, RunId, RunnerId};
 use std::collections::HashMap;
 
 impl CiImpl {
+    async fn record_environment(&self, actor: &Actor, client: &ClientInfo, act: &str, repo: RepoId, env: &str, detail: serde_json::Value) {
+        let ev = AuditEvent::new(actor, client, act, Outcome::Success)
+            .target("environment", env)
+            .details(serde_json::json!({ "repo_id": repo.0, "environment": env, "detail": detail }));
+        if let Err(e) = self.ctx.audit.record_standalone(ev).await {
+            tracing::warn!(error = %e, "could not record the audit event");
+        }
+    }
+
     async fn record_secret(&self, actor: &Actor, client: &ClientInfo, act: &str, name: &str) {
         let ev = AuditEvent::new(actor, client, act, Outcome::Success)
             .target("secret", name)
@@ -329,6 +339,133 @@ impl Pipelines for CiImpl {
         Ok(())
     }
 
+    async fn environments(&self, actor: &Actor, repo: RepoId) -> Result<Vec<EnvironmentInfo>> {
+        self.ctx.authz.require(actor, repo, Permission::Admin).await?;
+        Ok(crate::environments::list(&self.ctx, repo).await?.into_iter().map(env_info).collect())
+    }
+
+    async fn environment(&self, actor: &Actor, repo: RepoId, name: &str) -> Result<EnvironmentInfo> {
+        self.ctx.authz.require(actor, repo, Permission::Admin).await?;
+        Ok(env_info(crate::environments::get(&self.ctx, repo, name).await?))
+    }
+
+    async fn save_environment(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        name: &str,
+        draft: EnvironmentDraft,
+        client: &ClientInfo,
+    ) -> Result<bool> {
+        actor.deny_app("change an environment")?;
+        self.ctx.authz.require(actor, repo, Permission::Admin).await?;
+        let detail = serde_json::json!({"wait_minutes": draft.wait_minutes, "branches": draft.branches, "reviewers": draft.reviewers.iter().map(|u| u.0).collect::<Vec<_>>()});
+        let created = crate::environments::save(&self.ctx, repo, name, draft.wait_minutes, &draft.branches, &draft.reviewers).await?;
+        self.record_environment(actor, client, action::ENVIRONMENT_CHANGED, repo, name, detail).await;
+        Ok(created)
+    }
+
+    async fn create_environment(&self, actor: &Actor, repo: RepoId, name: &str, client: &ClientInfo) -> Result<()> {
+        actor.deny_app("create an environment")?;
+        self.ctx.authz.require(actor, repo, Permission::Admin).await?;
+        crate::environments::create(&self.ctx, repo, name).await?;
+        let detail = serde_json::json!({"wait_minutes": 0, "branches": [], "reviewers": []});
+        self.record_environment(actor, client, action::ENVIRONMENT_CHANGED, repo, name, detail).await;
+        Ok(())
+    }
+
+    async fn delete_environment(&self, actor: &Actor, repo: RepoId, name: &str, client: &ClientInfo) -> Result<()> {
+        actor.deny_app("delete an environment")?;
+        self.ctx.authz.require(actor, repo, Permission::Admin).await?;
+        crate::environments::delete(&self.ctx, repo, name).await?;
+        self.record_environment(actor, client, action::ENVIRONMENT_DELETED, repo, name, serde_json::json!({})).await;
+        Ok(())
+    }
+
+    async fn set_environment_secret(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        environment: &str,
+        name: &str,
+        value: &str,
+        client: &ClientInfo,
+    ) -> Result<()> {
+        actor.deny_app("change an environment secret")?;
+        self.ctx.authz.require(actor, repo, Permission::Admin).await?;
+        crate::environments::put_secret(&self.ctx, repo, environment, name, value, actor.user_id()).await?;
+        self.record_environment(actor, client, action::ENVIRONMENT_SECRET_CHANGED, repo, environment, serde_json::json!({"name": name}))
+            .await;
+        Ok(())
+    }
+
+    async fn delete_environment_secret(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        environment: &str,
+        name: &str,
+        client: &ClientInfo,
+    ) -> Result<()> {
+        actor.deny_app("change an environment secret")?;
+        self.ctx.authz.require(actor, repo, Permission::Admin).await?;
+        crate::environments::delete_secret(&self.ctx, repo, environment, name).await?;
+        self.record_environment(actor, client, action::ENVIRONMENT_SECRET_DELETED, repo, environment, serde_json::json!({"name": name}))
+            .await;
+        Ok(())
+    }
+
+    async fn reviewer_candidates(&self, actor: &Actor, repo: RepoId) -> Result<Vec<EnvironmentReviewer>> {
+        self.ctx.authz.require(actor, repo, Permission::Admin).await?;
+        Ok(crate::environments::reviewer_candidates(&self.ctx, repo)
+            .await?
+            .into_iter()
+            .map(|(user_id, login)| EnvironmentReviewer { user_id, login })
+            .collect())
+    }
+
+    async fn run_gates(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Vec<DeploymentGate>> {
+        self.ctx.authz.require(actor, repo, Permission::Read).await?;
+        Ci::get_run(self, actor, repo, run).await?;
+        let may_write = self.ctx.authz.repo_permission(actor, repo).await? >= Permission::Write;
+        let mut out = Vec::new();
+        for g in crate::environments::gates_of_run(&self.ctx, run.0).await? {
+            let can_review = match (may_write, actor.user_id()) {
+                (true, Some(u)) => crate::environments::is_reviewer(&self.ctx, g.job_id, u).await?,
+                _ => false,
+            };
+            out.push(DeploymentGate {
+                job_id: g.job_id,
+                job_name: g.job_name,
+                environment: g.environment,
+                state: g.state,
+                release_at: g.release_at,
+                decided_by: g.decided_by,
+                comment: g.comment,
+                reviewers: g.reviewers,
+                can_review,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn review_deployment(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        run: RunId,
+        job: i64,
+        approve: bool,
+        comment: &str,
+        client: &ClientInfo,
+    ) -> Result<()> {
+        // A review is a person's decision. A connected app never makes it.
+        actor.deny_app("review a deployment")?;
+        self.ctx.authz.require(actor, repo, Permission::Write).await?;
+        crate::triggers::refuse_if_locked(&self.ctx, repo).await?;
+        crate::environments::decide(&self.ctx, client, actor, repo, run.0, job, approve, comment).await
+    }
+
     async fn artifacts(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Vec<Artifact>> {
         let infos = Ci::artifacts(self, actor, repo, run).await?;
         let shas: Vec<(i64, String)> =
@@ -345,5 +482,15 @@ impl Pipelines for CiImpl {
                 expired: a.expired,
             })
             .collect())
+    }
+}
+
+fn env_info(e: crate::environments::EnvironmentView) -> EnvironmentInfo {
+    EnvironmentInfo {
+        name: e.name,
+        wait_minutes: e.wait_minutes,
+        branches: e.branches,
+        reviewers: e.reviewers.into_iter().map(|(user_id, login)| EnvironmentReviewer { user_id, login }).collect(),
+        secrets: e.secrets.into_iter().map(|(name, updated_at)| SecretMeta { name, updated_at }).collect(),
     }
 }

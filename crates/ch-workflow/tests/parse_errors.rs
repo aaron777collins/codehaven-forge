@@ -81,9 +81,21 @@ fn services_parse_and_bad_ones_are_named() {
 }
 
 #[test]
-fn unsupported_features_are_named() {
+fn environments_parse_as_plain_names_and_bad_ones_are_named() {
     let job = |extra: &str| format!("on: push\njobs:\n  a:\n    runs-on: x\n{extra}    steps:\n      - run: x\n");
-    expect(&job("    environment: prod\n"), 5, "`environment:`");
+    assert_eq!(parse(&job("    environment: prod\n")).unwrap().jobs[0].environment.as_deref(), Some("prod"));
+    let w = parse(&job("    environment:\n      name: Staging 2\n      url: https://${{ github.repository }}.example.com\n")).unwrap();
+    assert_eq!(w.jobs[0].environment.as_deref(), Some("Staging 2"));
+    assert_eq!(parse(&job("")).unwrap().jobs[0].environment, None);
+    mentions(&job("    environment: ${{ inputs.where }}\n"), "plain text");
+    mentions(&job("    environment:\n      url: https://x.example\n"), "needs a `name`");
+    mentions(&job("    environment: -bad\n"), "starts with a letter or digit");
+    mentions(&job("    environment: [a, b]\n"), "must be a name");
+    mentions(&job("    environment:\n      name: x\n      color: red\n"), "color");
+}
+
+#[test]
+fn unsupported_features_are_named() {
     expect(&format!("on:\n  pull_request_target:\n{OK_JOBS}"), 2, "pull_request_target");
     expect(&format!("on:\n  issues:\n{OK_JOBS}"), 2, "event `issues` is not supported");
 }
@@ -314,6 +326,54 @@ fn deeply_nested_files_are_refused_before_they_can_overflow_the_stack() {
     assert!(ch_workflow::parse::nesting_too_deep("a:\n  b:\n    - c: [1, {d: 2}]\n").is_none());
 }
 
+/// YAML complex-key markers (`? ` and `: `) recurse in the parser like brackets and were not
+/// counted: a 2 KB file of `? ` aborted the process. No workflow or action needs an explicit
+/// key, so one is refused outright, wherever it starts a node.
+#[test]
+fn an_explicit_yaml_key_is_refused_before_the_parser_sees_it() {
+    let head = "on: push\njobs:\n";
+    let cases = [
+        ("2 KB question marks", format!("{head}{}x\n", "? ".repeat(1000))),
+        ("16 KB question marks", format!("{head}{}x\n", "? ".repeat(8000))),
+        ("short question marks", format!("{head}{}x\n", "? ".repeat(600))),
+        ("colons", format!("{head}{}x\n", ": ".repeat(8000))),
+        ("question mark and dash", format!("{head}{}x\n", "? - ".repeat(8000))),
+        ("dash and question mark", format!("{head}{}x\n", "- ? ".repeat(8000))),
+        ("indented key", format!("{head}  {}x\n", "? ".repeat(8000))),
+        ("indented colons", format!("{head}  {}x\n", ": ".repeat(8000))),
+        ("one key", format!("{head}  ? a\n  : b\n")),
+        ("tab after the marker", format!("{head}{}x\n", "?\t".repeat(8000))),
+        ("tab after a dash", format!("{head}{}x\n", "-\t".repeat(8000))),
+        ("tab dash then key", format!("{head}{}x\n", "-\t? ".repeat(8000))),
+        ("key after a value colon", format!("{head}a: {}x\n", "? ".repeat(8000))),
+        ("colons after a key", format!("{head}a: {}x\n", ": ".repeat(8000))),
+        ("key in a flow list", format!("on: push\njobs: [{}x]\n", "? ".repeat(8000))),
+        ("key in a flow map", format!("on: push\njobs: {{{}x}}\n", "? ".repeat(8000))),
+        ("key after a flow comma", "on: push\njobs: [a, ? b]\n".to_string()),
+        ("lone marker", format!("{head}  ?\n")),
+    ];
+    for (name, src) in &cases {
+        let e = parse(src).expect_err(name);
+        assert!(e.iter().any(|d| d.message.contains("explicit") || d.message.contains("nested more than")), "{name}: {e:?}");
+        assert!(ch_workflow::parse::nesting_too_deep(src).is_some(), "{name}");
+        // The same file as an action.yml takes the same road.
+        let a = ch_workflow::parse::parse_action(src).expect_err(name);
+        assert!(a.iter().any(|d| d.message.contains("explicit") || d.message.contains("nested more than")), "{name}: {a:?}");
+    }
+    let e = errs(&format!("{head}  ? a\n  : b\n"));
+    assert!(e.iter().any(|d| d.message.contains("explicit")), "a plain error says what is wrong: {e:?}");
+}
+
+/// The refusal must not catch ordinary text that merely contains these characters, including a
+/// shell line that starts with the `:` no-op inside a `run: |` block.
+#[test]
+fn question_marks_and_colons_in_ordinary_text_are_fine() {
+    let src = "on: push\njobs:\n  a:\n    runs-on: x\n    steps:\n      - name: \"why? : because\"\n        run: |\n          : \"${FOO:=bar}\"\n          ? is a glob\n          echo done\n      - run: \"echo 'a ? b : c'\"\n";
+    assert!(ch_workflow::parse::nesting_too_deep(src).is_none());
+    assert!(parse(src).is_ok(), "{:?}", parse(src).err());
+    assert!(ch_workflow::parse::nesting_too_deep("a: b ? c\nd: http://x/y?z\ne: ?x\nf: :y\n- run: >-\n    : x\n").is_none());
+}
+
 #[test]
 fn hostile_input_does_not_crash() {
     let deep_seq = format!("on: push\njobs: {}1{}\n", "[".repeat(2000), "]".repeat(2000));
@@ -417,4 +477,162 @@ jobs:
     assert_eq!(vals[4], serde_json::json!("true"));
     assert_eq!(vals[5], serde_json::Value::Null);
     assert_eq!(vals[6], serde_json::json!("007"));
+}
+
+/// Every repeated YAML marker, at the start of a line, indented, after a key and after a dash,
+/// must come back as a normal result and never overflow the stack.
+#[test]
+fn repeated_markers_never_crash_the_parser() {
+    let tokens = [
+        "? ", ": ", "- ", "? - ", "- ? ", "- : ", "&a ", "!a ", "*a ", "? &a ", "[", "{", "[? ", "{? ", "[- ", "{a: ", "? [", "? {", "|",
+        "> ", "'", "\"", "-\t", "?\t", ":\t", "a: ", "a:\n  ", "- a:\n  ", "? a\n: ", "--- ", "%TAG ", "<<: ", "!!map ", "\\\" ", "' ",
+        "key: ? ",
+    ];
+    for t in tokens {
+        for reps in [50, 700, 4000] {
+            let body = t.repeat(reps);
+            for shape in [
+                format!("{body}x\n"),
+                format!("  {body}x\n"),
+                format!("a: {body}x\n"),
+                format!("- {body}x\n"),
+                format!("a:\n  b: {body}x\n"),
+                format!("{}x\n", format!("{t}\n").repeat(reps)),
+            ] {
+                let _ = parse(&format!("on: push\njobs:\n{shape}")).is_ok()
+                    | parse(&shape).is_ok()
+                    | ch_workflow::parse::parse_action(&shape).is_ok();
+            }
+        }
+    }
+}
+
+/// Every way YAML ends a line must end a line for the scan too. A lone CR hid a 6000 dash chain
+/// from it, the parser overflowed its stack and the server aborted (ch-qop). CR, NEL, LS and PS
+/// are normalised to LF once, and the scan and the parser read the same text.
+#[test]
+fn a_dash_chain_behind_any_line_break_is_refused() {
+    let chain = "- ".repeat(6000);
+    for (name, sep) in [("lone CR", "\r"), ("CRLF", "\r\n"), ("NEL", "\u{85}"), ("LS", "\u{2028}"), ("PS", "\u{2029}"), ("LF", "\n")] {
+        let wf = format!("name: x{sep}on: push{sep}jobs:{sep}{chain}x\n");
+        let e = parse(&wf).expect_err(name);
+        assert!(e.iter().any(|d| d.message.contains("nested more than")), "{name}: {e:?}");
+        let a = ch_workflow::parse::parse_action(&format!("name: x{sep}runs:{sep}{chain}x\n")).expect_err(name);
+        assert!(a.iter().any(|d| d.message.contains("nested more than")), "{name} action: {a:?}");
+        assert!(ch_workflow::parse::nesting_too_deep(&format!("jobs:{sep}{chain}x\n")).is_some(), "{name}");
+        // Indentation nests too, and the whole file may use the break.
+        let mut block = String::from("on: push\njobs:\n");
+        for i in 0..300 {
+            block.push_str(&format!("{}k{i}:\n", "  ".repeat(i + 1)));
+        }
+        let e = parse(&block.replace('\n', sep)).expect_err(name);
+        assert!(e.iter().any(|d| d.message.contains("nested more than")), "{name} block: {e:?}");
+        // So do brackets and explicit keys.
+        let flow = format!("on: push{sep}jobs: {}1{}\n", "[".repeat(5000), "]".repeat(5000));
+        assert!(parse(&flow).is_err(), "{name} flow");
+        let keys = format!("on: push{sep}jobs:{sep}{}x\n", "? ".repeat(6000));
+        assert!(parse(&keys).is_err(), "{name} keys");
+    }
+}
+
+/// A file that is fine with LF stays fine with any other line break, and means the same thing.
+#[test]
+fn other_line_breaks_read_like_lf() {
+    let lf = format!("on: push\n{OK_JOBS}");
+    let want = parse(&lf).unwrap();
+    for sep in ["\r", "\r\n"] {
+        let got = parse(&lf.replace('\n', sep)).unwrap_or_else(|e| panic!("{sep:?}: {e:?}"));
+        assert_eq!(got.jobs.len(), want.jobs.len());
+    }
+}
+
+/// A file over the cap is refused with a plain error before anything reads it.
+#[test]
+fn a_workflow_or_action_over_256_kib_is_refused() {
+    let big = format!("on: push\n# {}\n{OK_JOBS}", "x".repeat(257 * 1024));
+    assert!(errs(&big)[0].message.contains("larger than 256 KiB"));
+    let a = ch_workflow::parse::parse_action(&format!("name: x\n# {}\nruns:\n  using: composite\n  steps: []\n", "x".repeat(257 * 1024)));
+    assert!(a.unwrap_err()[0].message.contains("larger than 256 KiB"));
+    let fits = format!("on: push\n# {}\n{OK_JOBS}", "x".repeat(250 * 1024));
+    assert!(parse(&fits).is_ok());
+}
+
+/// Random bytes and random mixes of YAML markers, CR, tabs, quotes and Unicode separators, at the
+/// cap size, through the workflow and the action parser. Nothing may abort the process: an abort
+/// ends this test binary, so reaching the end is the proof.
+#[test]
+fn fuzzed_files_at_the_cap_never_abort() {
+    let cap = ch_workflow::parse::MAX_FILE_BYTES;
+    let mut rng = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    let atoms = [
+        "- ",
+        "? ",
+        ": ",
+        "[",
+        "{",
+        "]",
+        "}",
+        ",",
+        "\r",
+        "\n",
+        "\r\n",
+        "\t",
+        "\u{85}",
+        "\u{2028}",
+        "\u{2029}",
+        "\u{feff}",
+        "'",
+        "\"",
+        "\\",
+        "|",
+        ">",
+        "#",
+        "&a ",
+        "*a ",
+        "!t ",
+        "--- ",
+        "...",
+        "%",
+        "  ",
+        "a: ",
+        "-\t",
+        "?\t",
+        "x",
+        "k:\n  ",
+        "\0",
+        "é",
+        "\u{1F600}",
+    ];
+    let run = |src: &str| {
+        let _ = parse(src);
+        let _ = ch_workflow::parse::parse_action(src);
+        let _ = ch_workflow::parse::nesting_too_deep(src);
+    };
+    for round in 0..60 {
+        // Random bytes, made valid text by lossy decoding.
+        let bytes: Vec<u8> = (0..cap / 3).map(|_| next() as u8).collect();
+        run(&String::from_utf8_lossy(&bytes));
+        // A random mix of atoms, filled to the cap. A small alphabet per round makes long runs
+        // of one marker, which is what nests.
+        let pool: Vec<&str> = (0..1 + (next() % 4) as usize).map(|_| atoms[(next() % atoms.len() as u64) as usize]).collect();
+        let mut s = String::from(if round % 2 == 0 { "on: push\njobs:\n" } else { "" });
+        while s.len() < cap - 16 {
+            s.push_str(pool[(next() % pool.len() as u64) as usize]);
+            if next() % 64 == 0 {
+                s.push_str(atoms[(next() % atoms.len() as u64) as usize]);
+            }
+        }
+        run(&s);
+        // The same atoms as a CR-only or NEL-only file (half size, as NEL is two bytes).
+        let mut t = s.clone();
+        t.truncate(t.char_indices().map(|(i, _)| i).take_while(|&i| i <= cap / 2).last().unwrap_or(0));
+        run(&t.replace('\n', "\r"));
+        run(&t.replace('\n', "\u{85}"));
+    }
 }

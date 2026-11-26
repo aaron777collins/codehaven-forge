@@ -252,6 +252,8 @@ struct GeneralPage {
     can_admin: bool,
     is_private: bool,
     archived: bool,
+    /// The repository merges only through its merge queue (ch-dxk).
+    merge_queue: bool,
     repo_name: String,
     full_name: String,
     rename_name: String,
@@ -295,6 +297,7 @@ async fn general_page(ctx: &Ctx, rc: &RepoCtx, input: GeneralInput, errors: Fiel
         text_public: super::visibility::TEXT_PUBLIC,
         confirm_internal: super::visibility::CONFIRM_INTERNAL,
         archived: rc.repo.archived,
+        merge_queue: ctx.state.pulls.merge_queue_enabled(&ctx.actor, rc.id()).await.unwrap_or(false),
         repo_name: rc.repo.name.clone(),
         full_name: rc.repo.full_name(),
         errors,
@@ -366,6 +369,16 @@ pub async fn archive_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>,
     } else {
         "Repository unarchived. Pushes and merges work again."
     };
+    Ok(ctx.redirect_flash(&format!("{}/settings", rc.base()), "ok", text))
+}
+
+/// The merge queue switch (ch-dxk): while it is on, pull requests merge only through the queue.
+pub async fn merge_queue_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require(Permission::Admin)?;
+    let on = form.get("enabled") == "1";
+    ctx.state.pulls.set_merge_queue(&ctx.actor, rc.id(), on, &ctx.client).await?;
+    let text = if on { "Turned the merge queue on." } else { "Turned the merge queue off. Anything waiting in it was removed." };
     Ok(ctx.redirect_flash(&format!("{}/settings", rc.base()), "ok", text))
 }
 

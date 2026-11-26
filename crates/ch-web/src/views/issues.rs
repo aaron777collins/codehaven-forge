@@ -11,6 +11,7 @@ use askama::Template;
 use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::response::Response;
+use ch_core::issue_form::{FormField, compose};
 use ch_core::model::{Comment, Issue, IssueFilter, NewIssue};
 use ch_core::web_contract::{Label, Milestone};
 use ch_core::{Error, FieldError, MilestoneId, Permission, UserId};
@@ -285,7 +286,7 @@ pub async fn list(ctx: Ctx, Path((owner, name)): Path<(String, String)>, Query(q
         percent: milestone_percent(m.open_issues, m.closed_issues),
     });
     let pinned_issues: Vec<Issue> = if lq.open && !filtered && lq.page <= 1 {
-        ctx.state.issues.pinned(&ctx.actor, rc.id()).await.unwrap_or_default().into_iter().map(|v| v.issue).collect()
+        ctx.state.issues.pinned(&ctx.actor, rc.id()).await.unwrap_or_default().into_iter().map(|v| v.issue).filter(|i| i.open).collect()
     } else {
         Vec::new()
     };
@@ -330,6 +331,30 @@ pub struct Choice {
     pub class: String,
 }
 
+pub struct TemplatePick {
+    pub name: String,
+    pub about: String,
+    pub href: String,
+}
+
+pub struct FormOptionView {
+    /// What the control sends: a dropdown option's label, or a checkbox's position.
+    pub value: String,
+    pub label: String,
+    pub on: bool,
+}
+
+/// One field of a YAML issue form, ready to draw: what was submitted is already folded in.
+pub struct FormFieldView {
+    pub field: FormField,
+    /// A markdown field's rendered html; empty for the others.
+    pub html: String,
+    /// What an input or textarea shows: the answer given, else the form's own prefill.
+    pub value: String,
+    pub options: Vec<FormOptionView>,
+    pub error: String,
+}
+
 #[derive(Template)]
 #[template(path = "issues/new.html")]
 struct NewPage {
@@ -343,6 +368,10 @@ struct NewPage {
     milestones: Vec<Choice>,
     can_triage: bool,
     errors: FieldErrors,
+    template_choices: Vec<TemplatePick>,
+    template_path: String,
+    is_form: bool,
+    form_fields: Vec<FormFieldView>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -355,8 +384,19 @@ async fn new_page(
     milestone: Option<i64>,
     errors: FieldErrors,
     status: StatusCode,
+    template: &str,
+    submitted: &HashMap<String, Vec<String>>,
 ) -> WebResult<Response> {
     let can_triage = rc.perm.allows(Permission::Triage) && !rc.repo.archived;
+    let templates = ctx.state.issues.templates(&ctx.actor, rc.id()).await.unwrap_or_default();
+    let chosen = templates.iter().find(|t| t.path == template);
+    // A fresh view takes the template's title, body and labels; a re-render keeps what was sent.
+    let fresh = title.is_empty() && body.is_empty() && picked.is_empty() && submitted.is_empty();
+    let (title, body): (String, String) = match chosen {
+        Some(t) if fresh => (t.title.clone(), if t.form.is_none() { t.body.clone() } else { body.into() }),
+        _ => (title.into(), body.into()),
+    };
+    let picked: Vec<String> = if fresh && can_triage { chosen.map(|t| t.labels.clone()).unwrap_or_default() } else { picked.to_vec() };
     let labels = if can_triage {
         ctx.state
             .tracker
@@ -381,6 +421,60 @@ async fn new_page(
     } else {
         Vec::new()
     };
+    let (is_form, form_fields): (bool, Vec<FormFieldView>) = match chosen.and_then(|t| t.form.as_ref()) {
+        Some(form) => (
+            true,
+            form.fields
+                .iter()
+                .map(|f| {
+                    let control = f.control();
+                    let sent = submitted.get(&control);
+                    FormFieldView {
+                        field: f.clone(),
+                        html: if f.is_markdown() { md_for(rc, &f.value) } else { String::new() },
+                        value: sent.and_then(|v| v.first().cloned()).unwrap_or_else(|| f.value.clone()),
+                        options: if f.is_dropdown() {
+                            f.options
+                                .iter()
+                                .map(|o| FormOptionView {
+                                    value: o.label.clone(),
+                                    label: o.label.clone(),
+                                    on: sent.is_some_and(|vs| vs.contains(&o.label)),
+                                })
+                                .collect()
+                        } else if f.is_checkboxes() {
+                            f.options
+                                .iter()
+                                .enumerate()
+                                .map(|(i, o)| FormOptionView {
+                                    value: i.to_string(),
+                                    label: o.label.clone(),
+                                    on: sent.is_some_and(|vs| vs.iter().any(|s| *s == i.to_string())),
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        },
+                        error: errors.get(&control),
+                    }
+                })
+                .collect(),
+        ),
+        None => (false, Vec::new()),
+    };
+    let template_choices: Vec<TemplatePick> = if chosen.is_none() {
+        templates
+            .iter()
+            .map(|t| TemplatePick {
+                name: t.name.clone(),
+                about: t.about.clone(),
+                href: format!("{}/issues/new?template={}", rc.base(), fmt::enc(&t.path)),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let template_path = chosen.map(|t| t.path.clone()).unwrap_or_default();
     let c = rc.chrome(ctx, "New issue", "issues").await;
     ctx.page_status(
         status,
@@ -389,20 +483,25 @@ async fn new_page(
             base: rc.base(),
             owner: rc.repo.owner_name.clone(),
             repo: rc.repo.name.clone(),
-            title: title.into(),
-            body: body.into(),
+            title,
+            body,
             labels,
             milestones,
             can_triage,
             errors,
+            template_choices,
+            template_path,
+            is_form,
+            form_fields,
         },
     )
 }
 
-pub async fn new_get(ctx: Ctx, Path((owner, name)): Path<(String, String)>) -> WebResult<Response> {
+pub async fn new_get(ctx: Ctx, Path((owner, name)): Path<(String, String)>, Query(q): Query<Params>) -> WebResult<Response> {
     let rc = RepoCtx::load(&ctx, &owner, &name).await?;
     rc.require_writable(Permission::Read)?;
-    new_page(&ctx, &rc, "", "", &[], None, FieldErrors::default(), StatusCode::OK).await
+    let template = q.get("template").cloned().unwrap_or_default();
+    new_page(&ctx, &rc, "", "", &[], None, FieldErrors::default(), StatusCode::OK, &template, &HashMap::new()).await
 }
 
 pub async fn new_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, form: FormData) -> WebResult<Response> {
@@ -410,22 +509,40 @@ pub async fn new_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, for
     rc.require_writable(Permission::Read)?;
     let title = form.get("title").trim().to_string();
     let body = form.get("body").to_string();
+    let template = form.get("template").trim().to_string();
     let can_triage = rc.perm.allows(Permission::Triage);
     let labels: Vec<String> = if can_triage { form.all("labels").into_iter().map(str::to_string).collect() } else { Vec::new() };
     let milestone = if can_triage { form.int("milestone") } else { None };
-    if title.is_empty() {
-        return new_page(
-            &ctx,
-            &rc,
-            &title,
-            &body,
-            &labels,
-            milestone,
-            FieldErrors::default().with("title", "Give the issue a title."),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        )
-        .await;
+    let mut submitted: HashMap<String, Vec<String>> = HashMap::new();
+    let mut errors = FieldErrors::default();
+    let mut composed: Option<String> = None;
+    if !template.is_empty() {
+        // Field definitions come from the repository again; the request only carries answers.
+        let templates = ctx.state.issues.templates(&ctx.actor, rc.id()).await.unwrap_or_default();
+        if let Some(issue_form) = templates.iter().find(|t| t.path == template).and_then(|t| t.form.as_ref()) {
+            for field in &issue_form.fields {
+                if !field.is_markdown() {
+                    submitted.insert(field.control(), form.all(&field.control()).into_iter().map(str::to_string).collect());
+                }
+            }
+            match compose(issue_form, &submitted) {
+                Ok(text) => composed = Some(text),
+                Err(list) => {
+                    for (control, message) in list {
+                        errors = errors.with(&control, &message);
+                    }
+                }
+            }
+        }
     }
+    if title.is_empty() {
+        errors = errors.with("title", "Give the issue a title.");
+    }
+    if errors.any() {
+        return new_page(&ctx, &rc, &title, &body, &labels, milestone, errors, StatusCode::UNPROCESSABLE_ENTITY, &template, &submitted)
+            .await;
+    }
+    let body = composed.unwrap_or(body);
     let new = NewIssue {
         repo_id: rc.id(),
         title: title.clone(),
@@ -437,7 +554,10 @@ pub async fn new_post(ctx: Ctx, Path((owner, name)): Path<(String, String)>, for
     match ctx.state.issues.create(&ctx.actor, new, &ctx.client).await {
         Ok(issue) => Ok(ctx.redirect(&format!("{}/issues/{}", rc.base(), issue.number))),
         Err(e) => match FieldErrors::from_error(&e) {
-            Some(errors) => new_page(&ctx, &rc, &title, &body, &labels, milestone, errors, StatusCode::UNPROCESSABLE_ENTITY).await,
+            Some(errors) => {
+                new_page(&ctx, &rc, &title, &body, &labels, milestone, errors, StatusCode::UNPROCESSABLE_ENTITY, &template, &submitted)
+                    .await
+            }
             None => Err(e.into()),
         },
     }

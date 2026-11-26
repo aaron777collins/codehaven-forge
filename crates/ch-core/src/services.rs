@@ -762,6 +762,30 @@ pub trait Pulls: Send + Sync {
         let _ = (actor, repo, number, method, client);
         unbuilt("pulls")
     }
+    /// Whether the repository merges only through its merge queue.
+    async fn merge_queue_enabled(&self, actor: &Actor, repo: RepoId) -> Result<bool> {
+        let _ = (actor, repo);
+        Ok(false)
+    }
+    /// Turns the merge queue on or off. Repository admins only. Turning it off empties the queue.
+    async fn set_merge_queue(&self, actor: &Actor, repo: RepoId, on: bool, client: &ClientInfo) -> Result<()> {
+        let _ = (actor, repo, on, client);
+        unbuilt("pulls")
+    }
+    /// Where the pull request stands in the repository's merge queue, when it is in it.
+    async fn queue_state(&self, actor: &Actor, repo: RepoId, number: i64) -> Result<Option<QueueView>> {
+        let _ = (actor, repo, number);
+        Ok(None)
+    }
+    /// Puts the pull request in the repository's merge queue.
+    async fn queue_add(&self, actor: &Actor, repo: RepoId, number: i64, method: MergeMethod, client: &ClientInfo) -> Result<()> {
+        let _ = (actor, repo, number, method, client);
+        unbuilt("pulls")
+    }
+    async fn queue_remove(&self, actor: &Actor, repo: RepoId, number: i64, client: &ClientInfo) -> Result<()> {
+        let _ = (actor, repo, number, client);
+        unbuilt("pulls")
+    }
     /// `merge` with a custom title and message, a method that is checked against the repo
     /// settings, and an optional head sha to guard against a push that landed after review.
     async fn merge_with(&self, actor: &Actor, repo: RepoId, number: i64, options: MergeOptions, client: &ClientInfo) -> Result<PullView> {

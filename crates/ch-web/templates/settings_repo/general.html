@@ -60,6 +60,17 @@
 </section>
 {% endif %}
 {% if can_admin %}
+<section class="card pad stack" aria-labelledby="merge-queue-h">
+  <h3 id="merge-queue-h">Merge queue</h3>
+  <form method="post" action="{{ base }}/settings/merge-queue" class="stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <label class="choice"><input type="checkbox" name="enabled" value="1"{% if merge_queue %} checked{% endif %}> Merge only through a queue.</label>
+    <p class="hint">Pull requests are merged one at a time, in order. Each is brought up to date with its base branch and merged once its required checks pass on that result. While it is on, the Merge button and auto-merge are not available.</p>
+    <div class="row"><button class="btn" type="submit">Save</button></div>
+  </form>
+</section>
+{% endif %}
+{% if can_admin %}
 <div class="danger-zone card pad stack">
   <h3>Danger zone</h3>
   <div class="danger-row">

@@ -137,6 +137,51 @@ reason, like a workflow file that does not parse.
 Not supported yet: `strategy` on a calling job (one call per matrix cell), `needs` outputs inside `with:`,
 `concurrency` on a calling job, and `workflow_run`.
 
+### Composite actions
+
+An action with `runs.using: composite` (a folder with an `action.yml`) runs its steps inside the step
+that used it. `uses: ./path/to/action` reads the folder in the job's own workspace, and `owner/repo@ref`
+or `haven_owner/repo@ref` fetches it as any other action does. The step's `with:` values become the
+action's `inputs`, an input the step leaves out takes its `default`, and the action's `outputs` are the
+`value` expressions it declares, read after its steps ran. Its steps see `steps` (their own), `inputs`,
+`github`, `env` and `runner`; `github.action_path` is the action's folder. `run:` steps default to
+`bash`, and `if:`, `env:`, `working-directory:` and `continue-on-error:` work as in a workflow. A
+composite action may use another one, up to 9 deep; the next level fails the step with a plain message.
+
+A composite action reads **only what it is given**. Its steps cannot read `secrets`, `vars`, `needs` or
+`matrix`: those are empty inside it, as on GitHub. A secret it needs goes in through `with:` (`with:
+token: ${{ secrets.DEPLOY_KEY }}`, evaluated in the calling step, and masked in the log as usual). The same
+goes for an input's `default:`: it is the action author's text, so it cannot read the job's secrets or
+variables either. That keeps an action from another repository from reading a secret it was not handed.
+
+### Deployment environments
+
+A job names a place it deploys to with `environment: prod` (or `environment: {name: prod, url: ...}`; the
+name is plain text, not an expression). Repository admins set up what that environment asks, at
+`/{owner}/{repo}/settings/environments`:
+
+- **Required reviewers**: up to 6 people with write access. One of them has to approve each job that
+  reaches the environment, or reject it, on the run page. Only they can, the repository's owner and
+  admins included. A reviewer's decision is audited (`deployment.approved`, `deployment.rejected`).
+  Nobody is stopped from approving a run they started; a repository that wants a second pair of eyes
+  lists someone else.
+- **Wait timer**: 0 to 43,200 minutes counted from when the job reaches the environment. It runs
+  beside the review, and both have to be done. The timer is checked every 15 seconds.
+- **Branch filter**: patterns for the branches and tags that may deploy (`main`, `release/*`). A run
+  from any other ref fails the job at once, with the reason in its log. A pull request from a fork never
+  matches a filter. With no filter, any ref may deploy (a fork's pull request still waits for a reviewer, if the
+  environment has one).
+- **Secrets**: sealed like repository secrets and never read back. A job in the environment gets the
+  secrets it names, and an environment secret wins over a repository secret with the same name. They are
+  released only once the gate is past: while a review is pending or rejected, and while the wait timer
+  runs, the job has none. A pull request from a fork never gets any.
+
+A job whose environment does not exist deploys with no gate and no environment secrets. A pull request
+from a fork follows the fork rule first (nothing is created until a writer approves that commit) and
+the environment's rules after. A job that waits shows as waiting on the run page; cancelling the run
+cancels it. If everyone on the reviewers list has lost write access, nothing can approve the job, so
+cancel the run and change the list.
+
 ### A private NuGet feed
 
 `/nuget/{owner}/index.json` is a NuGet v3 feed for one account (ch-ctk.13): push, restore, search and
@@ -167,8 +212,14 @@ Unlisting hides a version from search; asking for it by version still restores i
 - `POST /register` is public, so failed attempts are throttled per client address (10 per 10
   minutes, then `429`), in memory. The gate's own rate limiting (identity stream) still applies
   on top once it exists.
-- Hostile workflow files: files over 512 KiB and YAML nested more than 50 levels are refused before
-  the parser runs (a stack overflow would abort the whole server). Expressions have depth and length
+- Hostile workflow files (the same guard covers `action.yml` and YAML issue forms): files over
+  256 KiB (issue forms: 64 KiB) are refused with a plain error. Every line break YAML knows (CRLF,
+  a lone CR, NEL, LS, PS) is turned into LF once, and the nesting scan and the YAML parser are given
+  that same text, so they cannot disagree about where a line ends. YAML nested more than 50 levels
+  is refused before the parser runs. As a last line of defence the parse runs on its own thread with
+  a stack of 5 KiB per byte of the cap (1.25 GiB of address space for a workflow, about 4 times what
+  the deepest file at the cap needs, measured), so even a file the scan let through cannot overflow
+  the stack that would abort the whole server. Expressions have depth and length
   limits. Path filters are skipped for pushes of more than 3000 files, which lets the run go ahead.
 - A job's log stops at 64 MiB with a note. Artifacts: 2 GiB each, 100 per run, 90 days at most.
   Caches: 2 GiB each, 10 GiB per repository (least recently used go first), 7 days unused.

@@ -719,3 +719,44 @@ async fn a_pull_request_from_a_fork_stays_one_after_the_fork_is_deleted(pool: Pg
     sqlx::query("UPDATE pull_requests SET from_fork = false").execute(&pool).await.unwrap();
     assert_eq!(flags(pool.clone()).await, vec![false, false, true]);
 }
+
+/// ch-c7c: the image before migration 0139 pins and unpins with `UPDATE issues SET pinned = ...`
+/// and nothing else. After a rollback that must still work, and still leave the CHECK true.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn an_older_writer_can_pin_and_unpin_without_a_position(pool: PgPool) {
+    let u = user(&pool, "alice").await;
+    let r = repo(&pool, u, "demo").await;
+    for n in 1..=3_i64 {
+        sqlx::query("INSERT INTO issues (repo_id, number, author_id, title) VALUES ($1, $2, $3, 'i')")
+            .bind(r)
+            .bind(n)
+            .bind(u)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // What the C9 image writes: the flag alone.
+    for n in [1_i64, 2] {
+        sqlx::query("UPDATE issues SET pinned = true WHERE repo_id = $1 AND number = $2").bind(r).bind(n).execute(&pool).await.unwrap();
+    }
+    let rows: Vec<(i64, Option<i32>)> =
+        sqlx::query_as("SELECT number, pin_position FROM issues WHERE repo_id = $1 AND pinned ORDER BY number")
+            .bind(r)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows, vec![(1, Some(0)), (2, Some(1))], "an older pin goes last");
+    sqlx::query("UPDATE issues SET pinned = false WHERE repo_id = $1 AND number = 1").bind(r).execute(&pool).await.unwrap();
+    let gone: Option<i32> =
+        sqlx::query_scalar("SELECT pin_position FROM issues WHERE repo_id = $1 AND number = 1").bind(r).fetch_one(&pool).await.unwrap();
+    assert_eq!(gone, None, "an unpinned issue has no position");
+    // This version's own writes are untouched by the trigger.
+    sqlx::query("UPDATE issues SET pinned = true, pin_position = 7 WHERE repo_id = $1 AND number = 3")
+        .bind(r)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let p: Option<i32> =
+        sqlx::query_scalar("SELECT pin_position FROM issues WHERE repo_id = $1 AND number = 3").bind(r).fetch_one(&pool).await.unwrap();
+    assert_eq!(p, Some(7));
+}

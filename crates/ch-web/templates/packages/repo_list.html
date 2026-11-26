@@ -1,0 +1,27 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="list-head">
+  <h2 class="page-h">Packages</h2>
+</div>
+<p class="muted">Container images and NuGet packages linked to this repository.</p>
+{% if rows.is_empty() %}
+{% call ui::empty("No packages yet", "Push a container image or a NuGet package and it shows up here.") %}
+{% else %}
+<table class="data-table card">
+  <thead><tr><th>Name</th><th>Kind</th><th>Latest</th><th>Versions</th><th>Size</th><th>Updated</th></tr></thead>
+  <tbody>
+    {% for p in rows %}
+    <tr>
+      <td data-label="Name"><a href="{{ p.href }}">{{ p.name }}</a></td>
+      <td data-label="Kind">{{ p.kind_label }}</td>
+      <td data-label="Latest">{% if let Some(t) = p.latest %}<code>{{ t }}</code>{% else %}<span class="muted">-</span>{% endif %}</td>
+      <td data-label="Versions">{{ p.versions }}</td>
+      <td data-label="Size">{{ p.size }}</td>
+      <td data-label="Updated">{% call ui::time(p.when) %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

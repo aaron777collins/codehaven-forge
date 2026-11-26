@@ -8,6 +8,7 @@ use crate::actions::{self, Builtin};
 use crate::diag::Diagnostic;
 use crate::expr;
 use crate::model::*;
+use crate::yaml_guard;
 use marked_yaml::types::{MarkedMappingNode, MarkedScalarNode};
 use marked_yaml::{LoadError, LoaderOptions, Node};
 use serde_json::Value as Json;
@@ -15,8 +16,8 @@ use std::collections::BTreeMap;
 
 /// The most jobs one run may expand to, matrix cells included.
 pub const MAX_MATRIX_JOBS: usize = 256;
-/// A workflow file larger than this is refused before parsing.
-pub const MAX_FILE_BYTES: usize = 512 * 1024;
+/// A workflow or action.yml larger than this is refused before parsing.
+pub const MAX_FILE_BYTES: usize = 256 * 1024;
 /// How deep blocks and flow collections may nest. The YAML parser recurses with the nesting, and
 /// a stack overflow takes the whole process down, so hostile files are turned away before it sees
 /// them. Real workflows rarely go past 8.
@@ -26,114 +27,240 @@ pub const SUPPORTED_EVENTS: &[&str] = &["push", "pull_request", "workflow_dispat
 
 /// Parses and validates. Every problem found is in the error, in file order.
 pub fn parse(src: &str) -> Result<Workflow, Vec<Diagnostic>> {
-    if src.len() > MAX_FILE_BYTES {
-        return Err(vec![Diagnostic::new(0, 0, format!("the file is larger than {} KiB", MAX_FILE_BYTES / 1024))]);
-    }
-    if let Some(line) = nesting_too_deep(src) {
-        return Err(vec![Diagnostic::new(line, 1, format!("the file is nested more than {MAX_NESTING} levels deep"))]);
-    }
-    let opts = LoaderOptions::default().error_on_duplicate_keys(true).prevent_coercion(true);
-    let root = match marked_yaml::parse_yaml_with_options(0, src, opts) {
-        Ok(n) => n,
-        Err(e) => return Err(vec![load_error(&e)]),
-    };
-    let mut p = P { diags: Vec::new() };
-    let wf = p.workflow(&root);
-    p.diags.sort_by_key(|d| (d.line, d.column));
-    p.diags.dedup();
-    match wf {
-        Some(w) if p.diags.is_empty() => Ok(w),
-        _ => {
-            if p.diags.is_empty() {
-                p.diags.push(Diagnostic::new(0, 0, "the file is not a valid workflow"));
+    let text = guard_input(src)?;
+    on_parser_stack(|| {
+        let root = load(&text)?;
+        let mut p = P { diags: Vec::new() };
+        let wf = p.workflow(&root);
+        p.diags.sort_by_key(|d| (d.line, d.column));
+        p.diags.dedup();
+        match wf {
+            Some(w) if p.diags.is_empty() => Ok(w),
+            _ => {
+                if p.diags.is_empty() {
+                    p.diags.push(Diagnostic::new(0, 0, "the file is not a valid workflow"));
+                }
+                Err(p.diags)
             }
-            Err(p.diags)
         }
-    }
+    })
 }
 
 /// Reads an action's `action.yml` (ch-ctk.4). Keys the runner does not use (`description`,
 /// `author`, `branding`) are ignored, as GitHub ignores them.
 pub fn parse_action(src: &str) -> Result<crate::action_def::ActionDef, Vec<Diagnostic>> {
+    let text = guard_input(src)?;
+    on_parser_stack(|| {
+        let root = load(&text)?;
+        let mut p = P { diags: Vec::new() };
+        let def = p.action(&root);
+        p.diags.sort_by_key(|d| (d.line, d.column));
+        p.diags.dedup();
+        match def {
+            Some(d) if p.diags.is_empty() => Ok(d),
+            _ => {
+                if p.diags.is_empty() {
+                    p.diags.push(Diagnostic::new(0, 0, "the file is not a valid action.yml"));
+                }
+                Err(p.diags)
+            }
+        }
+    })
+}
+
+/// Everything a file must pass before the YAML parser sees it, in one place for the workflow and
+/// the action.yml road. The size cap, then one normalisation of every line break (see
+/// `yaml_guard`), then the scan. The text it returns is the text the scan read and is the only
+/// text the parser is given, so the two always see the same lines.
+fn guard_input(src: &str) -> Result<String, Vec<Diagnostic>> {
     if src.len() > MAX_FILE_BYTES {
         return Err(vec![Diagnostic::new(0, 0, format!("the file is larger than {} KiB", MAX_FILE_BYTES / 1024))]);
     }
-    if let Some(line) = nesting_too_deep(src) {
-        return Err(vec![Diagnostic::new(line, 1, format!("the file is nested more than {MAX_NESTING} levels deep"))]);
+    let text = yaml_guard::normalise(src).into_owned();
+    if let Some((line, why)) = scan(&text) {
+        return Err(vec![Diagnostic::new(line, 1, why.message())]);
     }
+    Ok(text)
+}
+
+/// Runs a parse on the thread `yaml_guard` sets up, so that a file the scan let through that
+/// recurses deeper than it should still cannot overflow the stack the server runs on.
+fn on_parser_stack<T: Send>(f: impl FnOnce() -> Result<T, Vec<Diagnostic>> + Send) -> Result<T, Vec<Diagnostic>> {
+    yaml_guard::on_parser_stack(MAX_FILE_BYTES, f).unwrap_or_else(|e| Err(vec![Diagnostic::new(0, 0, e)]))
+}
+
+/// The YAML parser, with the options every road here uses.
+fn load(text: &str) -> Result<Node, Vec<Diagnostic>> {
     let opts = LoaderOptions::default().error_on_duplicate_keys(true).prevent_coercion(true);
-    let root = match marked_yaml::parse_yaml_with_options(0, src, opts) {
-        Ok(n) => n,
-        Err(e) => return Err(vec![load_error(&e)]),
-    };
-    let mut p = P { diags: Vec::new() };
-    let def = p.action(&root);
-    p.diags.sort_by_key(|d| (d.line, d.column));
-    p.diags.dedup();
-    match def {
-        Some(d) if p.diags.is_empty() => Ok(d),
-        _ => {
-            if p.diags.is_empty() {
-                p.diags.push(Diagnostic::new(0, 0, "the file is not a valid action.yml"));
+    marked_yaml::parse_yaml_with_options(0, text, opts).map_err(|e| vec![load_error(&e)])
+}
+
+/// Why a file was turned away before the YAML parser saw it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// Blocks, `- ` markers and brackets nest past `MAX_NESTING`.
+    TooDeep,
+    /// A node starts with the explicit-key marker `? ` or `: `.
+    ExplicitKey,
+}
+
+impl Refusal {
+    /// The sentence a person reads.
+    pub fn message(self) -> String {
+        match self {
+            Refusal::TooDeep => format!("the file is nested more than {MAX_NESTING} levels deep"),
+            Refusal::ExplicitKey => {
+                "explicit YAML keys (`? ` and `: ` at the start of a node) are not supported. Write the key on one line as `key: value`"
+                    .into()
             }
-            Err(p.diags)
         }
     }
 }
 
-/// The line where the nesting first passes `MAX_NESTING`, counting block indentation, `- `
-/// sequence markers and `[`/`{` flow brackets. A rough scan, deliberately: it only has to
-/// be safe, and it errs towards refusing.
+/// The line where the nesting first passes `MAX_NESTING`, or where a node starts with an
+/// explicit-key marker. Same as [`scan`] without the reason.
 pub fn nesting_too_deep(src: &str) -> Option<u32> {
+    scan(src).map(|(line, _)| line)
+}
+
+fn blank_or_end(c: Option<char>) -> bool {
+    c.is_none_or(char::is_whitespace)
+}
+
+/// The text after a `-` sequence marker (a dash then a space or tab), or `None`.
+fn after_dash(rest: &str) -> Option<&str> {
+    let tail = rest.strip_prefix('-')?;
+    tail.starts_with([' ', '\t']).then(|| tail.trim_start_matches([' ', '\t']))
+}
+
+/// Does this line open a block scalar (`key: |`, `key: >-`, `- |`)? Only the plain, unquoted
+/// shapes count, so a quote the scan could misread never hides lines from it. Returns whether
+/// the header is a bare indicator (after a dash), which decides the indent its text must beat.
+fn block_scalar_header(rest: &str, after_dash: bool) -> Option<bool> {
+    let t = match rest.find(" #") {
+        Some(i) => &rest[..i],
+        None => rest,
+    }
+    .trim_end();
+    let tok = t.rsplit([' ', '\t']).next()?;
+    let mut chars = tok.chars();
+    if !matches!(chars.next(), Some('|' | '>')) || tok.len() > 3 || !chars.all(|c| matches!(c, '-' | '+' | '0'..='9')) {
+        return None;
+    }
+    let before = t[..t.len() - tok.len()].trim_end();
+    if before.is_empty() {
+        return after_dash.then_some(true);
+    }
+    let plain = !before.contains(['\'', '"', '[', ']', '{', '}', '#', '|', '>']);
+    (before.ends_with(':') && plain).then_some(false)
+}
+
+/// A rough scan of a YAML file, run before the parser: the parser recurses with the nesting, a
+/// stack overflow takes the whole process down, and it ignores nothing it is given. It counts
+/// block indentation, `- ` markers and `[`/`{` flow brackets, and it refuses any node that starts
+/// with the explicit-key marker `? ` or `: ` (which recurse too, and which no file here needs).
+/// Block scalars (`run: |`) are text, so their lines are skipped. Deliberately rough: it only has
+/// to be safe, and it errs towards refusing.
+pub fn scan(src: &str) -> Option<(u32, Refusal)> {
+    // The same line breaks the parser is given (see `yaml_guard::normalise`): `str::lines` splits
+    // on LF and CRLF only, and a lone CR hid a whole dash chain from this scan (ch-qop).
+    let src = yaml_guard::normalise(src);
     let mut indents: Vec<usize> = Vec::new();
     let mut flow: usize = 0;
+    // Inside a block scalar: the indent its text must beat, and the indent its first line set.
+    let mut scalar: Option<(usize, Option<usize>)> = None;
     for (n, raw) in src.lines().enumerate() {
         let line_no = (n + 1) as u32;
         let trimmed = raw.trim_start_matches(' ');
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        if trimmed.is_empty() {
             continue;
         }
         let mut col = raw.len() - trimmed.len();
+        if let Some((parent, text)) = scalar {
+            match text {
+                None if col > parent => {
+                    scalar = Some((parent, Some(col)));
+                    continue;
+                }
+                Some(at) if col >= at => continue,
+                _ => scalar = None,
+            }
+        }
+        if trimmed.starts_with('#') {
+            continue;
+        }
         let mut rest = trimmed;
+        let mut marker_col = col;
+        let mut dashed = false;
         // Block structure: each indent level, and each `- ` marker, is one level.
-        if flow == 0 {
+        let block = flow == 0;
+        if block {
             while indents.last().is_some_and(|&t| t >= col) {
                 indents.pop();
             }
             indents.push(col);
-            while let Some(after) = rest.strip_prefix("- ") {
-                let skipped = rest.len() - after.len();
-                col += skipped;
-                let after_trim = after.trim_start_matches(' ');
-                col += after.len() - after_trim.len();
-                rest = after_trim;
+            while let Some(after) = after_dash(rest) {
+                marker_col = col;
+                col += rest.len() - after.len();
+                rest = after;
+                dashed = true;
                 indents.push(col);
                 if indents.len() + flow > MAX_NESTING {
-                    return Some(line_no);
+                    return Some((line_no, Refusal::TooDeep));
                 }
             }
         }
         if indents.len() + flow > MAX_NESTING {
-            return Some(line_no);
+            return Some((line_no, Refusal::TooDeep));
         }
-        // Flow structure: brackets outside quotes.
+        // Flow structure and explicit keys: brackets and markers outside quotes.
         let (mut in_s, mut in_d) = (false, false);
         let mut prev = ' ';
-        for c in rest.chars() {
+        let mut start = true; // the next character begins a node
+        let mut chars = rest.chars().peekable();
+        while let Some(c) = chars.next() {
+            let quoted = in_s || in_d;
+            if !quoted {
+                if start && matches!(c, '?' | ':') && blank_or_end(chars.peek().copied()) {
+                    return Some((line_no, Refusal::ExplicitKey));
+                }
+                if c == '#' && prev.is_whitespace() {
+                    break;
+                }
+            }
             match c {
-                '\'' if !in_d => in_s = !in_s,
-                '"' if !in_s && prev != '\\' => in_d = !in_d,
-                '#' if !in_s && !in_d && prev == ' ' => break,
-                '[' | '{' if !in_s && !in_d => {
+                // A quote opens a quoted scalar only where a node starts; inside plain text it is
+                // just a character, and reading it as a quote would hide what follows.
+                '\'' if !in_d && (in_s || start) => in_s = !in_s,
+                '"' if !in_s && prev != '\\' && (in_d || start) => in_d = !in_d,
+                '[' | '{' if !quoted => {
                     flow += 1;
                     if indents.len() + flow > MAX_NESTING {
-                        return Some(line_no);
+                        return Some((line_no, Refusal::TooDeep));
                     }
                 }
-                ']' | '}' if !in_s && !in_d => flow = flow.saturating_sub(1),
+                ']' | '}' if !quoted => flow = flow.saturating_sub(1),
                 _ => {}
             }
+            start = if in_s || in_d || c == '\'' || c == '"' {
+                false
+            } else {
+                match c {
+                    '[' | '{' => true,
+                    ',' => flow > 0 || start,
+                    ':' if flow > 0 || blank_or_end(chars.peek().copied()) => true,
+                    '-' if start && blank_or_end(chars.peek().copied()) => true,
+                    c if c.is_whitespace() => start,
+                    _ => false,
+                }
+            };
             prev = c;
+        }
+        if block
+            && flow == 0
+            && let Some(bare) = block_scalar_header(rest, dashed)
+        {
+            scalar = Some((if bare { marker_col } else { col }, None));
         }
     }
     None
@@ -217,6 +344,50 @@ impl P {
             self.err(pos(n), format!("in `{what}`: {}", e.message));
         }
         Some(t)
+    }
+
+    /// `environment: name` or `environment: {name, url}` (ch-bj5). The name is plain text: it
+    /// is looked up in the repository's environments, so it cannot be worked out at run time.
+    fn environment(&mut self, n: &Node) -> Option<String> {
+        let name = match n {
+            Node::Scalar(_) => self.text(n, "environment")?,
+            Node::Mapping(m) => {
+                let mut name = None;
+                for (k, v) in m.iter() {
+                    match k.as_str() {
+                        "name" => name = self.text(v, "environment.name"),
+                        "url" => {
+                            let _ = self.template(v, "environment.url");
+                        }
+                        _ => self.unknown_key(k, "`environment`", &["name", "url"]),
+                    }
+                }
+                match name {
+                    Some(name) => name,
+                    None => {
+                        self.err(pos(n), "`environment` needs a `name`");
+                        return None;
+                    }
+                }
+            }
+            _ => {
+                self.err(pos(n), "`environment` must be a name, or a mapping with `name` and `url`");
+                return None;
+            }
+        };
+        let name = name.trim().to_string();
+        if name.contains("${{") {
+            self.err(pos(n), "the environment name must be plain text in this version, not an expression");
+            return None;
+        }
+        if !valid_environment_name(&name) {
+            self.err(
+                pos(n),
+                "an environment name starts with a letter or digit and holds at most 100 letters, digits, spaces, dots, dashes and underscores",
+            );
+            return None;
+        }
+        Some(name)
     }
 
     fn condition(&mut self, n: &Node) -> Option<String> {
@@ -911,6 +1082,7 @@ impl P {
             concurrency: None,
             permissions: None,
             services: BTreeMap::new(),
+            environment: None,
             call: None,
             call_role: None,
             called: false,
@@ -963,9 +1135,7 @@ impl P {
                 "concurrency" => job.concurrency = self.concurrency(v),
                 "permissions" => job.permissions = self.permissions(v),
                 "services" => job.services = self.services(v),
-                "environment" => {
-                    self.err(kpos(k), "`environment:` (deployment environments and approvals) is not supported in this version")
-                }
+                "environment" => job.environment = self.environment(v),
                 "uses" => call_uses = self.text(v, "uses").map(|u| (u, pos(v))),
                 "with" => call_with = self.string_map(v, "with"),
                 "secrets" => match v {
@@ -1439,4 +1609,12 @@ fn near_miss(a: &str, b: &str) -> bool {
         }
     }
     edits + (xs.len() - i) + (ys.len() - j) <= 1
+}
+
+/// The names an environment may have: what the `environments.name` column accepts.
+pub fn valid_environment_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && name.chars().count() <= 100
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ' ' | '-'))
 }

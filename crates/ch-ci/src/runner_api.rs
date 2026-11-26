@@ -178,7 +178,26 @@ async fn register(
 // ---------------------------------------------------------------------------- jobs
 
 /// Tries to hand out one job. Returns the claimed job row and the token minted for it.
-async fn try_claim(ctx: &Ctx, runner: i64, labels: &[String], repo_scope: Option<i64>) -> Result<Option<(JobRow, String)>> {
+///
+/// A job queued before its fork became locked (ch-4pn.16) is never handed out: the claim is
+/// rolled back, the run is cancelled with a line saying why, and the next job is tried (ch-mpv).
+pub async fn try_claim(ctx: &Ctx, runner: i64, labels: &[String], repo_scope: Option<i64>) -> Result<Option<(JobRow, String)>> {
+    loop {
+        match claim_once(ctx, runner, labels, repo_scope).await? {
+            Claim::None => return Ok(None),
+            Claim::Got(job, token) => return Ok(Some((*job, token))),
+            Claim::Locked => {}
+        }
+    }
+}
+
+enum Claim {
+    None,
+    Got(Box<JobRow>, String),
+    Locked,
+}
+
+async fn claim_once(ctx: &Ctx, runner: i64, labels: &[String], repo_scope: Option<i64>) -> Result<Claim> {
     let token = new_token(ch_db::ci_auth::JOB_TOKEN_PREFIX, 40);
     let mut tx = ctx.db.begin().await?;
     let claimed = sqlx::query_as::<_, JobRow>(&format!(
@@ -198,12 +217,28 @@ async fn try_claim(ctx: &Ctx, runner: i64, labels: &[String], repo_scope: Option
     .bind(repo_scope)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some(job) = claimed else { return Ok(None) };
+    let Some(job) = claimed else { return Ok(Claim::None) };
+    if crate::triggers::fork_locked(ctx, ch_core::RepoId(job.repo_id)).await? {
+        // Not claimed after all: the job goes back as it was, and the run is cancelled.
+        drop(tx);
+        tracing::warn!(job = job.id, repo = job.repo_id, "a queued job on a locked fork is cancelled, not handed out");
+        if let Ok(run) = runs::fetch_run(ctx, job.run_id).await {
+            crate::logs::append_system_line(
+                ctx,
+                &run,
+                &job,
+                "This fork is locked: its owner can no longer see the repository it was forked from, so the job did not start.",
+            )
+            .await;
+        }
+        runs::cancel_run(ctx, job.run_id).await.ok();
+        return Ok(Claim::Locked);
+    }
     let mut fx = Effects::default();
     runs::note_job_started(ctx, &mut tx, &job, &mut fx).await?;
     fx.emit(ctx, &mut tx).await?;
     tx.commit().await?;
-    Ok(Some((job, token)))
+    Ok(Claim::Got(Box::new(job), token))
 }
 
 async fn request_job(

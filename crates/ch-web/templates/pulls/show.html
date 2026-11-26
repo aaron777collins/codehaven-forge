@@ -52,7 +52,29 @@
       {% endif %}
       {% if let Some(s) = checks_summary %}<div class="merge-line">{% call ui::status(s) %} <span>Checks: {{ s.label }}</span> <a href="{{ h.href }}/checks">Details</a></div>{% endif %}
       {% include "pulls/fork_approval.html" %}
-      {% if can_merge %}
+      {% if queue_on %}
+      {% if let Some(q) = queued %}
+      <div class="merge-line"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><strong>In the merge queue: position {{ q.position }} of {{ q.total }}</strong> <span class="muted">{{ q.note }}</span></div>
+        {% if q.can_remove %}
+        <form method="post" action="{{ base }}/pulls/{{ h.number }}/queue/remove" class="merge-form stack">
+          {% call ui::csrf_field(c.csrf) %}
+          <div class="row"><button class="btn" type="submit">Remove from the queue</button></div>
+        </form>
+        {% endif %}
+      {% else %}
+        {% if can_queue_add %}
+        <form method="post" action="{{ base }}/pulls/{{ h.number }}/queue/add" class="merge-form stack">
+          {% call ui::csrf_field(c.csrf) %}
+          <div class="row">
+            <label class="sr-only" for="queue-method">Merge method</label>
+            <select id="queue-method" name="method"><option value="merge">Create a merge commit</option><option value="squash">Squash and merge</option><option value="rebase">Rebase and merge</option></select>
+            <button class="btn btn-primary" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-git-merge"/></svg>Add to merge queue</button>
+          </div>
+          <p class="hint">It will be brought up to date, checked, and merged in turn once its required checks pass. Pull requests from forks still wait for approval to run checks.</p>
+        </form>
+        {% endif %}
+      {% endif %}
+      {% else if can_merge %}
       <form method="post" action="{{ base }}/pulls/{{ h.number }}/merge" class="merge-form stack">
         {% call ui::csrf_field(c.csrf) %}
         <input type="hidden" name="head_sha" value="{{ head_sha }}">

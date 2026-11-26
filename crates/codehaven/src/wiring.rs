@@ -18,7 +18,10 @@ pub async fn build_state(config: Arc<Config>, pool: PgPool) -> Result<AppState> 
     let mut b =
         AppStateBuilder::new(config, pool.clone(), Arc::new(PgAudit::new(pool.clone())), Arc::new(PgEventBus::new(pool)), Arc::new(blobs));
     install_services(&mut b)?;
-    Ok(b.build())
+    let state = b.build();
+    // The packages pages' service needs the whole state, so it goes in after it is built.
+    ch_registry::packages::install(&state);
+    Ok(state)
 }
 
 /// The service crates, in dependency order. Tests call this with their own builder.

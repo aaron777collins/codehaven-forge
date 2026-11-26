@@ -148,11 +148,35 @@ user and self-hoster page.
 Stage 4, the optional Linux in the tab, is not in this version: `GET .../workspace/terminal/source.tar`
 answers 404.
 
+## Packages pages
+
+`/packages` lists every container image and NuGet package the signed-in person could pull, `/packages/{owner}`
+the ones of one account, and `/{owner}/{repo}/packages` those linked to a repository they can read. A
+package page (`/packages/{owner}/{kind}/{name}`, where the image name may have slashes) shows the
+`docker pull` or `dotnet nuget` commands, the tags or versions with their digest, platforms, size and
+push time. These pages are for signed-in people only: signed out, they ask you to sign in, and a package
+you may not pull looks exactly like one that does not exist (no count of hidden ones anywhere).
+
+The owner of a package (or an owner of the organization that owns it) can link it to a repository of the
+same owner where they can write, unlink it, delete one tag or version, or delete the package. Deleting a
+tag keeps its manifest when another tag or an index in the same package still points at it, so a multi-arch
+image keeps working. Linking
+shows who would gain access first (a public repository lets anyone pull it, signed out too) and needs a
+confirmation. Unlinking leaves the package to its owner alone, never wider than before. Deleting needs the
+package name typed. Each change is audited (`package.linked`, `package.unlinked`,
+`package.version_deleted`, `package.deleted`). The rule for who can read is the one `docker pull` uses.
+
+## Environments
+
+`/{owner}/{repo}/settings/environments` (repository admins): create an environment (a name already in use,
+in any case, is refused and that environment is left as it is), set its wait timer, its
+branch filter and its required reviewers, and add its secrets. See docs/ci.md, "Deployment environments".
+A job held at an environment shows a "Deployments" card on its run page, with Approve and Reject for a
+required reviewer.
+
 ## Not built
 
-- Packages pages. They wait for the registry permission fix (ch-ctk.12), so no page lists an image that a deleted repository used to protect.
 - "Import a repository".
-- Moving or deleting an issue, reordering pinned issues, issue forms written in YAML, and a merge queue.
 - Notification emails. Mail sends reset links and invites only.
 
 ## Pull requests, forks, search and mail

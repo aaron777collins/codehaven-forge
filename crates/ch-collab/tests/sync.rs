@@ -314,7 +314,7 @@ async fn a_cancelled_consumer_stops_promptly(pool: PgPool) {
     let w = World::new(pool).await;
     let state = w.app_state().await;
     let workers = ch_collab::workers(&state);
-    assert_eq!(workers.iter().map(|w| w.name).collect::<Vec<_>>(), vec!["collab-pr-sync", "collab-defaults"]);
+    assert_eq!(workers.iter().map(|w| w.name).collect::<Vec<_>>(), vec!["collab-pr-sync", "collab-defaults", "collab-merge-queue"]);
     let token = CancellationToken::new();
     let handles: Vec<_> = workers.into_iter().map(|wk| wk.spawn(token.clone())).collect();
     w.pull(w.carol, "x", "").await;

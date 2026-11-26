@@ -3,10 +3,21 @@
 {% import "components.html" as ui %}
 {% block repo_body %}
 <h2 class="page-h">New issue</h2>
+{% if !template_choices.is_empty() %}
+<div class="card pad stack">
+  <h3>Start from a template</h3>
+  {% for t in template_choices %}<div><a href="{{ t.href }}"><strong>{{ t.name }}</strong>{% if !t.about.is_empty() %} <span class="muted">{{ t.about }}</span>{% endif %}</a></div>{% endfor %}
+</div>
+{% endif %}
 <form method="post" action="{{ base }}/issues/new" class="stack issue-form">
   {% call ui::csrf_field(c.csrf) %}
+  {% if !template_path.is_empty() %}<input type="hidden" name="template" value="{{ template_path }}">{% endif %}
   <div class="field"><label for="title">Title</label><input id="title" name="title" type="text" value="{{ title }}" maxlength="256" required autofocus>{% call ui::field_error(errors.get("title")) %}</div>
+  {% if is_form %}
+  {% include "issues/form_fields.html" %}
+  {% else %}
   {% call m::editor("body", "body", body, 10, owner, repo) %}
+  {% endif %}
   {% if can_triage %}
   <div class="grid-2">
     {% if !labels.is_empty() %}<fieldset class="choices"><legend>Labels</legend>{% for l in labels %}<label class="choice"><input type="checkbox" name="labels" value="{{ l.value }}"{% if l.on %} checked{% endif %}><span class="label {{ l.class }}">{{ l.text }}</span></label>{% endfor %}</fieldset>{% endif %}

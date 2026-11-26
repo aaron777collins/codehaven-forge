@@ -300,6 +300,8 @@ body.bare { align-items: center; justify-content: center; padding: var(--s5); }
 /* ---------- cards, tabs, lists ---------- */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .card + .card, .card + .tree-main > .card { margin-top: var(--s4); }
+.pinned-issues { margin-bottom: var(--s3); }
+.pinned-divider { margin: var(--s4) 0 var(--s2); padding-top: var(--s3); border-top: 1px solid var(--border); }
 .card-head { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4); background: var(--surface-2); border-bottom: 1px solid var(--border); }
 .card-head h2, .card-head h3 { margin: 0; font-size: 0.95rem; }
 .card-body { padding: var(--s4); }

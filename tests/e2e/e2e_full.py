@@ -1601,6 +1601,363 @@ def step29():
               f"signed out web {tail} shows the private change")
 
 
+C11_DEPLOY = """name: ship
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - run: echo "deploying with [${{ secrets.PROD_KEY }}]"
+"""
+
+
+def step30():
+    """Batch C11 on a real runner: a job in an environment waits for its required reviewer, gets the
+    environment's secret only after the approval, and every new page answers a stranger as nothing."""
+    a, tok, bob_tok = S["alice"], S["alice_token"], S["bob_token"]
+    api = Client("10.9.2.4")
+    r = api.api("POST", "/user/repos", js={"name": "c11env", "private": True}, auth=tok)
+    check(r.status == 201, f"create c11env: {r.status} {r.text[:200]}")
+    r = api.api("PUT", "/repos/alice/c11env/collaborators/bob", js={"permission": "push"}, auth=tok)
+    check(r.status in (200, 201, 204), f"add bob: {r.status} {r.text[:200]}")
+    # The environment, made in the web settings as an admin would: bob must review, only main deploys.
+    page = "/alice/c11env/settings/environments"
+    r = a.post_form(page, {"name": "prod"}, page=page)
+    check(r.status == 303, f"create the environment: {r.status} {r.text[:200]}")
+    env_page = page + "/prod"
+    g = a.get(env_page)
+    check(g.status == 200 and 'name="reviewer"' in g.text, f"the environment page has no reviewer choices: {g.status}")
+    m = re.search(r'name="reviewer" value="(\d+)"[^>]*> bob<', g.text)
+    check(m, "bob is not offered as a reviewer")
+    bob_id = m.group(1)
+    r = a.post_form(env_page, {"kind": "rules", "wait_minutes": "0", "branches": "main", "reviewer": bob_id}, page=env_page)
+    check(r.status == 303, f"save the rules: {r.status} {r.text[:200]}")
+    r = a.post_form(env_page, {"kind": "secret", "name": "PROD_KEY", "value": "prod-secret-value-77"}, page=env_page)
+    check(r.status == 303, f"save the secret: {r.status} {r.text[:200]}")
+    check("prod-secret-value-77" not in a.get(env_page).text, "the environment page shows a secret back")
+    wd = os.path.join(WORK, "c11env")
+    os.makedirs(os.path.join(wd, ".codehaven/workflows"))
+    open(os.path.join(wd, ".codehaven/workflows/ship.yml"), "w").write(C11_DEPLOY)
+    git(["init", "-q", "-b", "main"], wd)
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "C11 deploy"], wd)
+    git(["push", http_url("alice", tok, "alice/c11env"), "main"], wd, env=gitenv("10.9.2.4"))
+    sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    run_, deadline = None, time.time() + 120
+    while time.time() < deadline and not run_:
+        r = api.api("GET", "/repos/alice/c11env/actions/runs", auth=tok)
+        if r.status == 200:
+            rs = [x for x in r.json().get("workflow_runs", []) if x.get("head_sha") == sha]
+            run_ = rs[0] if rs else None
+        time.sleep(2)
+    check(run_, "no run started for the deploy workflow")
+    time.sleep(15)
+    r = api.api("GET", f"/repos/alice/c11env/actions/runs/{run_['id']}", auth=tok)
+    check(r.json().get("status") != "completed" and r.json().get("status") != "in_progress",
+          f"the job ran before anyone reviewed it: {r.json().get('status')}")
+    jobs = api.api("GET", f"/repos/alice/c11env/actions/runs/{run_['id']}/jobs", auth=tok).json().get("jobs", [])
+    check(jobs and jobs[0]["status"] in ("waiting", "queued", "pending") and jobs[0].get("runner_id") in (None, 0), f"the held job has a runner: {jobs}")
+    job_id = jobs[0]["id"]
+    run_page = f"/alice/c11env/actions/runs/{run_['id']}"
+    check("Waiting for a reviewer" in a.get(run_page).text, "the run page does not say it waits for a reviewer")
+    # Alice owns the repository but is not on the list: her click changes nothing.
+    r = a.post_form(f"{run_page}/jobs/{job_id}/review", {"decision": "approve"}, page=run_page)
+    check(r.status in (403, 404), f"someone not on the reviewers list approved: {r.status}")
+    b = S["bob"]
+    check("Approve and deploy" in b.get(run_page).text, "bob is a reviewer and is not offered the buttons")
+    r = b.post_form(f"{run_page}/jobs/{job_id}/review", {"decision": "approve", "comment": "ok"}, page=run_page)
+    check(r.status == 303, f"bob's approval: {r.status} {r.text[:200]}")
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        r = api.api("GET", f"/repos/alice/c11env/actions/runs/{run_['id']}", auth=tok)
+        if r.json().get("status") == "completed":
+            break
+        time.sleep(3)
+    check(r.json().get("conclusion") == "success", f"the approved job did not succeed: {r.json().get('conclusion')}")
+    log = api.req("GET", f"/api/v3/repos/alice/c11env/actions/jobs/{job_id}/logs", auth=tok)
+    check("deploying with [***]" in log.text and "prod-secret-value-77" not in log.text,
+          f"the environment secret did not arrive masked: {log.text[:300]}")
+    # A stranger learns nothing from any of the new pages, and a missing repository answers the same.
+    anon = Client("10.9.2.9")
+    for tail in ("/settings/environments", "/settings/environments/prod", "/packages", "/issues/new?template=x"):
+        got, miss = anon.get("/alice/c11env" + tail), anon.get("/alice/c11missing" + tail)
+        same = (got.status, got.h("location")) == (miss.status, miss.h("location").replace("c11missing", "c11env").replace("c11missing".replace("c11", "c11"), "c11env"))
+        check(same, f"signed out {tail}: private {got.status} {got.h('location')} vs missing {miss.status} {miss.h('location')}")
+    for path in ("/packages", "/packages/alice/container/anything"):
+        r = anon.get(path)
+        check(r.status in (302, 303, 401, 404) and "alice" not in r.text.replace("/login", ""), f"signed out {path}: {r.status}")
+    for path in (f"{run_page}/jobs/{job_id}/review", "/alice/c11env/pulls/1/queue/add", "/alice/c11env/settings/merge-queue"):
+        r = anon.req("POST", path, form={"decision": "approve"})
+        check(r.status in (302, 303, 401, 403, 404), f"signed out POST {path}: {r.status}")
+
+
+def step31():
+    """C11 review: the merge queue tests the merged result. Two pull requests pass their checks on
+    their own heads; once the first merges, the second must be brought up to date and wait for a new
+    check before it merges, and the merge commit must contain the first one's work."""
+    a, tok = S["alice"], S["alice_token"]
+    api = Client("10.9.2.4")
+    r = api.api("POST", "/user/repos", js={"name": "c11queue", "private": True}, auth=tok)
+    check(r.status == 201, f"create c11queue: {r.status} {r.text[:200]}")
+    wd = os.path.join(WORK, "c11queue")
+    os.makedirs(wd)
+    url = http_url("alice", tok, "alice/c11queue")
+    env = gitenv("10.9.2.4")
+    git(["init", "-q", "-b", "main"], wd)
+    open(os.path.join(wd, "base.txt"), "w").write("base\n")
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "base"], wd)
+    git(["push", url, "main"], wd, env=env)
+    heads = {}
+    for name in ("x", "y"):
+        git(["checkout", "-q", "-b", name, "main"], wd)
+        open(os.path.join(wd, f"{name}.txt"), "w").write(f"{name}\n")
+        git(["add", "-A"], wd)
+        git(["commit", "-q", "-m", f"add {name}"], wd)
+        git(["push", url, name], wd, env=env)
+        heads[name] = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    r = api.api("PUT", "/repos/alice/c11queue/branches/main/protection", auth=tok, js={
+        "required_status_checks": {"strict": True, "contexts": ["ci/t"]},
+        "required_pull_request_reviews": {"required_approving_review_count": 0, "dismiss_stale_reviews": False, "require_code_owner_reviews": False},
+        "enforce_admins": False, "required_conversation_resolution": False, "allow_force_pushes": False,
+        "allow_deletions": False, "allow_direct_push": False})
+    check(r.status in (200, 201), f"protect main: {r.status} {r.text[:300]}")
+    nums = {}
+    for name in ("x", "y"):
+        r = api.api("POST", "/repos/alice/c11queue/pulls", js={"title": f"add {name}", "head": name, "base": "main"}, auth=tok)
+        check(r.status == 201, f"open {name}: {r.status} {r.text[:300]}")
+        nums[name] = r.json()["number"]
+        r = api.api("POST", f"/repos/alice/c11queue/statuses/{heads[name]}", js={"state": "success", "context": "ci/t"}, auth=tok)
+        check(r.status == 201, f"status on {name}: {r.status} {r.text[:200]}")
+    page = "/alice/c11queue/settings/merge-queue"
+    r = a.post_form(page, {"enabled": "1"}, page="/alice/c11queue/settings")
+    check(r.status in (200, 303), f"turn the queue on: {r.status} {r.text[:200]}")
+
+    def pull(n):
+        return api.api("GET", f"/repos/alice/c11queue/pulls/{n}", auth=tok).json()
+
+    def queue(n):
+        pp = f"/alice/c11queue/pulls/{n}"
+        r = a.post_form(pp + "/queue/add", {"method": "merge"}, page=pp)
+        check(r.status in (200, 303), f"queue {n}: {r.status} {r.text[:200]}")
+
+    queue(nums["x"])
+    deadline = time.time() + 90
+    while time.time() < deadline and not pull(nums["x"]).get("merged"):
+        time.sleep(2)
+    check(pull(nums["x"]).get("merged"), "the first queued pull request did not merge")
+    queue(nums["y"])
+    # It was up to date with nothing when its check ran; the base has moved since. It must not merge
+    # on that old result: the queue brings it up to date and waits for a check on the new head.
+    time.sleep(10)
+    y = pull(nums["y"])
+    check(not y.get("merged"), "the second pull request merged on a result nobody tested")
+    new_head = y["head"]["sha"]
+    check(new_head != heads["y"], f"the queue did not update the branch: head is still {new_head}")
+    base_tip = pull(nums["x"])["merge_commit_sha"]
+    probe = os.path.join(WORK, "c11queue-probe")
+    git(["clone", "-q", url, probe], WORK, env=env)
+    git(["fetch", "-q", "origin", "y"], probe, env=env)
+    anc = git(["merge-base", "--is-ancestor", base_tip, "origin/y"], probe, check_rc=False)
+    check(anc.returncode == 0, "the updated branch does not contain the first pull request's merge")
+    r = api.api("POST", f"/repos/alice/c11queue/statuses/{new_head}", js={"state": "success", "context": "ci/t"}, auth=tok)
+    check(r.status == 201, f"status on the new head: {r.status} {r.text[:200]}")
+    deadline = time.time() + 90
+    while time.time() < deadline and not pull(nums["y"]).get("merged"):
+        time.sleep(2)
+    check(pull(nums["y"]).get("merged"), "the second pull request did not merge after its check passed on the new head")
+    # Creating an environment by the name of an existing one (in any case) is refused and changes nothing.
+    ep = "/alice/c11queue/settings/environments"
+    r = a.post_form(ep, {"name": "stage"}, page=ep)
+    check(r.status == 303, f"create the environment: {r.status} {r.text[:200]}")
+    r = a.post_form(ep + "/stage", {"kind": "rules", "wait_minutes": "5", "branches": "main"}, page=ep + "/stage")
+    check(r.status == 303, f"save the rules: {r.status} {r.text[:200]}")
+    for again in ("stage", "STAGE"):
+        r = a.post_form(ep, {"name": again}, page=ep)
+        check(r.status == 422, f"creating {again} again was not refused: {r.status}")
+    g = a.get(ep)
+    check("5 min" in g.text and "main" in g.text, "the environment lost its wait timer or branch filter")
+
+
+C11_CASE = """name: ship
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: STG
+    steps:
+      - run: echo "deploying with [${{ secrets.STG_KEY }}]"
+"""
+
+
+def step32():
+    """ch-e7b: environment names match ignoring case. The environment is `stg`; the workflow says
+    `STG`. The job must still wait for the reviewer, and the secret arrives only after approval."""
+    a, tok = S["alice"], S["alice_token"]
+    api = Client("10.9.2.4")
+    r = api.api("POST", "/user/repos", js={"name": "c11case", "private": True}, auth=tok)
+    check(r.status == 201, f"create c11case: {r.status} {r.text[:200]}")
+    r = api.api("PUT", "/repos/alice/c11case/collaborators/bob", js={"permission": "push"}, auth=tok)
+    check(r.status in (200, 201, 204), f"add bob: {r.status} {r.text[:200]}")
+    page = "/alice/c11case/settings/environments"
+    r = a.post_form(page, {"name": "stg"}, page=page)
+    check(r.status == 303, f"create the environment: {r.status} {r.text[:200]}")
+    env_page = page + "/stg"
+    g = a.get(env_page)
+    m = re.search(r'name="reviewer" value="(\d+)"[^>]*> bob<', g.text)
+    check(m, "bob is not offered as a reviewer")
+    r = a.post_form(env_page, {"kind": "rules", "wait_minutes": "0", "branches": "main", "reviewer": m.group(1)}, page=env_page)
+    check(r.status == 303, f"save the rules: {r.status} {r.text[:200]}")
+    r = a.post_form(env_page, {"kind": "secret", "name": "STG_KEY", "value": "stg-secret-value-55"}, page=env_page)
+    check(r.status == 303, f"save the secret: {r.status} {r.text[:200]}")
+    # The other spelling reaches the same settings page, and a second environment is not made.
+    check(a.get(page + "/STG").status == 200, "the settings page does not find the environment by another spelling")
+    wd = os.path.join(WORK, "c11case")
+    os.makedirs(os.path.join(wd, ".codehaven/workflows"))
+    open(os.path.join(wd, ".codehaven/workflows/ship.yml"), "w").write(C11_CASE)
+    git(["init", "-q", "-b", "main"], wd)
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "C11 case deploy"], wd)
+    git(["push", http_url("alice", tok, "alice/c11case"), "main"], wd, env=gitenv("10.9.2.4"))
+    sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    run_, deadline = None, time.time() + 120
+    while time.time() < deadline and not run_:
+        r = api.api("GET", "/repos/alice/c11case/actions/runs", auth=tok)
+        if r.status == 200:
+            rs = [x for x in r.json().get("workflow_runs", []) if x.get("head_sha") == sha]
+            run_ = rs[0] if rs else None
+        time.sleep(2)
+    check(run_, "no run started for the STG workflow")
+    time.sleep(15)
+    r = api.api("GET", f"/repos/alice/c11case/actions/runs/{run_['id']}", auth=tok)
+    check(r.json().get("status") not in ("completed", "in_progress"),
+          f"environment: STG skipped the gate of stg, the job ran: {r.json().get('status')}")
+    jobs = api.api("GET", f"/repos/alice/c11case/actions/runs/{run_['id']}/jobs", auth=tok).json().get("jobs", [])
+    check(jobs and jobs[0].get("runner_id") in (None, 0), f"the held job has a runner: {jobs}")
+    job_id = jobs[0]["id"]
+    run_page = f"/alice/c11case/actions/runs/{run_['id']}"
+    check("Waiting for a reviewer" in a.get(run_page).text, "the run page does not say it waits for a reviewer")
+    r = a.post_form(f"{run_page}/jobs/{job_id}/review", {"decision": "approve"}, page=run_page)
+    check(r.status in (403, 404), f"someone not on the reviewers list approved: {r.status}")
+    b = S["bob"]
+    r = b.post_form(f"{run_page}/jobs/{job_id}/review", {"decision": "approve", "comment": "ok"}, page=run_page)
+    check(r.status == 303, f"bob's approval: {r.status} {r.text[:200]}")
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        r = api.api("GET", f"/repos/alice/c11case/actions/runs/{run_['id']}", auth=tok)
+        if r.json().get("status") == "completed":
+            break
+        time.sleep(3)
+    check(r.json().get("conclusion") == "success", f"the approved job did not succeed: {r.json().get('conclusion')}")
+    log = api.req("GET", f"/api/v3/repos/alice/c11case/actions/jobs/{job_id}/logs", auth=tok)
+    check("deploying with [***]" in log.text and "stg-secret-value-55" not in log.text,
+          f"the environment secret did not arrive masked: {log.text[:300]}")
+
+
+def step33():
+    """ch-qop: a pushed issue form and a pushed workflow whose nesting hides behind lone CR line
+    breaks must not take the server down. The first guard split lines on LF and CRLF only; the
+    YAML parser overflowed its stack and the process aborted on every view of the page."""
+    tok = S["alice_token"]
+    a = S["alice"]
+    api = Client("10.9.2.4")
+    r = api.api("POST", "/user/repos", js={"name": "c11cr", "private": True}, auth=tok)
+    check(r.status == 201, f"create c11cr: {r.status} {r.text[:200]}")
+    wd = os.path.join(WORK, "c11cr")
+    os.makedirs(os.path.join(wd, ".codehaven/ISSUE_TEMPLATE"))
+    os.makedirs(os.path.join(wd, ".codehaven/workflows"))
+    chain = "- " * 6000
+    files = {
+        ".codehaven/ISSUE_TEMPLATE/crash.yml": f"name: x\nbody:\r{chain}x\n",
+        ".codehaven/ISSUE_TEMPLATE/nel.yml": f"name: x\nbody:\u0085{chain}x\n",
+        ".codehaven/workflows/crash.yml": f"name: x\non: push\njobs:\r{chain}x\n",
+        ".codehaven/workflows/ls.yml": f"name: x\non: push\njobs:\u2028{chain}x\n",
+    }
+    for rel, body in files.items():
+        with open(os.path.join(wd, rel), "w", newline="", encoding="utf-8") as f:
+            f.write(body)
+    git(["init", "-q", "-b", "main"], wd)
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "hostile YAML behind lone CR"], wd)
+    git(["push", http_url("alice", tok, "alice/c11cr"), "main"], wd, env=gitenv("10.9.2.4"))
+    # Give the push event time to be read, then ask for the page that reads the forms, twice.
+    time.sleep(10)
+    for i in range(2):
+        g = a.get("/alice/c11cr/issues/new")
+        check(g.status == 200, f"the new issue page after hostile forms (view {i + 1}): {g.status}")
+    check(Client("10.9.0.1").get("/healthz").status == 200, "the server is not answering after the hostile files")
+    # And the server is still the same process, still taking pushes.
+    with open(os.path.join(wd, "README.md"), "w") as f:
+        f.write("alive\n")
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "alive"], wd)
+    git(["push", http_url("alice", tok, "alice/c11cr"), "main"], wd, env=gitenv("10.9.2.4"))
+    check(a.get("/alice/c11cr/actions").status == 200, "the actions page after hostile workflows")
+
+
+# Docker's reference grammar (distribution/reference): [domain[:port]/]path[/path]...[:tag][@digest].
+_ALNUM = "[a-z0-9]+"
+_PATH = f"{_ALNUM}(?:(?:[._]|__|[-]+){_ALNUM})*"
+_DOMC = "(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])"
+_DOCKER_REF = re.compile(rf"^(?:{_DOMC}(?:\.{_DOMC})*(?::[0-9]+)?/)?{_PATH}(?:/{_PATH})*(?::[\w][\w.-]{{0,127}})?"
+                         r"(?:@[A-Za-z][A-Za-z0-9]*(?:[-_+.][A-Za-z][A-Za-z0-9]*)*:[0-9a-fA-F]{32,})?$")
+
+
+def step34():
+    """ch-2fc: the pull command the package page shows is one docker accepts. It once printed the
+    URL scheme (`docker pull https://host/...`), which docker answers with `invalid reference
+    format`. This step pushes an image through /v2, opens the page as its owner, takes the shown
+    pull and login lines, checks the reference against docker's grammar, then follows the shown
+    reference to the registry the way `docker pull` would (the manifest, by the shown tag)."""
+    import html as htmllib
+    alice = S["alice"]
+    r = alice.req("POST", "/settings/tokens", form={"_csrf": alice.csrf("/settings/tokens"), "name": "pull", "scopes": ["write:packages", "read:packages"], "expires_in_days": "30"})
+    m = re.search(r"chp_[A-Za-z0-9]{40}", r.text)
+    check(r.status == 200 and m, f"packages token: {r.status}")
+    pk = m.group(0)
+    basic = "Basic " + base64.b64encode(f"alice:{pk}".encode()).decode()
+    c = Client("10.9.2.5")
+
+    def put_blob(data):
+        d = "sha256:" + hashlib.sha256(data).hexdigest()
+        up = c.req("POST", f"/v2/alice/img/blobs/uploads/?digest={d}", body=data, headers={"Content-Type": "application/octet-stream"}, auth=basic, cookies=False)
+        check(up.status == 201, f"blob upload: {up.status} {up.text[:200]}")
+        return d, len(data)
+
+    cfg_d, cfg_n = put_blob(b'{"architecture":"amd64","os":"linux"}')
+    lay_d, lay_n = put_blob(b"layer bytes for the e2e image")
+    manifest = json.dumps({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                           "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": cfg_d, "size": cfg_n},
+                           "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": lay_d, "size": lay_n}]}).encode()
+    mt = {"Content-Type": "application/vnd.oci.image.manifest.v1+json"}
+    put = c.req("PUT", "/v2/alice/img/manifests/latest", body=manifest, headers=mt, auth=basic, cookies=False)
+    check(put.status == 201, f"manifest push: {put.status} {put.text[:200]}")
+    digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
+
+    page = alice.get("/packages/alice/container/img")
+    check(page.status == 200, f"the package page: {page.status}")
+    pull = re.search(r"<pre><code>(docker pull [^\n<]*)", page.text)
+    login = re.search(r"(echo \$TOKEN \| docker login [^\n<]*)", page.text)
+    check(pull and login, f"the page shows no docker commands: {page.text[:400]}")
+    pull_line, login_line = htmllib.unescape(pull.group(1)), htmllib.unescape(login.group(1))
+    ref = pull_line[len("docker pull "):]
+    host = urllib.parse.urlparse(PUBLIC).netloc
+    check("://" not in pull_line and "://" not in login_line, f"the shown docker commands carry a URL scheme: {pull_line} / {login_line}")
+    check(_DOCKER_REF.match(ref), f"docker would reject the shown reference: {ref!r}")
+    check(ref == f"{host}/alice/img:latest", f"the shown reference: {ref!r}")
+    check(login_line.startswith(f"echo $TOKEN | docker login {host} -u alice "), f"the shown login: {login_line!r}")
+    # What `docker pull <ref>` does next: split the reference into registry, name and tag, then ask
+    # that registry for the manifest by tag. Here the registry is the throwaway server at BASE.
+    reg, _, rest = ref.partition("/")
+    name, _, tag = rest.rpartition(":")
+    check(reg == host, f"the registry in the shown reference: {reg}")
+    got = c.req("GET", f"/v2/{name}/manifests/{tag}", headers={"Accept": "application/vnd.oci.image.manifest.v1+json"}, auth=basic, cookies=False)
+    check(got.status == 200 and got.h("docker-content-digest") == digest, f"pulling the shown reference: {got.status} {got.h('docker-content-digest')}")
+    # A reference with the scheme, as the page used to print it, is not one docker parses.
+    check(not _DOCKER_REF.match(PUBLIC + "/alice/img:latest"), "the grammar check accepts a reference with a scheme")
+
+
 ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1), (2, "first admin and two-factor", step2),
        (3, "invites", step3), (4, "token and ssh key", step4), (5, "rate limit and lockout", step5), (6, "create repo", step6),
        (7, "push over HTTP", step7), (8, "push over SSH", step8), (9, "collaborator and clone", step9),
@@ -1613,7 +1970,12 @@ ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1)
        (26, "ch-d9s: make ci of the Codehaven source on its own runner (slow, ask for it)", step26),
        (27, "batch C10: admin repo-import, issue order, transfer and delete, signed-out probes", step27),
        (28, "C10 review: private fork commits are not published when the base becomes public", step28),
-       (29, "C10 review round 2: merge requests racing the base being made public copy nothing private", step29)]
+       (29, "C10 review round 2: merge requests racing the base being made public copy nothing private", step29),
+       (30, "batch C11: an environment holds a job for its reviewer, then releases its secret; signed-out probes", step30),
+       (31, "C11 review: the merge queue tests the merged result; the environment create form keeps an existing environment", step31),
+       (32, "C11 review: environment names match ignoring case, so another spelling still waits for the reviewer", step32),
+       (33, "ch-qop: YAML hidden behind lone CR, NEL or LS line breaks does not abort the server", step33),
+       (34, "ch-2fc: the pull command on the package page is one docker accepts, and pulls", step34)]
 
 
 THROWAWAY_PROJECT = re.compile(r"^(test|e2e|shots|tmp)-[a-z0-9][a-z0-9-]*$")

@@ -284,6 +284,11 @@ pub struct Job {
     pub permissions: Option<crate::permissions::Declared>,
     #[serde(default)]
     pub services: BTreeMap<String, Service>,
+    /// The deployment environment this job runs in (ch-bj5): plain text, the name of an
+    /// environment of the repository. What the environment asks (reviewers, a wait timer, a
+    /// branch filter) happens before the job starts.
+    #[serde(default)]
+    pub environment: Option<String>,
     /// Set when this job calls a reusable workflow. Such a job has no `runs_on` and no steps.
     #[serde(default)]
     pub call: Option<Call>,

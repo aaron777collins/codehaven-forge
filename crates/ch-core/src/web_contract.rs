@@ -376,6 +376,7 @@ pub struct Artifact {
     pub expired: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 #[async_trait]
 pub trait Pipelines: Send + Sync {
     async fn workflows(&self, actor: &Actor, repo: RepoId, git_ref: &str) -> Result<Vec<WorkflowDef>>;
@@ -412,6 +413,126 @@ pub trait Pipelines: Send + Sync {
     async fn set_variable(&self, actor: &Actor, repo: RepoId, name: &str, value: &str, client: &ClientInfo) -> Result<()>;
     async fn delete_variable(&self, actor: &Actor, repo: RepoId, name: &str, client: &ClientInfo) -> Result<()>;
     async fn artifacts(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Vec<Artifact>>;
+
+    // ------- deployment environments (ch-bj5). The defaults fail closed.
+
+    /// The repository's environments with their rules and secret names. Repository admins only.
+    async fn environments(&self, actor: &Actor, repo: RepoId) -> Result<Vec<EnvironmentInfo>> {
+        let _ = (actor, repo);
+        Err(nb("pipelines"))
+    }
+    /// One environment. Repository admins only.
+    async fn environment(&self, actor: &Actor, repo: RepoId, name: &str) -> Result<EnvironmentInfo> {
+        let _ = (actor, repo, name);
+        Err(nb("pipelines"))
+    }
+    /// Creates an environment or replaces its rules. Returns whether it was new.
+    async fn save_environment(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        name: &str,
+        draft: EnvironmentDraft,
+        client: &ClientInfo,
+    ) -> Result<bool> {
+        let _ = (actor, repo, name, draft, client);
+        Err(nb("pipelines"))
+    }
+    /// Creates an environment with no rules. Refuses a name already in use (in any case) and
+    /// never touches that environment's rules.
+    async fn create_environment(&self, actor: &Actor, repo: RepoId, name: &str, client: &ClientInfo) -> Result<()> {
+        let _ = (actor, repo, name, client);
+        Err(nb("pipelines"))
+    }
+    async fn delete_environment(&self, actor: &Actor, repo: RepoId, name: &str, client: &ClientInfo) -> Result<()> {
+        let _ = (actor, repo, name, client);
+        Err(nb("pipelines"))
+    }
+    async fn set_environment_secret(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        environment: &str,
+        name: &str,
+        value: &str,
+        client: &ClientInfo,
+    ) -> Result<()> {
+        let _ = (actor, repo, environment, name, value, client);
+        Err(nb("pipelines"))
+    }
+    async fn delete_environment_secret(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        environment: &str,
+        name: &str,
+        client: &ClientInfo,
+    ) -> Result<()> {
+        let _ = (actor, repo, environment, name, client);
+        Err(nb("pipelines"))
+    }
+    /// People who could be named as required reviewers: Write on the repository.
+    async fn reviewer_candidates(&self, actor: &Actor, repo: RepoId) -> Result<Vec<EnvironmentReviewer>> {
+        let _ = (actor, repo);
+        Err(nb("pipelines"))
+    }
+    /// The jobs of a run that wait at an environment, for the run page.
+    async fn run_gates(&self, actor: &Actor, repo: RepoId, run: RunId) -> Result<Vec<DeploymentGate>> {
+        let _ = (actor, repo, run);
+        Ok(Vec::new())
+    }
+    /// A required reviewer approves or rejects a job held at an environment.
+    async fn review_deployment(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        run: RunId,
+        job: i64,
+        approve: bool,
+        comment: &str,
+        client: &ClientInfo,
+    ) -> Result<()> {
+        let _ = (actor, repo, run, job, approve, comment, client);
+        Err(nb("pipelines"))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentReviewer {
+    pub user_id: UserId,
+    pub login: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentInfo {
+    pub name: String,
+    pub wait_minutes: i32,
+    pub branches: Vec<String>,
+    pub reviewers: Vec<EnvironmentReviewer>,
+    pub secrets: Vec<SecretMeta>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EnvironmentDraft {
+    pub wait_minutes: i32,
+    pub branches: Vec<String>,
+    pub reviewers: Vec<UserId>,
+}
+
+/// A job held at an environment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeploymentGate {
+    pub job_id: i64,
+    pub job_name: String,
+    pub environment: String,
+    /// `pending`, `approved` or `rejected`. An approved one may still be on its wait timer.
+    pub state: String,
+    pub release_at: DateTime<Utc>,
+    pub decided_by: Option<String>,
+    pub comment: String,
+    pub reviewers: Vec<String>,
+    /// The person asking is a required reviewer and may decide it now.
+    pub can_review: bool,
 }
 
 // ---------------------------------------------------------------- repo settings (ch-git)

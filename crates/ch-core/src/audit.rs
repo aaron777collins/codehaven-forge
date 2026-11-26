@@ -62,6 +62,13 @@ pub mod action {
     pub const REPO_DELETED: &str = "repo.deleted";
     pub const REPO_IMPORTED_LOCAL: &str = "repo.imported_from_server_path";
     pub const REPO_FORK_REPARENTED: &str = "repo.fork_reparented";
+    pub const MERGE_QUEUE_CHANGED: &str = "repo.merge_queue_changed";
+    pub const PACKAGE_LINKED: &str = "package.linked";
+    pub const PACKAGE_UNLINKED: &str = "package.unlinked";
+    pub const PACKAGE_DELETED: &str = "package.deleted";
+    pub const PACKAGE_VERSION_DELETED: &str = "package.version_deleted";
+    pub const REPO_FORK_GRANTS_WITHDRAWN: &str = "repo.fork_grants_withdrawn";
+    pub const PULL_CLOSED_REPO_DELETED: &str = "pull.closed_repo_deleted";
     pub const BRANCH_PROTECTION: &str = "repo.branch_protection_changed";
     pub const USER_UNSUSPENDED: &str = "user.unsuspended";
     pub const EMAIL_ADDED: &str = "email.added";
@@ -101,6 +108,12 @@ pub mod action {
     pub const APP_CODE_REUSE: &str = "app.code_reuse";
     pub const MCP_TOOL_CALL: &str = "mcp.tool_call";
     pub const RUN_APPROVED: &str = "run.approved";
+    pub const DEPLOYMENT_APPROVED: &str = "deployment.approved";
+    pub const DEPLOYMENT_REJECTED: &str = "deployment.rejected";
+    pub const ENVIRONMENT_CHANGED: &str = "environment.changed";
+    pub const ENVIRONMENT_DELETED: &str = "environment.deleted";
+    pub const ENVIRONMENT_SECRET_CHANGED: &str = "environment.secret_changed";
+    pub const ENVIRONMENT_SECRET_DELETED: &str = "environment.secret_deleted";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

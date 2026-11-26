@@ -264,10 +264,11 @@ pub struct TabLink {
 }
 
 /// The tab bar the repo settings pages share until the shared macro lands.
-fn settings_tabs(base: &str, current: &str) -> Vec<TabLink> {
+pub(crate) fn settings_tabs(base: &str, current: &str) -> Vec<TabLink> {
     vec![
         TabLink { name: "Settings".into(), href: format!("{base}/settings"), current: current == "settings" },
         TabLink { name: "Secrets".into(), href: format!("{base}/settings/secrets"), current: current == "secrets" },
+        TabLink { name: "Environments".into(), href: format!("{base}/settings/environments"), current: current == "environments" },
         TabLink { name: "Runners".into(), href: format!("{base}/settings/runners"), current: current == "runners" },
     ]
 }
@@ -410,6 +411,7 @@ struct RunPage {
     show_rerun: bool,
     show_approve: bool,
     hold_reason: Option<String>,
+    gates: Vec<GateView>,
     /// The first queued job that no runner can take, and why (ch-7rq).
     queue_note: Option<String>,
     /// Why the run failed before any job: the workflow file is broken (ch-xy5).
@@ -421,6 +423,17 @@ struct RunPage {
     has_graph: bool,
     artifacts: Vec<ArtifactRow>,
     actions_used: Vec<ActionUsedRow>,
+}
+
+/// A job waiting at a deployment environment, for the run page (ch-bj5).
+pub struct GateView {
+    pub job_name: String,
+    pub environment: String,
+    pub state_text: String,
+    pub reviewers: String,
+    pub comment: String,
+    pub can_review: bool,
+    pub review_action: String,
 }
 
 pub struct StepView {
@@ -757,6 +770,37 @@ pub async fn run_get(ctx: Ctx, Path((owner, name, run)): Path<(String, String, i
 
     let waiting = info.status == "waiting";
     let hold_reason = if waiting { ctx.state.ci.run_hold_reason(&ctx.actor, rc.id(), RunId(run)).await.ok().flatten() } else { None };
+    let gates: Vec<GateView> = ctx
+        .state
+        .pipelines
+        .run_gates(&ctx.actor, rc.id(), RunId(run))
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|g| {
+            let who = g.decided_by.clone().unwrap_or_else(|| "someone".to_string());
+            let state_text = match g.state.as_str() {
+                "approved" => {
+                    if g.release_at > chrono::Utc::now() {
+                        format!("Approved by {who}. Starts after the wait timer ends.")
+                    } else {
+                        format!("Approved by {who}.")
+                    }
+                }
+                "rejected" => format!("Rejected by {who}"),
+                _ => "Waiting for a reviewer".to_string(),
+            };
+            GateView {
+                review_action: format!("{base}/actions/runs/{run}/jobs/{}/review", g.job_id),
+                job_name: g.job_name.clone(),
+                environment: g.environment.clone(),
+                state_text,
+                reviewers: g.reviewers.join(", "),
+                comment: g.comment.clone(),
+                can_review: g.can_review,
+            }
+        })
+        .collect();
     let problem = if jobs.is_empty() && info.status == "completed" {
         ctx.state.ci.run_problem(&ctx.actor, rc.id(), RunId(run)).await.ok().flatten()
     } else {
@@ -783,6 +827,7 @@ pub async fn run_get(ctx: Ctx, Path((owner, name, run)): Path<(String, String, i
         show_rerun: can_write && !active && problem.is_none(),
         show_approve: can_write && waiting,
         hold_reason,
+        gates,
         problem,
         queue_note: jobs.iter().find_map(|j| j.queue_note.as_ref().map(|n| format!("{}: {n}", j.name))),
         approve_action: format!("{base}/actions/runs/{run}/approve"),
@@ -1470,7 +1515,8 @@ mod tests {
         let tabs = settings_tabs("/a/b", "secrets");
         assert_eq!(tabs[0].href, "/a/b/settings");
         assert!(tabs[1].current && !tabs[0].current && !tabs[2].current);
-        assert_eq!(tabs[2].href, "/a/b/settings/runners");
+        assert_eq!(tabs[2].href, "/a/b/settings/environments");
+        assert_eq!(tabs[3].href, "/a/b/settings/runners");
     }
 
     #[test]

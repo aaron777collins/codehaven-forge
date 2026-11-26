@@ -412,6 +412,15 @@ pub struct GateView {
     pub reasons: Vec<String>,
 }
 
+/// The queue half of the merge box: where an in-queue pull request stands (ch-dxk).
+pub struct QueuedView {
+    pub position: u32,
+    pub total: u32,
+    pub note: String,
+    /// People with write access may take it back out.
+    pub can_remove: bool,
+}
+
 pub struct CheckRow {
     pub name: String,
     pub status: StatusView,
@@ -625,6 +634,12 @@ struct ShowPage {
     can_delete_branch: bool,
     /// No rule blocks the merge, but checks on the head commit are still queued or running.
     checks_running: bool,
+    /// The repository merges only through its queue: the queue box replaces the merge form (ch-dxk).
+    queue_on: bool,
+    /// Where the pull request stands in the queue, when it is in it.
+    queued: Option<QueuedView>,
+    /// This viewer may put it in: write access, open and not a draft.
+    can_queue_add: bool,
     /// People and teams asked to review and not answered yet.
     requested: Vec<String>,
     /// Triage, or the author with a grant, on an open pull request (ch-4dv).
@@ -926,6 +941,19 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
         && ctx.state.git.resolve(l.rc.id(), &format!("refs/heads/{}", l.pr.head_ref)).await.is_ok();
     let fork_approval = fork_approval(&ctx, &l).await;
     let side = side_choices(&ctx, &mut l, can_triage, st == PrState::Open || st == PrState::Draft).await;
+    let can_merge = l.rc.perm.allows(Permission::Write) && !l.rc.repo.archived && st == PrState::Open;
+    let queue_on = ctx.state.pulls.merge_queue_enabled(&ctx.actor, l.rc.id()).await.unwrap_or(false);
+    let queued = if queue_on {
+        ctx.state.pulls.queue_state(&ctx.actor, l.rc.id(), number).await.unwrap_or(None).map(|q| QueuedView {
+            position: q.position,
+            total: q.total,
+            note: q.note,
+            can_remove: can_merge,
+        })
+    } else {
+        None
+    };
+    let can_queue_add = queue_on && queued.is_none() && can_merge;
     let c = pr_chrome(&ctx, &l, &format!("{} (#{number})", l.pr.issue.title)).await;
     ctx.page(&ShowPage {
         fork_approval,
@@ -949,7 +977,10 @@ pub async fn show(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i
         labels: label_views(&l.pr.issue.labels, &lmap, &format!("{base}/pulls")),
         reviewers: reviewer_state,
         checks_summary,
-        can_merge: l.rc.perm.allows(Permission::Write) && !l.rc.repo.archived && st == PrState::Open,
+        can_merge,
+        queue_on,
+        queued,
+        can_queue_add,
         can_comment,
         can_review: me.is_some()
             && !l.rc.repo.archived
@@ -1144,6 +1175,28 @@ pub async fn merge_post(ctx: Ctx, Path((owner, name, number)): Path<(String, Str
         }
         Err(Error::Conflict(m)) => Ok(ctx.redirect_flash(&url, "error", &m)),
         Err(e) => Err(e.into()),
+    }
+}
+
+/// Into the repository's merge queue (ch-dxk): the queue merges one at a time, in order.
+pub async fn queue_add(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Write)?;
+    let url = pr_url(&rc, number, "");
+    let method = parse_method(form.get("method"));
+    match ctx.state.pulls.queue_add(&ctx.actor, rc.id(), number, method, &ctx.client).await {
+        Ok(_) => Ok(ctx.redirect_flash(&url, "ok", "Added to the merge queue.")),
+        Err(e) => Ok(ctx.redirect_flash(&url, "error", &super::people::flash_error(&e))),
+    }
+}
+
+pub async fn queue_remove(ctx: Ctx, Path((owner, name, number)): Path<(String, String, i64)>, _form: FormData) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Write)?;
+    let url = pr_url(&rc, number, "");
+    match ctx.state.pulls.queue_remove(&ctx.actor, rc.id(), number, &ctx.client).await {
+        Ok(_) => Ok(ctx.redirect_flash(&url, "ok", "Removed from the merge queue.")),
+        Err(e) => Ok(ctx.redirect_flash(&url, "error", &super::people::flash_error(&e))),
     }
 }
 

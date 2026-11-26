@@ -93,6 +93,21 @@ parent is narrowed to the parent's tier, and the fork lock and the rule that hid
 fork from anyone who cannot see a private ancestor read the new chain from then on. Each
 re-parenting is audited (`repo.fork_reparented`, with the tier before and after).
 
+A private repository's delete also changes who can see its private forks, so it is held to one
+rule: **a delete never opens a fork to someone it was closed to.** The lineage rule hid a fork from
+people who could not see the repository being deleted, and with it gone that barrier would
+vanish. So before the delete, the collaborator grants of those people are withdrawn from every
+private fork below it, and so are a team's grants on a fork when one of its members is such a
+person (`repo.fork_grants_withdrawn` in the audit log says how many). A grant held back by the
+repository being deleted is lost, not remembered. Someone who could see the deleted repository
+but cannot see the fork that becomes the new root is narrowed: the fork now hangs under it. An
+organization's fork below is different: members get their access from the organization's base
+permission, which cannot be held back one person at a time, so if some member cannot see the
+repository being deleted and the base permission is not `none`, the delete is refused and says
+which organization. Site admins and owners are never held back. Open pull requests into the
+deleted repository go with it, and each one is written to the audit log first
+(`pull.closed_repo_deleted`: number, title, author and the fork it came from).
+
 ## Notes for the other streams
 
 - **collab.** `GitService::merge` returns `Merged`, `Conflict { paths }` or `BaseMoved`.
@@ -146,8 +161,6 @@ never block.
   server-side request forgery hole, so it is not built.
 - **`gix` for reads.** Dropped for now: git's own plumbing does every read and no behaviour depends on
   the choice. See ARCHITECTURE.md 6.1.
-- **Re-parenting a fork network** so a root with forks can be deleted. Deleting such a root is
-  refused with a message.
 - **Mergeability recompute.** It reads pull request rows, so it belongs to collab; `test_merge`
   is the building block.
 - **Docker schema 1.** Dropped: no client has sent it since 2017. Range requests on blob downloads

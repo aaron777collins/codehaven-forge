@@ -17,6 +17,7 @@ pub mod checks;
 pub mod clock;
 pub mod ctx;
 pub mod discovery;
+pub mod environments;
 pub mod history;
 pub mod live;
 pub mod logs;

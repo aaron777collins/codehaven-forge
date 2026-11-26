@@ -125,7 +125,9 @@ Any other `uses:` is fetched (ch-ctk.4, ch-ctk.5):
   `post-if` (default `always()`) holds. A post step shows as `Post <name>`.
 - Composite actions run their steps inside the step that used them, with their own `inputs` and
   `steps` contexts and `github.action_path`; their `outputs` are their `value` expressions.
-  Nesting stops at 9 levels.
+  Nesting stops at 9 levels. Inside one, `secrets`, `vars`, `needs` and `matrix` are empty (and so
+  are they when an input's `default:` is worked out): what an action needs from them, the step passes in
+  `with:`.
 - Docker container actions (`using: docker`) need a Docker daemon, which jobs do not have, so
   they fail with a message that says to use a `docker://image` step or a `run:` step.
 - JavaScript actions also get `ACTIONS_RUNTIME_TOKEN` and `ACTIONS_CACHE_URL`, so the cache

@@ -21,6 +21,7 @@ pub mod gc;
 pub mod manifests;
 pub mod names;
 pub mod nuget;
+pub mod packages;
 pub mod range;
 
 use access::{Access, authorize};

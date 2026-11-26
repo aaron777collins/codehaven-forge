@@ -415,6 +415,7 @@ fn empty_job() -> Job {
         concurrency: None,
         permissions: None,
         services: BTreeMap::new(),
+        environment: None,
         call: None,
         call_role: None,
         called: false,

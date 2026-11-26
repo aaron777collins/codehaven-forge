@@ -24,10 +24,26 @@ type Handler = for<'a> fn(&'a Core, &'a StoredEvent) -> BoxFuture<'a, Result<()>
 pub fn workers(core: Core) -> Vec<Worker> {
     let a = core.clone();
     let b = core;
+    let c = b.clone();
     vec![
         Worker::new("collab-pr-sync", move |t| consume(a, t, "pr-sync", |c, e| Box::pin(pr_sync(c, e)))),
         Worker::new("collab-defaults", move |t| consume(b, t, "collab-defaults", |c, e| Box::pin(defaults(c, e)))),
+        // The merge queue also moves on its own: a fork's checks may start only when a person
+        // approves them, which no event of ours announces.
+        Worker::new("collab-merge-queue", move |t| queue_loop(c, t)),
     ]
+}
+
+async fn queue_loop(core: Core, token: CancellationToken) {
+    loop {
+        tokio::select! {
+            _ = token.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+        }
+        if let Err(e) = core.queue_sweep().await {
+            tracing::warn!(error = %e, "merge queue sweep failed");
+        }
+    }
 }
 
 async fn consume(core: Core, token: CancellationToken, name: &'static str, handler: Handler) {
@@ -111,9 +127,11 @@ async fn pr_sync(core: &Core, ev: &StoredEvent) -> Result<()> {
         }
         DomainEvent::CheckRunUpdated { repo_id, sha, .. } | DomainEvent::StatusCreated { repo_id, sha, .. } => {
             auto_merge_for_sha(core, *repo_id, sha).await?;
+            queue_for_sha(core, *repo_id, sha).await;
         }
         DomainEvent::ReviewSubmitted { pull_id, .. } => {
             core.try_auto_merge(IssueId(pull_id.0)).await.map(|_| ())?;
+            queue_for_pull(core, IssueId(pull_id.0)).await;
         }
         _ => {}
     }
@@ -234,7 +252,40 @@ async fn base_moved(core: &Core, repo: RepoId, branch: &str, _before: &str, afte
             let _ = core.try_auto_merge(issue.id).await;
         }
     }
+    // What merged moves the next queued pull request up.
+    if core.queue_advance(repo, branch).await.is_err() {
+        tracing::debug!("merge queue could not advance after a push");
+    }
     Ok(())
+}
+
+/// Moves the queue on when a check or status arrived for the head it waits on.
+async fn queue_for_sha(core: &Core, repo: RepoId, sha: &str) {
+    let lines: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT q.base_ref FROM merge_queue_entries q WHERE q.repo_id = $1 AND q.head_sha = $2")
+            .bind(repo.0)
+            .bind(sha)
+            .fetch_all(core.db())
+            .await
+            .unwrap_or_default();
+    for base in lines {
+        if let Err(e) = core.queue_advance(repo, &base).await {
+            tracing::warn!(error = %e, "merge queue could not advance");
+        }
+    }
+}
+
+async fn queue_for_pull(core: &Core, pull: IssueId) {
+    let line: Option<(i64, String)> = sqlx::query_as("SELECT repo_id, base_ref FROM merge_queue_entries WHERE issue_id = $1")
+        .bind(pull.0)
+        .fetch_optional(core.db())
+        .await
+        .unwrap_or(None);
+    if let Some((repo, base)) = line
+        && let Err(e) = core.queue_advance(RepoId(repo), &base).await
+    {
+        tracing::warn!(error = %e, "merge queue could not advance");
+    }
 }
 
 /// True when every commit of the pull request is already on the base now.

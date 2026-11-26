@@ -1,0 +1,87 @@
+{% extends "repo/layout.html" %}
+{% import "components.html" as ui %}
+{% block repo_body %}
+<div class="tabs">
+  {% for t in tabs %}<a class="tab{% if t.current %} current{% endif %}" href="{{ t.href }}">{{ t.name }}</a>{% endfor %}
+</div>
+<h2 class="page-h">Environment {{ env }}</h2>
+{% if !error.is_empty() %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="card pad stack">
+  <h3>Deployment rules</h3>
+  <form method="post" action="{{ action }}" class="stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="kind" value="rules">
+    <div class="field">
+      <label for="wait-minutes">Wait</label>
+      <input id="wait-minutes" name="wait_minutes" type="number" min="0" max="43200" value="{{ wait_minutes }}">
+      <p class="hint">Minutes a job waits after it reaches this environment, before it can start.</p>
+    </div>
+    <div class="field">
+      <label for="env-branches">Branches</label>
+      <textarea id="env-branches" name="branches" rows="4" spellcheck="false">{{ branches }}</textarea>
+      <p class="hint">Only runs of these branches and tags may deploy. Leave empty to allow any. A pull request from a fork never matches.</p>
+    </div>
+    <fieldset class="field">
+      <legend>Required reviewers</legend>
+      {% for o in candidates %}
+      <label class="check"><input type="checkbox" name="reviewer" value="{{ o.id }}"{% if o.checked %} checked{% endif %}> {{ o.login }}</label>
+      {% endfor %}
+      <p class="hint">Up to 6 people with write access. One of them has to approve each deployment. Leave all unticked for no review.</p>
+    </fieldset>
+    <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+  </form>
+</section>
+
+<section class="card pad stack">
+  <h3>Environment secrets</h3>
+  <p class="hint">Only jobs in this environment can read these, and only after its reviewers and timer allow it. A pull request from a fork never gets them.</p>
+  <form method="post" action="{{ action }}" class="stack">
+    {% call ui::csrf_field(c.csrf) %}
+    <input type="hidden" name="kind" value="secret">
+    <div class="grid-2">
+      <div class="field">
+        <label for="secret-name">Name</label>
+        <input id="secret-name" name="name" type="text" placeholder="DEPLOY_KEY" autocapitalize="characters" spellcheck="false" required>
+        <p class="hint">Upper case letters, digits and underscores. The name is saved in upper case.</p>
+      </div>
+      <div class="field">
+        <label for="secret-value">Value</label>
+        <input id="secret-value" name="value" type="password" autocomplete="new-password" required>
+        <p class="hint">Copy the value from where it came from. You will not see it again here.</p>
+      </div>
+    </div>
+    <div class="row"><button class="btn btn-primary" type="submit">Save secret</button></div>
+  </form>
+</section>
+
+{% if secrets.is_empty() %}
+{% call ui::empty("No environment secrets", "A secret here reaches only the jobs that deploy to this environment.") %}
+{% else %}
+<table class="data-table card">
+  <thead><tr><th>Name</th><th>Updated</th><th></th></tr></thead>
+  <tbody>
+    {% for s in secrets %}
+    <tr>
+      <td data-label="Name" class="mono">{{ s.name }}</td>
+      <td data-label="Updated">{% call ui::time(s.when) %}</td>
+      <td data-label="">
+        <form method="post" action="{{ s.delete_action }}" class="inline" data-confirm="Delete the secret {{ s.name }}? Jobs in this environment that use it stop working.">
+          {% call ui::csrf_field(c.csrf) %}
+          <button class="btn small danger" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<section class="card pad stack">
+  <h3>Delete this environment</h3>
+  <form method="post" action="{{ delete_action }}" class="stack" data-confirm="Delete the environment {{ env }}? Its rules and its secrets go with it.">
+    {% call ui::csrf_field(c.csrf) %}
+    <div class="row"><button class="btn danger" type="submit">Delete this environment</button></div>
+  </form>
+</section>
+{% endblock %}

@@ -29,6 +29,7 @@ pub mod rewrite;
 pub mod schedule;
 pub mod trigger;
 pub mod uses;
+mod yaml_guard;
 
 pub use diag::Diagnostic;
 pub use model::*;

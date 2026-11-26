@@ -2,8 +2,8 @@
 
 use crate::assets;
 use crate::views::{
-    self, actions, admin, apps, auth, forks, issues, pages, people, pulls, releases, repo, repo_settings as rs, settings, visibility,
-    workspace as ws,
+    self, actions, admin, apps, auth, environments, forks, issues, packages, pages, people, pulls, releases, repo, repo_settings as rs,
+    settings, visibility, workspace as ws,
 };
 use axum::Router;
 use axum::handler::Handler;
@@ -205,21 +205,31 @@ pub fn build_for(mcp: bool) -> Registry {
         .post("/{owner}/{repo}/actions/runs/{run}/cancel", actions::run_cancel)
         .post("/{owner}/{repo}/actions/runs/{run}/approve", actions::run_approve)
         .post("/{owner}/{repo}/actions/runs/{run}/rerun", actions::run_rerun)
+        .post("/{owner}/{repo}/actions/runs/{run}/jobs/{job}/review", environments::deployment_review)
         .get("/{owner}/{repo}/actions/runs/{run}/artifacts/{id}", actions::artifact_download)
         .get("/{owner}/{repo}/actions/workflows/{workflow}/badge.svg", actions::workflow_badge)
         .form("/{owner}/{repo}/settings/secrets", actions::secrets_get, actions::secrets_post)
         .post("/{owner}/{repo}/settings/secrets/{name}/delete", actions::secret_delete)
         .post("/{owner}/{repo}/settings/variables/{name}/delete", actions::variable_delete)
+        .form("/{owner}/{repo}/settings/environments", environments::environments_get, environments::environments_post)
+        .form("/{owner}/{repo}/settings/environments/{env}", environments::environment_get, environments::environment_post)
+        .post("/{owner}/{repo}/settings/environments/{env}/delete", environments::environment_delete)
+        .post("/{owner}/{repo}/settings/environments/{env}/secrets/{name}/delete", environments::environment_secret_delete)
         .get("/{owner}/{repo}/settings/runners", actions::runners_get)
         .get("/{owner}/{repo}/releases", releases::list)
         .get("/{owner}/{repo}/releases/tag/{tag}", releases::show)
         .get("/{owner}/{repo}/releases/download/{tag}/{name}", releases::download)
         .form("/{owner}/{repo}/releases/new", releases::new_get, releases::new_post)
         .post("/{owner}/{repo}/releases/{id}/delete", releases::delete)
+        .get("/packages", packages::index)
+        .get("/packages/{owner}", packages::owner)
+        .form("/packages/{owner}/{kind}/{*name}", packages::show, packages::act)
+        .get("/{owner}/{repo}/packages", packages::repo_list)
         .form("/{owner}/{repo}/settings", rs::general_get, rs::general_post)
         .get("/{owner}/{repo}/settings/visibility", visibility::visibility_get)
         .post("/{owner}/{repo}/settings/visibility", visibility::visibility_post)
         .post("/{owner}/{repo}/settings/contributions", visibility::contributions_post)
+        .post("/{owner}/{repo}/settings/merge-queue", rs::merge_queue_post)
         .post("/{owner}/{repo}/settings/archive", rs::archive_post)
         .post("/{owner}/{repo}/settings/rename", rs::rename_post)
         .post("/{owner}/{repo}/settings/transfer", rs::transfer_post)
@@ -248,6 +258,8 @@ pub fn build_for(mcp: bool) -> Registry {
         .post("/{owner}/{repo}/pulls/{number}/edit", pulls::edit_post)
         .post("/{owner}/{repo}/pulls/{number}/labels", pulls::labels_post)
         .post("/{owner}/{repo}/pulls/{number}/merge", pulls::merge_post)
+        .post("/{owner}/{repo}/pulls/{number}/queue/add", pulls::queue_add)
+        .post("/{owner}/{repo}/pulls/{number}/queue/remove", pulls::queue_remove)
         .post("/{owner}/{repo}/pulls/{number}/delete-branch", pulls::delete_branch_post)
         .post("/{owner}/{repo}/pulls/{number}/reviewers", pulls::reviewers_post)
         .post("/{owner}/{repo}/pulls/{number}/suggestion", pulls::suggestion_post)
