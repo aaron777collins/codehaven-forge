@@ -242,6 +242,7 @@ async fn a_token_downloads_files_from_the_web_links_and_nothing_else(pool: PgPoo
         draft: false,
         prerelease: false,
         generate_notes: false,
+        make_latest: Default::default(),
     };
     let rel = h.state.releases.create(&a, repo.id, draft, &ClientInfo::local()).await.unwrap().release.id;
     let body: futures::stream::BoxStream<'static, std::io::Result<bytes::Bytes>> =

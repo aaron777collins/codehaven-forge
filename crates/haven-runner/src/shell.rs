@@ -52,9 +52,21 @@ impl ShellPlan {
     }
 }
 
+/// Whether a POSIX shell passes the variable on to what it runs: letters, digits and `_`, not
+/// starting with a digit. `sh` on Debian (dash) throws every other name away.
+pub fn shell_safe_name(name: &str) -> bool {
+    let mut c = name.chars();
+    c.next().is_some_and(|f| f.is_ascii_alphabetic() || f == '_') && c.all(|x| x.is_ascii_alphanumeric() || x == '_')
+}
+
 /// Wraps a step command so its process id lands in `pidfile` and then becomes the step itself.
 /// A timeout or cancel reads the file and kills the step's whole process tree.
-pub fn wrap_with_pidfile(pidfile: &str, argv: &[String]) -> Vec<String> {
+///
+/// The wrapper is `sh`, and `sh` (dash, on Debian) drops every environment variable whose name is not
+/// a shell identifier. Actions read their inputs as `INPUT_NODE-VERSION` (hyphen kept, as GitHub does),
+/// so such variables are taken out of `env` and set by `env NAME=value` after the wrapper instead, as
+/// plain arguments (no shell reads them). Whatever is left in `env` goes through the shell as before.
+pub fn wrap_with_pidfile(pidfile: &str, argv: &[String], env: &mut std::collections::BTreeMap<String, String>) -> Vec<String> {
     let mut v = vec![
         "/bin/sh".to_string(),
         "-c".to_string(),
@@ -62,6 +74,17 @@ pub fn wrap_with_pidfile(pidfile: &str, argv: &[String]) -> Vec<String> {
         "haven-step".to_string(),
         pidfile.to_string(),
     ];
+    // A name `env` could take for an option or an assignment is left alone (and dropped by the shell, as it was).
+    let odd: Vec<String> =
+        env.keys().filter(|k| !shell_safe_name(k) && !k.is_empty() && !k.contains('=') && !k.starts_with('-')).cloned().collect();
+    if !odd.is_empty() {
+        v.push("env".to_string());
+        for k in odd {
+            if let Some(val) = env.remove(&k) {
+                v.push(format!("{k}={val}"));
+            }
+        }
+    }
     v.extend(argv.iter().cloned());
     v
 }
@@ -106,6 +129,40 @@ pub fn kill_tree_argv(pidfile: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    /// An input with a hyphen in its name (`INPUT_NODE-VERSION`) must reach the process a step
+    /// starts, through the `sh` wrapper (ch-ctk.9: setup-node and setup-python found no version).
+    #[test]
+    fn a_variable_with_a_hyphen_survives_the_shell_wrapper() {
+        let mut env: BTreeMap<String, String> = BTreeMap::from([
+            ("INPUT_NODE-VERSION".to_string(), "22 with spaces; and $weird 'quotes'".to_string()),
+            ("PLAIN_VAR".to_string(), "plain".to_string()),
+            ("PATH".to_string(), std::env::var("PATH").unwrap_or_default()),
+        ]);
+        let pid = std::env::temp_dir().join(format!("haven-pid-{}", std::process::id()));
+        let argv = super::wrap_with_pidfile(&pid.to_string_lossy(), &["printenv".to_string(), "INPUT_NODE-VERSION".to_string()], &mut env);
+        assert!(!env.contains_key("INPUT_NODE-VERSION"), "it travels as an argument, not through the shell");
+        assert!(env.contains_key("PLAIN_VAR"));
+        let out = std::process::Command::new(&argv[0]).args(&argv[1..]).env_clear().envs(&env).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), "22 with spaces; and $weird 'quotes'");
+        let _ = std::fs::remove_file(&pid);
+    }
+
+    #[test]
+    fn only_names_a_shell_would_drop_are_moved() {
+        assert!(super::shell_safe_name("INPUT_X") && super::shell_safe_name("_a1"));
+        assert!(
+            !super::shell_safe_name("INPUT_X-Y")
+                && !super::shell_safe_name("1A")
+                && !super::shell_safe_name("")
+                && !super::shell_safe_name("A.B")
+        );
+        let mut env: BTreeMap<String, String> = BTreeMap::from([("-x".to_string(), "1".to_string()), ("A=B".to_string(), "2".to_string())]);
+        let argv = super::wrap_with_pidfile("p", &["true".to_string()], &mut env);
+        assert_eq!(argv.last().map(String::as_str), Some("true"));
+        assert!(!argv.iter().any(|a| a == "env"), "an option-looking name is left alone");
+    }
 
     #[test]
     fn defaults() {
@@ -141,7 +198,7 @@ mod tests {
 
     #[test]
     fn pidfile_wrapper() {
-        let w = wrap_with_pidfile("/p/1.pid", &["bash".into(), "/s.sh".into()]);
+        let w = wrap_with_pidfile("/p/1.pid", &["bash".into(), "/s.sh".into()], &mut BTreeMap::new());
         assert_eq!(&w[..2], ["/bin/sh", "-c"]);
         assert_eq!(&w[3..], ["haven-step", "/p/1.pid", "bash", "/s.sh"]);
     }

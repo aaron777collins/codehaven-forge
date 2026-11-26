@@ -275,7 +275,8 @@ fn structural_mistakes() {
     expect("on: push\njobs:\n  a:\n    runs-on: x\n    steps:\n      - name: nothing\n", 6, "either `run` or `uses`");
     expect("on: push\njobs:\n  a:\n    runs-on: x\n    steps:\n      - run: x\n        timeout-minutes: 0\n", 7, "above zero");
     expect("on: [push\njobs: {}\n", 2, "YAML");
-    expect("on: push\nx: &a 1\njobs: {}\n", 2, "anchors");
+    // Anchors and aliases are read (ch-ctk.7); a merge key is not.
+    expect("on: push\nx: &a {k: 1}\ny:\n  <<: *a\njobs: {}\n", 2, "merge keys");
 }
 
 #[test]

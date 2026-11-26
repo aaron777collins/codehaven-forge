@@ -69,6 +69,18 @@ pub enum AdminCommand {
     Unsuspend { username: String },
     /// List accounts, newest last.
     Users,
+    /// Start a workflow of a repository by hand, as its owner would from the Actions tab. The
+    /// workflow needs a `workflow_dispatch` trigger and the owner needs the right to run CI. For
+    /// checking that a runner still takes a job after a deploy.
+    RunCi {
+        /// The repository, as owner/name.
+        repo: String,
+        /// The workflow's file name (`ci.yml`) or name.
+        workflow: String,
+        /// The branch or tag to run it on. The repository's default branch when left out.
+        #[arg(long, default_value = "")]
+        branch: String,
+    },
     /// Make a private repository for an existing account and fill it from a bare git repository
     /// at a path inside this container. Nothing is overwritten and no password or token is
     /// needed; the import is audited. For putting an instance's own source into itself.

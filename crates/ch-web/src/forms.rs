@@ -75,6 +75,34 @@ impl FromRequest<AppState> for FormData {
     }
 }
 
+/// A file upload form (`multipart/form-data`). Like `FormData` it refuses the request unless the
+/// Origin is ours and the CSRF token is valid, and it does so before the body is read at all, so
+/// nothing of a refused upload is stored. A multipart body cannot be searched for a token without
+/// reading it, so the token comes in the `X-CSRF-Token` header or the `_csrf` query parameter.
+pub struct UploadForm(pub axum::extract::Multipart);
+
+impl FromRequest<AppState> for UploadForm {
+    type Rejection = WebError;
+
+    async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
+        let (mut parts, body) = req.into_parts();
+        let Ok(ctx) = <Ctx as axum::extract::FromRequestParts<AppState>>::from_request_parts(&mut parts, state).await;
+        if !ctx.origin_valid() {
+            return Err(WebError::Csrf);
+        }
+        let from_query = FormData::parse(parts.uri.query().unwrap_or("").as_bytes());
+        let supplied = parts.headers.get("x-csrf-token").and_then(|v| v.to_str().ok()).unwrap_or_else(|| from_query.get("_csrf"));
+        if !ctx.csrf_valid(supplied) {
+            return Err(WebError::Csrf);
+        }
+        let req = Request::from_parts(parts, body);
+        let multipart = <axum::extract::Multipart as FromRequest<AppState>>::from_request(req, state)
+            .await
+            .map_err(|_| WebError::bad("Send the files as a form (multipart/form-data)."))?;
+        Ok(UploadForm(multipart))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

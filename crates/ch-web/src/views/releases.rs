@@ -6,9 +6,8 @@ use crate::chrome::Chrome;
 use crate::ctx::Ctx;
 use crate::error::{WebError, WebResult};
 use crate::fmt::{self, TimeView};
-use crate::forms::FormData;
+use crate::forms::{FormData, UploadForm};
 use askama::Template;
-use axum::body::Body;
 use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::http::{HeaderValue, header};
@@ -38,10 +37,13 @@ pub struct ReleaseRow {
 
 /// An uploaded file on a release.
 pub struct AssetRow {
+    pub id: i64,
     pub name: String,
     pub size: String,
     pub downloads: String,
     pub href: String,
+    /// The SHA-256 of the file, as 64 hex characters.
+    pub sha256: String,
 }
 
 pub fn asset_href(base: &str, tag: &str, name: &str) -> String {
@@ -52,6 +54,8 @@ fn asset_rows(base: &str, tag: &str, assets: &[AssetInfo]) -> Vec<AssetRow> {
     assets
         .iter()
         .map(|a| AssetRow {
+            id: a.id,
+            sha256: a.sha256.clone(),
             name: a.name.clone(),
             size: ch_render::human_bytes(a.size.max(0) as u64),
             downloads: fmt::plural(a.download_count, "download", "downloads"),
@@ -174,6 +178,10 @@ struct ShowPage {
     row: ReleaseRow,
     can_write: bool,
     delete_action: String,
+    edit_href: String,
+    publish_action: String,
+    upload_action: String,
+    asset_delete_base: String,
 }
 
 pub async fn show(ctx: Ctx, Path((owner, name, tag)): Path<(String, String, String)>) -> WebResult<Response> {
@@ -188,29 +196,41 @@ pub async fn show(ctx: Ctx, Path((owner, name, tag)): Path<(String, String, Stri
     }
     let r = row(&rc, &release, &assets);
     let c = rc.chrome(&ctx, &r.title, "releases").await;
-    ctx.page(&ShowPage { c, row: r, can_write, delete_action: format!("{}/releases/{}/delete", rc.base(), release.id.0) })
+    let at = format!("{}/releases/{}", rc.base(), release.id.0);
+    ctx.page(&ShowPage {
+        c,
+        row: r,
+        can_write,
+        delete_action: format!("{at}/delete"),
+        edit_href: format!("{at}/edit"),
+        publish_action: format!("{at}/publish"),
+        // The token rides in the query because a multipart body is not read before the file is stored.
+        upload_action: format!("{at}/assets?_csrf={}", fmt::enc(&ctx.csrf_token())),
+        asset_delete_base: format!("{at}/assets"),
+    })
 }
 
 // ------------------------------------------------------------------ a download
 
 /// `/{owner}/{repo}/releases/download/{tag}/{name}`: the link the API gives for an uploaded
 /// file. It needs the same read access as the release, counts the download, and is always sent
-/// as an attachment so a browser never renders an uploaded page.
-pub async fn download(ctx: Ctx, Path((owner, name, tag, file)): Path<(String, String, String, String)>) -> WebResult<Response> {
+/// as an attachment so a browser never renders an uploaded page. A single `Range` and `HEAD`
+/// are answered, so a tool can resume and a client can read the size first.
+pub async fn download(
+    ctx: Ctx,
+    Path((owner, name, tag, file)): Path<(String, String, String, String)>,
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
+) -> WebResult<Response> {
+    use ch_core::range::{Serve, file_response};
     let rc = RepoCtx::load(&ctx, &owner, &name).await?;
-    let (info, stream) = ctx.state.releases.open_asset(&ctx.actor, rc.id(), &tag, &file).await?;
-    let mut r = Response::new(Body::from_stream(stream));
-    let h = r.headers_mut();
-    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
-    if let Ok(v) = HeaderValue::from_str(&info.size.to_string()) {
-        h.insert(header::CONTENT_LENGTH, v);
-    }
-    if let Ok(v) = HeaderValue::from_str(&ch_core::disposition::attachment(&info.name)) {
-        h.insert(header::CONTENT_DISPOSITION, v);
-    }
-    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
-    Ok(r)
+    let view = ctx.state.releases.view_by_tag(&ctx.actor, rc.id(), &tag).await?;
+    let info = view.assets.iter().find(|a| a.name == file).cloned().ok_or(ch_core::Error::NotFound)?;
+    let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+    let size = u64::try_from(info.size).unwrap_or(0);
+    let serve = Serve::plan(range, size, method == axum::http::Method::HEAD);
+    let stream = if serve.needs_body() { Some(ctx.state.releases.open_asset(&ctx.actor, rc.id(), &tag, &file).await?.1) } else { None };
+    Ok(file_response(&info.name, size, &info.sha256, serve, stream))
 }
 
 // ------------------------------------------------------------------ new release
@@ -340,11 +360,257 @@ pub async fn delete(ctx: Ctx, Path((owner, name, id)): Path<(String, String, i64
     Ok(ctx.redirect_flash(&format!("{}/releases", rc.base()), "ok", "Deleted the release."))
 }
 
+// ------------------------------------------------------------------ latest
+
+fn found(to: &str) -> Response {
+    use axum::response::IntoResponse;
+    let mut r = StatusCode::FOUND.into_response();
+    if let Ok(v) = HeaderValue::from_str(to) {
+        r.headers_mut().insert(header::LOCATION, v);
+    }
+    r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    r
+}
+
+/// `/{owner}/{repo}/releases/latest`: the page of the latest release. Nothing to show is a 404,
+/// the same as a repository that is not there.
+pub async fn latest(ctx: Ctx, Path((owner, name)): Path<(String, String)>) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    let r = ctx.state.releases.latest_view(&ctx.actor, rc.id()).await?;
+    Ok(found(&tag_href(&rc.base(), &r.release.tag_name)))
+}
+
+/// `/{owner}/{repo}/releases/latest/download/{name}`: the file of that name on the latest
+/// release, the stable link a README can point at.
+pub async fn latest_download(ctx: Ctx, Path((owner, name, file)): Path<(String, String, String)>) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    let r = ctx.state.releases.latest_view(&ctx.actor, rc.id()).await?;
+    if !r.assets.iter().any(|a| a.name == file) {
+        return Err(WebError::not_found());
+    }
+    Ok(found(&asset_href(&rc.base(), &r.release.tag_name, &file)))
+}
+
+// ------------------------------------------------------------------ edit and publish
+
+pub struct EditForm {
+    pub title: String,
+    pub notes: String,
+    pub prerelease: bool,
+    pub make_latest: bool,
+}
+
+#[derive(Template)]
+#[template(path = "releases/edit.html")]
+struct EditPage {
+    c: Chrome,
+    owner: String,
+    repo: String,
+    action: String,
+    cancel_href: String,
+    tag: String,
+    draft: bool,
+    input: EditForm,
+    errors: FieldErrors,
+}
+
+async fn edit_page(
+    ctx: &Ctx,
+    rc: &RepoCtx,
+    v: &ReleaseView,
+    input: EditForm,
+    errors: FieldErrors,
+    status: StatusCode,
+) -> WebResult<Response> {
+    let c = rc.chrome(ctx, "Edit release", "releases").await;
+    ctx.page_status(
+        status,
+        &EditPage {
+            c,
+            owner: rc.repo.owner_name.clone(),
+            repo: rc.repo.name.clone(),
+            action: format!("{}/releases/{}/edit", rc.base(), v.release.id.0),
+            cancel_href: tag_href(&rc.base(), &v.release.tag_name),
+            tag: v.release.tag_name.clone(),
+            draft: v.release.draft,
+            input,
+            errors,
+        },
+    )
+}
+
+pub async fn edit_get(ctx: Ctx, Path((owner, name, id)): Path<(String, String, i64)>) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Write)?;
+    let v = ctx.state.releases.view(&ctx.actor, rc.id(), ReleaseId(id)).await?;
+    let input =
+        EditForm { title: v.release.name.clone(), notes: v.release.body.clone(), prerelease: v.release.prerelease, make_latest: false };
+    edit_page(&ctx, &rc, &v, input, FieldErrors::default(), StatusCode::OK).await
+}
+
+pub async fn edit_post(ctx: Ctx, Path((owner, name, id)): Path<(String, String, i64)>, form: FormData) -> WebResult<Response> {
+    use ch_core::collab::{MakeLatest, ReleaseEdit};
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Write)?;
+    let v = ctx.state.releases.view(&ctx.actor, rc.id(), ReleaseId(id)).await?;
+    let input = EditForm {
+        title: form.get("title").trim().to_string(),
+        notes: form.get("notes").to_string(),
+        prerelease: form.flag("prerelease"),
+        make_latest: form.flag("make_latest"),
+    };
+    let edit = ReleaseEdit {
+        name: Some(input.title.clone()),
+        body: Some(input.notes.clone()),
+        prerelease: Some(input.prerelease),
+        make_latest: input.make_latest.then_some(MakeLatest::True),
+        ..Default::default()
+    };
+    match ctx.state.releases.update(&ctx.actor, rc.id(), ReleaseId(id), edit, &ctx.client).await {
+        Ok(r) => Ok(ctx.redirect_flash(&tag_href(&rc.base(), &r.release.tag_name), "ok", "Saved the release.")),
+        Err(e) => match FieldErrors::from_error(&e) {
+            Some(errors) => edit_page(&ctx, &rc, &v, input, errors, StatusCode::UNPROCESSABLE_ENTITY).await,
+            None => Err(e.into()),
+        },
+    }
+}
+
+/// Publishes a draft: it gets its tag, is announced, and becomes the latest release if it is not a
+/// pre-release.
+pub async fn publish(ctx: Ctx, Path((owner, name, id)): Path<(String, String, i64)>, _form: FormData) -> WebResult<Response> {
+    use ch_core::collab::ReleaseEdit;
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Write)?;
+    let edit = ReleaseEdit { draft: Some(false), ..Default::default() };
+    match ctx.state.releases.update(&ctx.actor, rc.id(), ReleaseId(id), edit, &ctx.client).await {
+        Ok(r) => Ok(ctx.redirect_flash(&tag_href(&rc.base(), &r.release.tag_name), "ok", "Published the release.")),
+        Err(e) => match FieldErrors::from_error(&e) {
+            Some(errors) => {
+                let back =
+                    ctx.state.releases.view(&ctx.actor, rc.id(), ReleaseId(id)).await.map(|v| tag_href(&rc.base(), &v.release.tag_name));
+                let msg = errors.general_or_first();
+                Ok(ctx.redirect_flash(&back.unwrap_or_else(|_| format!("{}/releases", rc.base())), "error", &msg))
+            }
+            None => Err(e.into()),
+        },
+    }
+}
+
+// ------------------------------------------------------------------ files
+
+/// The most one upload form may carry: a file at its largest, and a little for the form around it.
+pub const UPLOAD_LIMIT: usize = 2 * 1024 * 1024 * 1024 + 1024 * 1024;
+
+/// The last part of a file name a browser sent, which may still carry a path on an old browser.
+fn plain_file_name(sent: &str) -> String {
+    sent.rsplit(['/', '\\']).next().unwrap_or("").trim().to_string()
+}
+
+/// `POST /{owner}/{repo}/releases/{id}/assets`: adds the files of a multipart form. Each file is
+/// streamed into storage as it arrives, never held in memory. The CSRF token was checked by the
+/// guard, from the query, before this body was read.
+pub async fn upload(
+    ctx: Ctx,
+    Path((owner, name, id)): Path<(String, String, i64)>,
+    UploadForm(mut parts): UploadForm,
+) -> WebResult<Response> {
+    use futures::StreamExt;
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Write)?;
+    let v = ctx.state.releases.view(&ctx.actor, rc.id(), ReleaseId(id)).await?;
+    let back = tag_href(&rc.base(), &v.release.tag_name);
+    let idle = std::time::Duration::from_secs(ctx.state.config.http.upload_idle_secs.max(1));
+    let mut uploaded = 0usize;
+    let mut problem: Option<String> = None;
+    loop {
+        let mut field = match tokio::time::timeout(idle, parts.next_field()).await {
+            Ok(Ok(Some(f))) => f,
+            Ok(Ok(None)) => break,
+            Ok(Err(_)) | Err(_) => {
+                problem = Some("The upload was interrupted or is not a file form.".into());
+                break;
+            }
+        };
+        let file = plain_file_name(field.file_name().unwrap_or(""));
+        if file.is_empty() {
+            continue;
+        }
+        let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
+        // The file is fed to storage through a channel: the field borrows the form, so it cannot
+        // be handed over as a stream of its own.
+        let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<bytes::Bytes>>(4);
+        let body = futures::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|i| (i, rx)) }).boxed();
+        let store = ctx.state.releases.upload_asset(&ctx.actor, rc.id(), ReleaseId(id), &file, None, &content_type, body, &ctx.client);
+        let feed = async {
+            loop {
+                match tokio::time::timeout(idle, field.chunk()).await {
+                    Ok(Ok(Some(chunk))) => {
+                        if tx.send(Ok(chunk)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(Ok(None)) => break,
+                    Ok(Err(e)) => {
+                        let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
+                        break;
+                    }
+                    Err(_) => {
+                        let _ = tx.send(Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "the upload stopped sending"))).await;
+                        break;
+                    }
+                }
+            }
+            drop(tx);
+        };
+        let (result, ()) = tokio::join!(store, feed);
+        match result {
+            Ok(_) => uploaded += 1,
+            Err(e) => {
+                problem = Some(match FieldErrors::from_error(&e) {
+                    Some(errs) => format!("{file}: {}", errs.general_or_first()),
+                    None => format!("{file}: {}", e.public_message()),
+                });
+                break;
+            }
+        }
+    }
+    let (kind, text) = match (&problem, uploaded) {
+        (Some(p), 0) => ("error", p.clone()),
+        (Some(p), n) => ("error", format!("Uploaded {n}, then stopped. {p}")),
+        (None, 0) => ("error", "Choose a file to upload.".to_string()),
+        (None, 1) => ("ok", "Uploaded 1 file.".to_string()),
+        (None, n) => ("ok", format!("Uploaded {n} files.")),
+    };
+    Ok(ctx.redirect_flash(&back, kind, &text))
+}
+
+pub async fn asset_delete(
+    ctx: Ctx,
+    Path((owner, name, id, asset)): Path<(String, String, i64, i64)>,
+    _form: FormData,
+) -> WebResult<Response> {
+    let rc = RepoCtx::load(&ctx, &owner, &name).await?;
+    rc.require_writable(Permission::Write)?;
+    let v = ctx.state.releases.view(&ctx.actor, rc.id(), ReleaseId(id)).await?;
+    // The file must belong to the release in the address.
+    if !v.assets.iter().any(|a| a.id == asset) {
+        return Err(WebError::not_found());
+    }
+    ctx.state.releases.delete_asset(&ctx.actor, rc.id(), asset, &ctx.client).await?;
+    Ok(ctx.redirect_flash(&tag_href(&rc.base(), &v.release.tag_name), "ok", "Deleted the file."))
+}
+
 // ROUTES:
 // GET /{owner}/{repo}/releases -> list
 // GET /{owner}/{repo}/releases/tag/{tag} -> show
 // GET+POST /{owner}/{repo}/releases/new -> new_get, new_post
 // POST /{owner}/{repo}/releases/{id}/delete -> delete
+// GET /{owner}/{repo}/releases/latest -> latest
+// GET /{owner}/{repo}/releases/latest/download/{name} -> latest_download
+// GET+POST /{owner}/{repo}/releases/{id}/edit -> edit_get, edit_post
+// POST /{owner}/{repo}/releases/{id}/publish -> publish
+// POST /{owner}/{repo}/releases/{id}/assets -> upload
+// POST /{owner}/{repo}/releases/{id}/assets/{asset}/delete -> asset_delete
 
 #[cfg(test)]
 mod tests {

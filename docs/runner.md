@@ -119,6 +119,15 @@ Any other `uses:` is fetched (ch-ctk.4, ch-ctk.5):
   Any other looks exactly like a repository that does not exist.
 - The runner downloads the archive with the job token, checks its sha256, unpacks regular files
   and folders only under `_runner/actions/<archive>` and reads `action.yml`.
+- An input with a hyphen in its name reaches the action as `INPUT_NODE-VERSION`, as on GitHub. `sh` on Debian drops
+  every environment variable that is not a shell identifier, and the wrapper that records a step's process id is
+  `sh`, so such variables are set by `env NAME=value` after it, as plain arguments (ch-ctk.9: before this,
+  `setup-node` and `setup-python` never saw their `node-version` and `python-version`).
+- The job image says `Ubuntu 24.04` in `/etc/lsb-release` (and sets `ImageOS=ubuntu24`), because the toolkit
+  chooses prebuilt tools by that file and `setup-python` and the like only publish `ubuntu-24.04` builds, which
+  is also what the `ubuntu-latest` and `ubuntu-24.04` labels promise. The userland is Debian trixie (a newer glibc
+  than Ubuntu 24.04's, so those builds run) and `/etc/os-release` says so. After changing the image, load it into
+  the runner's daemon again (`deploy/prod/ci-up.sh`).
 - JavaScript actions (`node12` to `node24`) run with the job image's `node`: inputs as
   `INPUT_*`, `GITHUB_ACTION_PATH`, `GITHUB_STATE`, a `pre` script before the main one, and a
   `post` script as a step of its own after the workflow's steps, last first, when its

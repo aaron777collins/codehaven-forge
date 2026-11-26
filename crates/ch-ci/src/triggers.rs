@@ -204,8 +204,26 @@ async fn record_problem(ctx: &Ctx, t: &Trigger, info: &RepoCi, d: &Discovered, r
     Ok(Some(RunId(id)))
 }
 
-fn repo_json(info: &RepoCi) -> Json {
-    json!({ "full_name": info.full_name(), "name": info.name, "owner": { "login": info.owner_name }, "default_branch": info.default_branch })
+/// The repository object of an event. Falls back to the few fields every event always had when the
+/// full object cannot be read, so a run never fails to start over a payload.
+pub(crate) async fn repo_json(ctx: &Ctx, info: &RepoCi) -> Json {
+    match crate::event_json::repository_object(ctx, RepoId(info.id)).await {
+        Ok(j) => j,
+        Err(_) => {
+            json!({ "full_name": info.full_name(), "name": info.name, "owner": { "login": info.owner_name }, "default_branch": info.default_branch })
+        }
+    }
+}
+
+/// The sender of an event: the whole account object, or just the login when the account is gone.
+pub(crate) async fn sender_json(ctx: &Ctx, who: Option<UserId>, login: &str) -> Json {
+    if let Some(u) = who
+        && let Ok(j) = crate::event_json::user_by_id(ctx, u).await
+        && j.get("login").is_some()
+    {
+        return j;
+    }
+    json!({ "login": login })
 }
 
 fn event_repo(ev: &DomainEvent) -> Option<RepoId> {
@@ -287,9 +305,9 @@ pub async fn handle_event(ctx: &Ctx, ev: &StoredEvent) -> Result<Vec<RunId>> {
             };
             let payload = json!({
                 "ref": git_ref, "before": before, "after": after, "created": zero_sha(before), "deleted": false, "forced": forced,
-                "repository": repo_json(&info),
+                "repository": repo_json(ctx, &info).await,
                 "pusher": { "name": login },
-                "sender": { "login": login },
+                "sender": sender_json(ctx, *pusher, &login).await,
                 "head_commit": head.as_ref().map(|c| json!({ "id": c.id, "message": c.message, "author": { "name": c.author_name, "email": c.author_email } })),
                 // GitHub-shaped (ch-ctk.7): the compare link, and the head commit as the one
                 // commit listed (a push of several lists only its tip here).
@@ -339,7 +357,7 @@ pub async fn handle_event(ctx: &Ctx, ev: &StoredEvent) -> Result<Vec<RunId>> {
                 HeadOrigin { sha: Some(head_sha.clone()), known: *origin_known, pusher: *pusher, app: *app, built_on: built_on.clone() };
             pull_request(ctx, *repo_id, pull_id.0, *number, "synchronize", trigger_id, origin).await
         }
-        DomainEvent::ReleasePublished { repo_id, tag, actor, .. } => {
+        DomainEvent::ReleasePublished { repo_id, release_id, tag, actor } => {
             let info = repo_ci(ctx, *repo_id).await?;
             if info.availability() != CiAvailability::Enabled {
                 return Ok(Vec::new());
@@ -359,7 +377,15 @@ pub async fn handle_event(ctx: &Ctx, ev: &StoredEvent) -> Result<Vec<RunId>> {
                 info: ei,
                 actor: Some((*actor, login.clone())),
                 title: format!("Release {tag}"),
-                payload: json!({ "action": "published", "release": { "tag_name": tag }, "repository": repo_json(&info), "sender": { "login": login } }),
+                payload: json!({
+                    "action": "published",
+                    "release": match crate::event_json::release_object(ctx, *repo_id, &info.full_name(), *release_id).await {
+                        Ok(r) => r,
+                        Err(_) => json!({ "tag_name": tag }),
+                    },
+                    "repository": repo_json(ctx, &info).await,
+                    "sender": sender_json(ctx, Some(*actor), &login).await,
+                }),
                 inputs: Json::Null,
                 fork: false,
                 needs_approval: false,
@@ -579,15 +605,22 @@ async fn pull_request(
         Some(h) if h != repo.0 => repo_ci(ctx, RepoId(h)).await.map(|i| i.full_name()).unwrap_or_default(),
         _ => info.full_name(),
     };
+    // The full pull request object, and the few fields every event always had on top of it, so a
+    // payload read by something older keeps its shape.
+    let mut pull_object = crate::event_json::pull_object(ctx, repo, &info.full_name(), number).await.unwrap_or_else(|_| json!({}));
+    if let Some(o) = pull_object.as_object_mut() {
+        o.entry("number").or_insert(json!(number));
+        o.entry("title").or_insert(json!(title));
+        o.entry("state").or_insert(json!("open"));
+        o.entry("draft").or_insert(json!(draft));
+        o.entry("head").or_insert(json!({ "ref": head_branch, "sha": head_sha, "repo": { "full_name": head_repo_name } }));
+        o.entry("base").or_insert(json!({ "ref": base_branch, "sha": base_sha, "repo": { "full_name": info.full_name() } }));
+    }
     let payload = json!({
         "action": action, "number": number,
-        "pull_request": {
-            "number": number, "title": title, "state": "open", "draft": draft, "user": { "login": login },
-            "head": { "ref": head_branch, "sha": head_sha, "repo": { "full_name": head_repo_name } },
-            "base": { "ref": base_branch, "sha": base_sha, "repo": { "full_name": info.full_name() } },
-        },
-        "repository": repo_json(&info),
-        "sender": { "login": login },
+        "pull_request": pull_object,
+        "repository": repo_json(ctx, &info).await,
+        "sender": sender_json(ctx, Some(author_id), &login).await,
     });
     let t = Trigger {
         repo,

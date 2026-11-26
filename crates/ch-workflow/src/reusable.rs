@@ -27,7 +27,7 @@
 use crate::diag::Diagnostic;
 use crate::model::*;
 use crate::permissions::{Ceiling, effective};
-use crate::rewrite::{FragType, Rewrite, contexts_read, fragment, rewrite_condition, rewrite_text};
+use crate::rewrite::{FragType, Rewrite, contexts_read, fragment, needs_read, rewrite_condition, rewrite_text};
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -283,7 +283,8 @@ fn inline_one(
 
     let mut errs: Vec<Diagnostic> = Vec::new();
     let mut rw = Rewrite { inherit_secrets: matches!(call.secrets, CallSecrets::Inherit), ..Default::default() };
-    bind_inputs(caller, call, wc, &mut rw, &mut errs);
+    let mut extra_needs: BTreeSet<String> = BTreeSet::new();
+    bind_inputs(caller, call, wc, &mut rw, &mut extra_needs, &mut errs);
     bind_secrets(caller, call, wc, &mut rw, &mut errs);
     let k = caller.key.as_str();
     let entry_key = format!("{k}{SEP}entry");
@@ -342,6 +343,13 @@ fn inline_one(
         nj.key = new_key.clone();
         nj.needs = j.needs.iter().map(|n| rw.jobs.get(&n.to_ascii_lowercase()).cloned().unwrap_or_else(|| n.clone())).collect();
         nj.needs.push(entry_key.clone());
+        // What a `with:` value reads through `needs` is the caller's: wait for those jobs too, so
+        // their outputs are known when this job starts.
+        for n in &extra_needs {
+            if !nj.needs.contains(n) {
+                nj.needs.push(n.clone());
+            }
+        }
         // Behind the entry job, so a call the caller would have skipped runs nothing, not even a
         // job of the called workflow that says `if: always()`.
         let gate = format!("needs.{entry_key}.result == 'success'");
@@ -466,8 +474,9 @@ fn walk_strings(v: &mut Json, key: Option<&str>, f: &mut dyn FnMut(&str, bool) -
     }
 }
 
-/// The contexts a `with:` or `secrets:` value of a call may read.
-const CALL_CONTEXTS: &[&str] = &["github", "inputs", "vars"];
+/// The contexts a `with:` value of a call may read. `needs` is the caller's own: the jobs the calling
+/// job waits for (see `bind_inputs`). A `secrets:` value may not read `needs`.
+const CALL_CONTEXTS: &[&str] = &["github", "inputs", "vars", "needs"];
 
 fn check_contexts(caller: &Job, what: &str, frag: &str, allowed: &[&str], errs: &mut Vec<Diagnostic>) -> bool {
     let bad: Vec<String> = contexts_read(frag).into_iter().filter(|c| !allowed.contains(&c.as_str())).collect();
@@ -504,7 +513,41 @@ fn json_literal(v: &Json, ty: CallInputType) -> String {
     }
 }
 
-fn bind_inputs(caller: &Job, call: &Call, wc: &WorkflowCall, rw: &mut Rewrite, errs: &mut Vec<Diagnostic>) {
+/// A `with:` value may read the outputs and result of the jobs the calling job `needs`, as on
+/// GitHub. Those jobs are in the caller's own workflow, so the called jobs are made to wait for
+/// them as well (`extra_needs`), and read them by the caller's keys. A job the caller does not
+/// need is refused: it may not have finished.
+fn bind_needs(caller: &Job, what: &str, frag: &str, extra_needs: &mut BTreeSet<String>, errs: &mut Vec<Diagnostic>) -> bool {
+    let names = match needs_read(frag) {
+        Ok(n) => n,
+        Err(e) => {
+            errs.push(diag(caller, format!("{what}: {e}")));
+            return false;
+        }
+    };
+    let mut ok = true;
+    for n in names {
+        match caller.needs.iter().find(|c| c.eq_ignore_ascii_case(&n)) {
+            Some(key) => {
+                extra_needs.insert(key.clone());
+            }
+            None => {
+                errs.push(diag(caller, format!("{what} reads `needs.{n}`, but this job does not list `{n}` under `needs`")));
+                ok = false;
+            }
+        }
+    }
+    ok
+}
+
+fn bind_inputs(
+    caller: &Job,
+    call: &Call,
+    wc: &WorkflowCall,
+    rw: &mut Rewrite,
+    extra_needs: &mut BTreeSet<String>,
+    errs: &mut Vec<Diagnostic>,
+) {
     let declared: BTreeSet<&str> = wc.inputs.iter().map(|i| i.name.as_str()).collect();
     for name in call.with.keys() {
         if !declared.contains(name.as_str()) {
@@ -525,6 +568,9 @@ fn bind_inputs(caller: &Job, call: &Call, wc: &WorkflowCall, rw: &mut Rewrite, e
                         continue;
                     }
                     if !check_contexts(caller, &format!("`with.{}`", i.name), &f, CALL_CONTEXTS, errs) {
+                        continue;
+                    }
+                    if !bind_needs(caller, &format!("`with.{}`", i.name), &f, extra_needs, errs) {
                         continue;
                     }
                     f
@@ -726,6 +772,27 @@ jobs:
     }
 
     #[test]
+    fn a_with_value_may_read_what_the_calling_job_needs() {
+        let out = expand(
+            &caller("    with:\n      version: v${{ needs.prep.outputs.v }}\n      deploy: ${{ needs.prep.result == 'success' }}\n    secrets: inherit"),
+            &tree(),
+        )
+        .unwrap();
+        // The called jobs wait for the caller's `prep` as well, once, so its outputs are known.
+        for key in ["build__test", "build__pack", "build__ship"] {
+            let n = &job(&out, key).needs;
+            assert_eq!(n.iter().filter(|x| x.as_str() == "prep").count(), 1, "{key}: {n:?}");
+        }
+        let StepKind::Run { run, .. } = &job(&out, "build__test").steps[0].kind else { panic!() };
+        assert_eq!(run, "echo ${{ format('v{0}', needs.prep.outputs.v) }} ${{ 2 }}");
+        // The entry job still stands for the caller's needs, and the exit job is unchanged.
+        assert_eq!(job(&out, "build__entry").needs, ["prep"]);
+        assert_eq!(job(&out, "build").call_role, Some(CallRole::Exit));
+        // The condition of `ship` reads the pasted `deploy` input.
+        assert!(job(&out, "build__ship").condition.as_deref().unwrap().contains("needs.prep.result == 'success'"));
+    }
+
+    #[test]
     fn what_a_call_does_not_pass_a_called_job_does_not_see() {
         let mut t = tree();
         // `inherit` passes every secret under its own name.
@@ -749,7 +816,11 @@ jobs:
             ("    with:\n      version: '1'\n      nope: 1", "is not an input"),
             ("    with:\n      version: '1'", "needs the secret `token`"),
             ("    with:\n      version: '1'\n      deploy: maybe\n    secrets: inherit", "expected true or false"),
-            ("    with:\n      version: ${{ needs.prep.outputs.v }}\n    secrets: inherit", "cannot use here"),
+            ("    with:\n      version: ${{ env.X }}\n    secrets: inherit", "cannot use here"),
+            ("    with:\n      version: ${{ matrix.x }}\n    secrets: inherit", "cannot use here"),
+            ("    with:\n      version: ${{ needs.nothere.outputs.v }}\n    secrets: inherit", "does not list `nothere` under `needs`"),
+            ("    with:\n      version: ${{ toJSON(needs) }}\n    secrets: inherit", "whole `needs` context"),
+            ("    with:\n      version: '1'\n    secrets:\n      token: ${{ needs.prep.outputs.t }}", "cannot use here"),
             ("    with:\n      version: ${{ secrets.X }}\n    secrets: inherit", "cannot use here"),
             ("    with:\n      version: '1'\n    secrets:\n      token: x\n      extra: y", "is not a secret"),
         ] {

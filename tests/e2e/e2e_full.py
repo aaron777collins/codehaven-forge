@@ -1957,6 +1957,490 @@ def step34():
     # A reference with the scheme, as the page used to print it, is not one docker parses.
     check(not _DOCKER_REF.match(PUBLIC + "/alice/img:latest"), "the grammar check accepts a reference with a scheme")
 
+# ------------------------------------------------------------------ C13: real, unmodified actions
+
+# Pinned to full commit SHAs, from the list in the Actions design (ch-ctk, section 4), each checked
+# to exist on github.com when this was written. No fork, no mirror: the server fetches them from
+# GitHub as it would for anyone.
+A_CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+A_SETUP_NODE = "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1"
+A_SETUP_PYTHON = "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0"
+A_CACHE = "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+A_UPLOAD = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+A_DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
+A_SCRIPT = "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+A_RELEASE = "softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3"
+A_DOCKER_LOGIN = "docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550"
+A_BUILDX = "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069"
+A_BUILD_PUSH = "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc"
+A_DEPLOY_PAGES = "actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346"
+
+C13_FILES = {
+    "marker.txt": "marker\n",
+    ".codehaven/workflows/checkout.yml": f"""name: conf-checkout
+on: {{push: {{branches: [main]}}}}
+jobs:
+  checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: {A_CHECKOUT}
+      - run: |
+          test -f marker.txt
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "checkout-head-ok"
+      - uses: {A_CHECKOUT}
+        with: {{fetch-depth: 0, path: full}}
+      - run: |
+          n=$(git -C full rev-list --count HEAD)
+          test "$n" -ge 2
+          echo "checkout-depth-ok $n"
+""",
+    ".codehaven/workflows/node.yml": f"""name: conf-node
+on: {{push: {{branches: [main]}}}}
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: {A_SETUP_NODE}
+        with: {{node-version: '22'}}
+      - run: node --version && echo "node-ok $(node --version)"
+""",
+    ".codehaven/workflows/python.yml": f"""name: conf-python
+on: {{push: {{branches: [main]}}}}
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: {A_SETUP_PYTHON}
+        with: {{python-version: '3.12'}}
+      - run: python --version && echo "python-ok $(python --version)"
+""",
+    ".codehaven/workflows/cache.yml": f"""name: conf-cache
+on: {{push: {{branches: [main]}}}}
+jobs:
+  cache:
+    runs-on: ubuntu-latest
+    steps:
+      - id: c
+        uses: {A_CACHE}
+        with:
+          path: cached
+          key: c13-cache-v1
+      - run: |
+          echo "cache-hit=[${{{{ steps.c.outputs.cache-hit }}}}]"
+          mkdir -p cached
+          test -f cached/stamp || date > cached/stamp
+          cat cached/stamp
+""",
+    ".codehaven/workflows/artifacts.yml": f"""name: conf-artifacts
+on: {{push: {{branches: [main]}}}}
+jobs:
+  up:
+    runs-on: ubuntu-latest
+    steps:
+      - run: mkdir -p out && echo "artifact-payload-13" > out/data.txt && seq 1 2000 > out/big.txt
+      - uses: {A_UPLOAD}
+        with: {{name: c13-data, path: out}}
+  down:
+    needs: up
+    runs-on: ubuntu-latest
+    steps:
+      - uses: {A_DOWNLOAD}
+        with: {{name: c13-data, path: got}}
+      - run: |
+          grep -q artifact-payload-13 got/data.txt
+          test "$(wc -l < got/big.txt)" = 2000
+          echo "artifacts-ok"
+""",
+    ".codehaven/workflows/script.yml": f"""name: conf-script
+on: {{push: {{branches: [main]}}}}
+permissions:
+  contents: read
+  issues: write
+jobs:
+  script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: {A_SCRIPT}
+        with:
+          script: |
+            const {{data}} = await github.rest.repos.get({{owner: context.repo.owner, repo: context.repo.repo}});
+            core.info('script-repo=' + data.full_name);
+            core.info('script-event=' + context.eventName);
+            core.info('script-payload-repo=' + context.payload.repository.full_name);
+            core.info('script-sender=' + context.payload.sender.login);
+            const issue = await github.rest.issues.create({{owner: context.repo.owner, repo: context.repo.repo, title: 'made by github-script', body: 'c13'}});
+            core.info('script-issue=' + issue.data.number);
+""",
+    ".codehaven/workflows/release.yml": f"""name: conf-release
+on: {{push: {{tags: ['v*']}}}}
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: {A_CHECKOUT}
+      - run: mkdir dist && echo hello > dist/app.txt && sha256sum dist/app.txt > dist/SHA256SUMS
+      - uses: {A_RELEASE}
+        with: {{files: 'dist/*', generate_release_notes: true}}
+""",
+    ".codehaven/workflows/reusable.yml": """name: conf-reusable
+on: {push: {branches: [main]}}
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      v: ${{ steps.s.outputs.v }}
+    steps:
+      - id: s
+        run: echo "v=from-prep" >> "$GITHUB_OUTPUT"
+  call:
+    needs: prep
+    uses: ./.codehaven/workflows/callee.yml
+    with:
+      tag: v-${{ needs.prep.outputs.v }}
+""",
+    ".codehaven/workflows/callee.yml": """name: conf-callee
+on:
+  workflow_call:
+    inputs:
+      tag: {type: string, required: true}
+jobs:
+  show:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "callee-got=${{ inputs.tag }}"
+""",
+    ".codehaven/workflows/anchors.yml": """name: conf-anchors
+on: {push: {branches: [main]}}
+env: &shared
+  SHARED: from-anchor
+jobs:
+  one:
+    runs-on: ubuntu-latest
+    env: *shared
+    steps:
+      - &say
+        run: echo "anchor-env=$SHARED"
+  two:
+    runs-on: ubuntu-latest
+    steps:
+      - *say
+""",
+    ".codehaven/workflows/dispatch.yml": """name: conf-dispatch
+on: workflow_dispatch
+jobs:
+  d:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          a=dispatch
+          echo "$a-start"
+          sleep 6
+          echo "$a-end"
+""",
+    ".codehaven/workflows/docker.yml": f"""name: conf-docker
+on: {{push: {{branches: [main]}}}}
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: {A_BUILDX}
+      - uses: {A_DOCKER_LOGIN}
+        with: {{registry: 'registry.invalid', username: x, password: y}}
+      - run: echo "docker-should-not-get-here"
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: {A_CHECKOUT}
+      - uses: {A_BUILD_PUSH}
+        with: {{context: ., push: false, tags: 'registry.invalid/c13/app:test'}}
+""",
+    "Dockerfile": "FROM scratch\nCOPY marker.txt /marker.txt\n",
+    ".codehaven/workflows/pages.yml": f"""name: conf-pages
+on: {{push: {{branches: [main]}}}}
+permissions:
+  pages: write
+  id-token: write
+jobs:
+  pages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: {A_DEPLOY_PAGES}
+      - run: echo "pages-should-not-get-here"
+""",
+}
+
+
+def c13_wait(a, tok, repo, sha, names, minutes=20):
+    """The completed run of each workflow name for this commit, once they all are (or time is up)."""
+    deadline, done = time.time() + minutes * 60, {}
+    while time.time() < deadline:
+        r = a.api("GET", f"/repos/alice/{repo}/actions/runs?per_page=100", auth=tok)
+        if r.status == 200:
+            for x in r.json().get("workflow_runs", []):
+                if x.get("head_sha") == sha and x.get("name") in names and x["status"] == "completed":
+                    done[x["name"]] = x
+        if set(names) <= set(done):
+            break
+        time.sleep(6)
+    return done
+
+
+def c13_log(a, tok, repo, run):
+    jobs = a.api("GET", f"/repos/alice/{repo}/actions/runs/{run['id']}/jobs", auth=tok).json().get("jobs", [])
+    out = ""
+    for j in jobs:
+        lg = a.req("GET", f"/api/v3/repos/alice/{repo}/actions/jobs/{j['id']}/logs", auth=tok)
+        out += f"--- {j['name']} ({j.get('conclusion')})\n" + (lg.text if lg.status == 200 else f"[log {lg.status}]") + "\n"
+    return out
+
+
+def c13_rerun(a, tok, repo, run, minutes=10):
+    """Re-runs a finished run and returns the new attempt once it has finished. A re-run is a new run
+    object (a new id) with the same run number and the next attempt."""
+    rr = a.api("POST", f"/repos/alice/{repo}/actions/runs/{run['id']}/rerun", auth=tok)
+    check(rr.status in (200, 201, 202), f"re-run {run['name']}: {rr.status} {rr.text[:200]}")
+    deadline = time.time() + minutes * 60
+    while time.time() < deadline:
+        r = a.api("GET", f"/repos/alice/{repo}/actions/runs?per_page=100", auth=tok).json().get("workflow_runs", [])
+        again = [x for x in r if x.get("run_number") == run.get("run_number") and x.get("run_attempt", 1) > run.get("run_attempt", 1)]
+        if again and all(x["status"] == "completed" for x in again):
+            return max(again, key=lambda x: x["run_attempt"])
+        time.sleep(6)
+    return None
+
+
+def step35():
+    """ch-ctk.9: real, unmodified actions on a real runner, from GitHub, at pinned SHAs: checkout (head
+    and full history), setup-node, setup-python, cache (a second attempt hits), upload and download
+    artifact, github-script (REST calls and the event payload), softprops/action-gh-release (create,
+    upload, generated notes, digests, a re-run that replaces its files and starts no second run), and
+    two that cannot work here (Docker in a job, Pages deploy) which must fail with a reason and not
+    hang. Needs SHOTS_JOBS_REACH_SERVER=1 (jobs call the server by its address) and the internet."""
+    a, tok = Client("10.9.2.4"), S["alice_token"]
+    r = a.api("POST", "/user/repos", js={"name": "c13", "private": True}, auth=tok)
+    check(r.status == 201, f"create c13: {r.status} {r.text[:200]}")
+    wd = os.path.join(WORK, "c13")
+    os.makedirs(os.path.join(wd, ".codehaven/workflows"))
+    git(["init", "-q", "-b", "main"], wd)
+    first = True
+    for path, text in C13_FILES.items():
+        open(os.path.join(wd, path), "w").write(text)
+    git(["add", "marker.txt"], wd)
+    git(["commit", "-q", "-m", "A first commit"], wd)
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "Conformance workflows"], wd)
+    git(["push", http_url("alice", tok, "alice/c13"), "main"], wd, env=gitenv("10.9.2.4"))
+    sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    names = ["conf-checkout", "conf-node", "conf-python", "conf-cache", "conf-artifacts", "conf-script", "conf-reusable", "conf-anchors", "conf-docker", "conf-pages"]
+    t0 = time.time()
+    done = c13_wait(a, tok, "c13", sha, names)
+    check(set(names) <= set(done), f"runs that did not finish: {sorted(set(names) - set(done))}")
+    logs = {n: c13_log(a, tok, "c13", done[n]) for n in names}
+    failed = []
+
+    def expect(name, ok, needles, why=""):
+        conclusion = done[name].get("conclusion")
+        good = (conclusion == "success") if ok else (conclusion == "failure")
+        miss = [n for n in needles if n not in logs[name]]
+        if not good or miss:
+            failed.append(f"{name}: conclusion {conclusion} (wanted {'success' if ok else 'failure'}), missing {miss}. {why}\n{logs[name][-1800:]}")
+
+    expect("conf-checkout", True, ["checkout-head-ok", "checkout-depth-ok"])
+    expect("conf-node", True, ["node-ok v22"])
+    expect("conf-python", True, ["python-ok Python 3.12"])
+    expect("conf-cache", True, ["cache-hit=[false]"])
+    expect("conf-artifacts", True, ["artifacts-ok"])
+    expect("conf-script", True, ["script-repo=alice/c13", "script-event=push", "script-payload-repo=alice/c13", "script-sender=alice", "script-issue=1"])
+    expect("conf-reusable", True, ["callee-got=v-from-prep"], "a with: value reads the outputs of the job the call needs")
+    expect("conf-anchors", True, ["anchor-env=from-anchor"], "YAML anchors and aliases")
+    expect("conf-docker", False, [], "Docker in a job is not available, and must say why")
+    expect("conf-pages", False, [], "the Pages deploy needs OIDC and the Pages API, and must say why")
+    for n in ("conf-docker", "conf-pages"):
+        check("should-not-get-here" not in logs[n], f"{n} ran past the action that cannot work here")
+        why = [ln.strip() for ln in logs[n].splitlines() if "##[error]" in ln or "Error:" in ln][:3]
+        print(f"         {n} fails with: {' | '.join(why)[:300]}", flush=True)
+    check(not failed, "conformance failures:\n" + "\n\n".join(failed))
+    print(f"         {len(names)} workflows of real actions finished in {int(time.time() - t0)} s", flush=True)
+
+    # A second attempt of the cache workflow reads what the first one saved.
+    second = c13_rerun(a, tok, "c13", done["conf-cache"])
+    check(second and second.get("conclusion") == "success", f"the second cache attempt: {second and second.get('conclusion')}")
+    check("cache-hit=[true]" in c13_log(a, tok, "c13", second), "the second attempt did not hit the cache\n" + c13_log(a, tok, "c13", second)[-1200:])
+
+    # The release workflow: a tag push, then softprops/action-gh-release does everything with the
+    # job's own token.
+    git(["tag", "v0.1.0"], wd)
+    git(["push", http_url("alice", tok, "alice/c13"), "v0.1.0"], wd, env=gitenv("10.9.2.4"))
+    tag_sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    rel_done = c13_wait(a, tok, "c13", tag_sha, ["conf-release"], 10)
+    check("conf-release" in rel_done, "the release workflow did not finish")
+    rel_log = c13_log(a, tok, "c13", rel_done["conf-release"])
+    check(rel_done["conf-release"].get("conclusion") == "success", f"the release workflow failed:\n{rel_log[-2500:]}")
+    rel = a.api("GET", "/repos/alice/c13/releases/tags/v0.1.0", auth=tok)
+    check(rel.status == 200, f"the release does not exist: {rel.status} {rel.text[:200]}")
+    rj = rel.json()
+    check(rj["author"]["login"] == "codehaven-actions", f"the release was made by {rj['author']['login']}")
+    assets = {x["name"]: x for x in rj["assets"]}
+    check({"app.txt", "SHA256SUMS"} <= set(assets), f"the release files: {sorted(assets)}")
+    want = hashlib.sha256(b"hello\n").hexdigest()
+    check(assets["app.txt"].get("digest") == "sha256:" + want, f"the digest of app.txt: {assets['app.txt'].get('digest')}")
+    dl = a.req("GET", f"/api/v3/repos/alice/c13/releases/assets/{assets['app.txt']['id']}", auth=tok, headers={"Accept": "application/octet-stream"})
+    check(dl.status == 200 and dl.body == b"hello\n", f"downloading the release file: {dl.status} {dl.body[:60]!r}")
+    check((rj.get("body") or "").strip() != "", "generate_release_notes left the notes empty")
+    runs_before = len({x["run_number"] for x in a.api("GET", "/repos/alice/c13/actions/runs?per_page=100", auth=tok).json()["workflow_runs"]})
+    # Re-running the release job replaces its files and starts no new run (a job's own changes start nothing).
+    again = c13_rerun(a, tok, "c13", rel_done["conf-release"])
+    check(again and again.get("conclusion") == "success", f"the second release attempt: {again and again.get('conclusion')}\n" + c13_log(a, tok, "c13", again or rel_done["conf-release"])[-1500:])
+    rj2 = a.api("GET", "/repos/alice/c13/releases/tags/v0.1.0", auth=tok).json()
+    check(rj2["id"] == rj["id"] and sorted(x["name"] for x in rj2["assets"]) == ["SHA256SUMS", "app.txt"], f"after the re-run: {[x['name'] for x in rj2['assets']]}")
+    check(len(a.api("GET", "/repos/alice/c13/releases", auth=tok).json()) == 1, "a second release appeared")
+    runs_after = len({x["run_number"] for x in a.api("GET", "/repos/alice/c13/actions/runs?per_page=100", auth=tok).json()["workflow_runs"]})
+    check(runs_after == runs_before, f"a job's release started a run: {runs_before} -> {runs_after}")
+    # The page, with the file's digest, and the latest links.
+    page = S["alice"].get("/alice/c13/releases/tag/v0.1.0")
+    check(page.status == 200 and want in page.text and "app.txt" in page.text, "the release page does not show the file and its digest")
+    lat = S["alice"].req("GET", "/alice/c13/releases/latest/download/app.txt")
+    check(lat.status == 302 and lat.h("location").endswith("/alice/c13/releases/download/v0.1.0/app.txt"), f"latest/download: {lat.status} {lat.h('location')}")
+    # The same repository signed out: nothing, because it is private.
+    anon = Client("10.9.9.7").get("/alice/c13/releases/latest", cookies=False)
+    check(anon.status == 303 and "/login" in anon.h("location"), f"a stranger at the latest link: {anon.status}")
+
+
+def step36():
+    """ch-ctk.9: what a job tries against the server and its own container, with the token it was
+    given. It reads only (`permissions: contents: read`), so every write is refused; no Docker
+    socket, no added capabilities, no runner credential in its environment or files, a masked value
+    never printed in pieces, and a token of one job that does nothing for another repository."""
+    a, tok = Client("10.9.2.4"), S["alice_token"]
+    r = a.api("POST", "/user/repos", js={"name": "c13attack", "private": True}, auth=tok)
+    check(r.status == 201, f"create c13attack: {r.status} {r.text[:200]}")
+    r = a.api("POST", "/user/repos", js={"name": "c13other", "private": True, "auto_init": True}, auth=tok)
+    check(r.status == 201, f"create c13other: {r.status} {r.text[:200]}")
+    wd = os.path.join(WORK, "c13attack")
+    os.makedirs(os.path.join(wd, ".codehaven/workflows"))
+    script = r"""
+API="$GITHUB_API_URL"; AUTH="Authorization: Bearer $GITHUB_TOKEN"
+code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+echo "attack-start"
+# 0. The token is a good one: it reads its own repository (otherwise every refusal below means nothing).
+echo "read-self=$(code -H "$AUTH" "$API/repos/$GITHUB_REPOSITORY")"
+# 1. Writes with a read-only token are refused.
+echo "write-release=$(code -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{"tag_name":"x"}' "$API/repos/$GITHUB_REPOSITORY/releases")"
+echo "write-issue=$(code -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{"title":"x"}' "$API/repos/$GITHUB_REPOSITORY/issues")"
+echo "write-status=$(code -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{"state":"success"}' "$API/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA")"
+# 2. Another private repository of the same owner is out of reach.
+echo "other-repo=$(code -H "$AUTH" "$API/repos/alice/c13other")"
+echo "other-contents=$(code -H "$AUTH" "$API/repos/alice/c13other/contents/README.md")"
+echo "other-clone=$(code -H "$AUTH" "$GITHUB_SERVER_URL/alice/c13other/info/refs?service=git-upload-pack")"
+# 3. The runner's own API with a job token and no runner credential.
+echo "runner-poll=$(code -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{}' "$GITHUB_SERVER_URL/api/runner/v1/jobs/request")"
+echo "other-job-complete=$(code -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{"conclusion":"success"}' "$GITHUB_SERVER_URL/api/runner/v1/jobs/1/complete")"
+# 4. The container: no Docker socket, no capabilities, nothing of the runner's.
+test -S /var/run/docker.sock && echo "docker-socket=PRESENT" || echo "docker-socket=absent"
+echo "capeff=$(grep CapEff /proc/self/status | awk '{print $2}')"
+env | grep -E '^(CODEHAVEN_RUNNER|HAVEN_RUNNER)' >/dev/null && echo "runner-env=PRESENT" || echo "runner-env=absent"
+if grep -rIl --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev -E 'chr_[A-Za-z0-9]{30,}' / 2>/dev/null | head -1 | grep -q .; then echo "runner-credential-on-disk=PRESENT"; else echo "runner-credential-on-disk=absent"; fi
+# 5. Masking: a value added with add-mask is hidden whole and in pieces.
+SECRET="$(printf 's3%s' cr3t)-$(date +%s)-value"
+echo "::add-mask::$SECRET"
+echo "printed-whole=$SECRET"
+printf 'printed-split=%s' "$(echo "$SECRET" | cut -c1-9)"; printf '%s\n' "$(echo "$SECRET" | cut -c10-)"
+echo "attack-end"
+"""
+    wf = ("name: conf-attack\non: {push: {branches: [main]}}\npermissions:\n  contents: read\njobs:\n  attack:\n    runs-on: ubuntu-latest\n    steps:\n      - env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: |\n"
+          + "".join("          " + ln + "\n" for ln in script.strip("\n").splitlines()))
+    open(os.path.join(wd, ".codehaven/workflows/attack.yml"), "w").write(wf)
+    git(["init", "-q", "-b", "main"], wd)
+    git(["add", "-A"], wd)
+    git(["commit", "-q", "-m", "Attack suite"], wd)
+    git(["push", http_url("alice", tok, "alice/c13attack"), "main"], wd, env=gitenv("10.9.2.4"))
+    sha = git(["rev-parse", "HEAD"], wd).stdout.strip()
+    done = c13_wait(a, tok, "c13attack", sha, ["conf-attack"], 10)
+    check("conf-attack" in done, "the attack workflow did not finish")
+    log = c13_log(a, tok, "c13attack", done["conf-attack"])
+    check("attack-end" in log, f"the script did not reach its end:\n{log[-2000:]}")
+
+    def got(key):
+        m = re.search(rf"^{re.escape(key)}=(\S*)", log, re.M)
+        return m.group(1) if m else None
+
+    check(got("read-self") == "200", f"the job's token does not read its own repository: {got('read-self')}")
+    for key in ("write-release", "write-issue", "write-status"):
+        check(got(key) in ("403", "404"), f"{key} with a read-only token: {got(key)}")
+    for key in ("other-repo", "other-contents", "other-clone"):
+        check(got(key) in ("401", "403", "404"), f"{key}: {got(key)}")
+    for key in ("runner-poll", "other-job-complete"):
+        check(got(key) in ("401", "403", "404"), f"{key} with a job token: {got(key)}")
+    check(got("docker-socket") == "absent", "a Docker socket is inside the job")
+    check(got("capeff") and int(got("capeff"), 16) & 0x2000 == 0, f"CAP_NET_RAW is held: {got('capeff')}")
+    check(got("runner-env") == "absent", "runner configuration is in the job's environment")
+    check(got("runner-credential-on-disk") == "absent", "a runner credential is readable inside the job")
+    check("s3cr3t" not in log, f"a masked value was printed:\n{log[-800:]}")
+
+
+def step37():
+    """ch-1ke.3 (R1 and R2): the workspace's run panel on a live runner. From the workspace routes, with
+    the page's own key and token, as the page's script sends them: the workflow list, a manual run of
+    `conf-dispatch` on the branch head the page saw (R1), the run's state, and its log as a live stream
+    that shows the first line before the job has finished and ends after the last (R2). Needs step 35's
+    repository, so run it as 0-4,35,37."""
+    a, tok, alice = Client("10.9.2.4"), S["alice_token"], S["alice"]
+    page = alice.get("/alice/c13/workspace")
+    check(page.status == 200, f"the workspace page: {page.status}")
+    key = re.search(r'<meta name="ws-key" content="([^"]+)"', page.text)
+    csrf = re.search(r'<meta name="ws-csrf" content="([^"]+)"', page.text)
+    check(key, "the page has no workspace key")
+    hd = {"X-Workspace-Key": key.group(1)}
+    if csrf:
+        hd["X-CSRF-Token"] = csrf.group(1)
+    boot = alice.req("GET", "/alice/c13/workspace/boot?branch=main", headers=hd)
+    check(boot.status == 200, f"boot: {boot.status} {boot.text[:200]}")
+    head = boot.json()["head"]
+    wf = alice.req("GET", f"/alice/c13/workspace/workflows?branch=main&sha={head}", headers=hd)
+    check(wf.status == 200 and "dispatch.yml" in wf.text, f"the workflow list: {wf.status} {wf.text[:300]}")
+    check(any(w.get("dispatch") for w in wf.json()["workflows"] if w["path"].endswith("dispatch.yml")), f"the panel does not offer a manual run: {wf.text[:300]}")
+    d = alice.req("POST", "/alice/c13/workspace/dispatch", js={"branch": "main", "workflow": ".codehaven/workflows/dispatch.yml", "inputs": {}, "expected_head": head},
+                  headers={**hd, "Content-Type": "application/json"})
+    check(d.status == 200 and d.json().get("run"), f"dispatch from the panel: {d.status} {d.text[:300]}")
+    run_id = d.json()["run"]
+    # The job appears, and its log streams while it runs.
+    job = None
+    deadline = time.time() + 300
+    while time.time() < deadline and not job:
+        r = alice.req("GET", f"/alice/c13/workspace/runs/{run_id}", headers=hd)
+        check(r.status == 200, f"the run: {r.status} {r.text[:200]}")
+        jobs = r.json().get("jobs") or []
+        job = jobs[0]["id"] if jobs else None
+        time.sleep(1)
+    check(job, "the run has no job")
+    seen_start_before_end, text, arrivals, t_open = None, "", [], time.time()
+    c = http.client.HTTPConnection(HOST, PORT, timeout=300)
+    c.request("GET", f"/alice/c13/workspace/runs/{run_id}/jobs/{job}/log/stream", headers={**hd, "X-Forwarded-For": "10.9.2.4", "Host": urllib.parse.urlparse(PUBLIC).netloc,
+              "Cookie": "; ".join(f"{k}={v}" for k, v in alice.cookies.items()), "Accept": "text/event-stream"})
+    resp = c.getresponse()
+    check(resp.status == 200, f"the log stream: {resp.status}")
+    t_end = time.time() + 300
+    while time.time() < t_end:
+        chunk = resp.read1(4096) if hasattr(resp, "read1") else resp.read(1)
+        if not chunk:
+            break
+        text += chunk.decode("utf-8", "replace")
+        arrivals.append((round(time.time() - t_open, 1), len(chunk), "dispatch-start" in text, "dispatch-end" in text))
+        if "dispatch-start" in text and "dispatch-end" not in text and seen_start_before_end is None:
+            seen_start_before_end = True
+    c.close()
+    check("dispatch-start" in text and "dispatch-end" in text, f"the stream lacks the lines: {text[-400:]}")
+    check(seen_start_before_end, f"the first line was not on the stream before the last one: not live. Chunks (seconds, bytes, has start, has end): {arrivals}\n{text[:600]}")
+    final = alice.req("GET", f"/alice/c13/workspace/runs/{run_id}", headers=hd).json()["run"]
+    check(final.get("status") == "completed" and final.get("conclusion") == "success", f"the run's end: {final.get('status')}/{final.get('conclusion')}")
+    # A reader of another account is refused the stream and the dispatch.
+    bob = S["bob"]
+    bp = bob.get("/alice/c13/workspace")
+    check(bp.status in (403, 404), f"a stranger at the workspace: {bp.status}")
+
 
 ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1), (2, "first admin and two-factor", step2),
        (3, "invites", step3), (4, "token and ssh key", step4), (5, "rate limit and lockout", step5), (6, "create repo", step6),
@@ -1975,7 +2459,10 @@ ALL = [(0, "stack up with zero accounts", step0), (1, "signed-out sweep", step1)
        (31, "C11 review: the merge queue tests the merged result; the environment create form keeps an existing environment", step31),
        (32, "C11 review: environment names match ignoring case, so another spelling still waits for the reviewer", step32),
        (33, "ch-qop: YAML hidden behind lone CR, NEL or LS line breaks does not abort the server", step33),
-       (34, "ch-2fc: the pull command on the package page is one docker accepts, and pulls", step34)]
+       (34, "ch-2fc: the pull command on the package page is one docker accepts, and pulls", step34),
+       (35, "ch-ctk.9: real actions at pinned SHAs (checkout, setup-node, setup-python, cache, artifacts, github-script, release) and two that must fail clearly", step35),
+       (36, "ch-ctk.9: what a job tries with its own token, and what stays out of its reach", step36),
+       (37, "ch-1ke.3: the workspace run panel on a live runner: dispatch, state and a live log stream (needs step 35's repository)", step37)]
 
 
 THROWAWAY_PROJECT = re.compile(r"^(test|e2e|shots|tmp)-[a-z0-9][a-z0-9-]*$")

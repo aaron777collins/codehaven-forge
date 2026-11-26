@@ -201,6 +201,9 @@ impl GitService for GitCore {
     async fn reachable(&self, repo: RepoId, sha: &str) -> Result<bool> {
         self.read_reachable(repo, sha).await
     }
+    async fn range_shas(&self, repo: RepoId, base: Option<&str>, head: &str, limit: u32) -> Result<Vec<String>> {
+        self.read_range_shas(repo, base, head, limit).await
+    }
     async fn commit_diff(&self, repo: RepoId, sha: &str) -> Result<Diff> {
         Ok((*GitCore::commit_diff(self, repo, sha).await?).clone())
     }

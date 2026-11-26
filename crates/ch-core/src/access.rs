@@ -214,6 +214,11 @@ pub const PUBLIC_REPO_ROUTES: &[PublicRepoRoute] = &[
     r("/{owner}/{repo}/releases", RepoT, Light),
     r("/{owner}/{repo}/releases/tag/{tag}", RepoT, Light),
     r("/{owner}/{repo}/releases/download/{tag}/{name}", RepoT, Raw),
+    // The stable links a README points at (ch-ctk.11). Each is a redirect to the page or the file
+    // of the latest published release, so it shows a signed-out visitor nothing a public release
+    // page does not already show.
+    r("/{owner}/{repo}/releases/latest", RepoT, Light),
+    r("/{owner}/{repo}/releases/latest/download/{name}", RepoT, Light),
     // Actions history recorded at the public tier (ch-4pn.12). The handlers show only rows whose
     // recorded tier covers the viewer, see `history_tiers`.
     r("/{owner}/{repo}/actions", RepoT, Light),
@@ -676,12 +681,16 @@ pub fn actor_accepted(actor: &Actor, kind: RouteKind) -> bool {
     }
 }
 
-/// Web file downloads a personal access token also opens (ch-8ee): a raw file, an archive and a
+/// Web file downloads a personal access token or a job's token also opens (ch-8ee, ch-ctk.10): a raw file, an archive and a
 /// release file, GET or HEAD only, so a script can fetch with a token what a person downloads in
 /// a browser. No other page accepts a token. The pattern is written as the router registers it,
 /// and the layer inside the router checks the request really reached that route.
-pub const TOKEN_FILE_ROUTES: &[&str] =
-    &["/{owner}/{repo}/raw/{*rest}", "/{owner}/{repo}/archive/{*rest}", "/{owner}/{repo}/releases/download/{tag}/{name}"];
+pub const TOKEN_FILE_ROUTES: &[&str] = &[
+    "/{owner}/{repo}/raw/{*rest}",
+    "/{owner}/{repo}/archive/{*rest}",
+    "/{owner}/{repo}/releases/download/{tag}/{name}",
+    "/{owner}/{repo}/releases/latest/download/{name}",
+];
 
 /// The token file route this request is shaped like, if any.
 pub fn token_file_route(method: &Method, path: &str) -> Option<&'static str> {

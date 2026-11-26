@@ -13,12 +13,11 @@ use crate::range::{self, RangeOutcome};
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use bytes::Bytes;
 use ch_core::Actor;
 use ch_core::model::ClientInfo;
+use ch_core::range::slice_stream as slice;
 use ch_core::state::AppState;
 use futures::StreamExt;
-use futures::stream::BoxStream;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -293,39 +292,6 @@ pub async fn cancel(state: &AppState, actor: &Actor, pkg: &Package, id: &str) ->
     Ok(plain(StatusCode::NO_CONTENT))
 }
 
-/// Keeps `len` bytes of a stream after skipping the first `start`, and stops reading once it has
-/// them, so a range at the front of a large layer does not read the rest of the file.
-fn slice(stream: BoxStream<'static, std::io::Result<Bytes>>, start: u64, len: u64) -> BoxStream<'static, std::io::Result<Bytes>> {
-    stream
-        .scan((start, len), |(skip, left), item| {
-            if *left == 0 {
-                return std::future::ready(None);
-            }
-            let out = match item {
-                Err(e) => {
-                    *left = 0;
-                    Some(Err(e))
-                }
-                Ok(mut chunk) => {
-                    let n = chunk.len() as u64;
-                    if *skip >= n {
-                        *skip -= n;
-                        None
-                    } else {
-                        let mut piece = chunk.split_off(usize::try_from(*skip).unwrap_or(0));
-                        *skip = 0;
-                        piece.truncate(usize::try_from(*left).unwrap_or(usize::MAX));
-                        *left -= piece.len() as u64;
-                        Some(Ok(piece))
-                    }
-                }
-            };
-            std::future::ready(Some(out))
-        })
-        .filter_map(std::future::ready)
-        .boxed()
-}
-
 /// `GET` and `HEAD /v2/<name>/blobs/<digest>`. A single `Range: bytes=` header on a GET answers
 /// 206 with just those bytes, or 416 when it starts past the end; a header that is not one well
 /// formed range is ignored and the whole blob is sent. The digest header always names the whole
@@ -401,6 +367,7 @@ pub async fn delete(state: &AppState, pkg: &Package, digest: &str) -> RegResult<
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
 
     async fn run(chunks: &[&[u8]], start: u64, len: u64) -> Vec<u8> {
         let items: Vec<std::io::Result<Bytes>> = chunks.iter().map(|c| Ok(Bytes::copy_from_slice(c))).collect();

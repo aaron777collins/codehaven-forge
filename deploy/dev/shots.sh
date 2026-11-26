@@ -49,11 +49,16 @@ export HOST_PUBLIC_IPS="$(bash "$dir/deploy/prod/host-ips.sh")"
 export WEBHOOK_BLOCKED_IPS="$(bash "$dir/deploy/prod/host-ips.sh" --json)"
 compose=(docker compose -p "$project" -f "$dir/deploy/compose.shots.yml")
 public=https://shots.example.invalid
-if [ -n "${SHOTS_DOGFOOD:-}" ]; then
+overlay=""
+# SHOTS_JOBS_REACH_SERVER=1 (ch-ctk.9): the same server address and guard exception as the dogfood run,
+# without the builder image and Postgres. For steps whose jobs call the server by its address, such as
+# the real-actions conformance steps (checkout of the job's own repository, artifacts, releases).
+if [ -n "${SHOTS_DOGFOOD:-}" ] || [ -n "${SHOTS_JOBS_REACH_SERVER:-}" ]; then
   # The server's own fixed address on the runners network, which jobs use to reach it.
   SHOTS_SERVER_RUNNERS_IP="$(python3 -c 'import ipaddress,sys; print(list(ipaddress.ip_network(sys.argv[1]).hosts())[99])' "$CODEHAVEN_SHOTS_RUNNERS_SUBNET")"
   export SHOTS_SERVER_RUNNERS_IP
   compose+=(-f "$dir/deploy/compose.shots-dogfood.yml")
+  overlay=1
   public="http://$SHOTS_SERVER_RUNNERS_IP:3200"
 fi
 
@@ -115,7 +120,7 @@ printf '{"name":"shots","private":true,"type":"module"}\n' > "$work/package.json
 gateway=$(python3 -c 'import ipaddress,sys; print(next(ipaddress.ip_network(sys.argv[1]).hosts()))' "$CODEHAVEN_E2E_SUBNET")
 export E2E_BASE="http://$server_ip:3200" E2E_PUBLIC="$public" E2E_SSH="$server_ip:2222"
 export E2E_HOST_IP="$gateway" E2E_STEPS="${SHOTS_STEPS:-0-20}" E2E_TRACE=1 E2E_SHOTS="$work/session.json" E2E_PROJECT="$project"
-export E2E_CLI="docker compose -p $project -f $dir/deploy/compose.shots.yml ${SHOTS_DOGFOOD:+-f $dir/deploy/compose.shots-dogfood.yml} exec -T server codehaven"
+export E2E_CLI="docker compose -p $project -f $dir/deploy/compose.shots.yml ${overlay:+-f $dir/deploy/compose.shots-dogfood.yml} exec -T server codehaven"
 rc=0
 python3 "$work/e2e_full.py" || rc=$?
 [ "$rc" = 0 ] || exit "$rc"

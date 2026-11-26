@@ -20,6 +20,7 @@ fn draft(tag: &str) -> ReleaseDraft {
         draft: false,
         prerelease: false,
         generate_notes: false,
+        make_latest: Default::default(),
     }
 }
 
@@ -213,15 +214,35 @@ async fn notes_list_merged_pull_requests_since_the_last_release(pool: PgPool) {
     for n in [a, b, old] {
         w.core.pull_merge(&w.bob_a(), w.repo, n, MergeMethod::Merge, &w.c()).await.unwrap();
     }
-    // One of them was merged before the previous release was cut.
-    sqlx::query(
-        "UPDATE pull_requests SET merged_at = now() - interval '10 days' WHERE issue_id = (SELECT id FROM issues WHERE number = $1)",
-    )
-    .bind(old)
-    .execute(&w.pool)
-    .await
-    .unwrap();
-    w.git.st.lock().unwrap().commit_dates.insert("refs/tags/v1".into(), chrono::Utc::now() - chrono::Duration::days(2));
+    // The commits from v1 to main hold the merges of the first two, and not the third (it went
+    // in on another line of history, whatever the clock says).
+    let merge_sha = |n: i64| {
+        let pool = w.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT merge_commit_sha FROM pull_requests WHERE issue_id = (SELECT id FROM issues WHERE number = $1)",
+            )
+            .bind(n)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let commits = vec![commit_info(&merge_sha(a).await, "Merge a"), commit_info(&merge_sha(b).await, "Merge b")];
+    w.git.set_compare(
+        w.repo,
+        "refs/tags/v1",
+        "main",
+        Compare {
+            base_sha: sha_of(1),
+            head_sha: sha_of(2),
+            merge_base: sha_of(1),
+            ahead_by: 2,
+            behind_by: 0,
+            commits,
+            diff: default_diff(),
+        },
+    );
 
     let notes = w.core.release_generate_notes(&w.bob_a(), w.repo, "v2", None, None).await.unwrap();
     assert_eq!(notes.name, "v2");

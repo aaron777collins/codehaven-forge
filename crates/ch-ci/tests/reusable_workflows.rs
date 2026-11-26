@@ -216,3 +216,36 @@ async fn a_workflow_in_another_repository_is_used_only_where_the_run_may_use_it(
     let e = ch_ci::reusable::inline_calls(&w.ctx, demo, &sha, CI_YML, true, None, &local).await.unwrap_err();
     assert!(format!("{e:?}").contains("calls itself"), "{e:?}");
 }
+
+/// A `with:` value may read the outputs of the jobs the call needs. The called job waits for that
+/// job too and is told its outputs, so the runner can read `needs.prep.outputs.v`.
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn a_with_value_reads_the_outputs_of_the_job_the_call_needs(pool: PgPool) {
+    let w = World::new(pool).await;
+    let caller = CALLER
+        .replace(
+            "      - run: echo prep",
+            "    outputs:\n      v: ${{ steps.s.outputs.v }}\n    steps:\n      - id: s\n        run: echo v=9 >> $GITHUB_OUTPUT",
+        )
+        .replace("    runs-on: x\n    steps:\n    outputs:", "    runs-on: x\n    outputs:")
+        .replace("version: '1.2'", "version: v${{ needs.prep.outputs.v }}");
+    let (repo, git) = w.repo_with(w.alice, "demo", &[(CI_YML, &caller), (".codehaven/workflows/build.yml", CALLEE)]).await;
+    let run = w.push(repo, &git, "main", None).await[0];
+    let r = w.runner("r", &["x"]).await;
+    let prep = r.request(&w, 0).await.unwrap();
+    assert_eq!(prep.job_key, "prep");
+    r.complete(&w, prep.job_id, "success", json!({"v": "9"})).await;
+    let pack = r.request(&w, 0).await.unwrap();
+    assert_eq!(pack.job_key, "build__pack");
+    assert_eq!(pack.needs["prep"].outputs["v"], "9", "the called job is told the caller's job's outputs");
+    let StepRun(cmd) = StepRun::of(&pack);
+    assert_eq!(cmd, "echo ${{ format('v{0}', needs.prep.outputs.v) }} ${{ (secrets.DEPLOY) }}");
+    r.complete(&w, pack.job_id, "success", json!({"name": "dist.zip"})).await;
+    assert_eq!(keys(&w, run).await.iter().find(|k| k.0 == "build").unwrap().1, "completed");
+    // A `needs` the call does not list is refused when the run is made.
+    let bad = CALLER.replace("version: '1.2'", "version: ${{ needs.after.outputs.v }}");
+    let (repo2, git2) = w.repo_with(w.alice, "demo2", &[(CI_YML, &bad), (".codehaven/workflows/build.yml", CALLEE)]).await;
+    let runs = w.push(repo2, &git2, "main", None).await;
+    let last = *runs.last().unwrap();
+    assert_eq!(w.run_status(last).await.1.as_deref(), Some("failure"), "a call that cannot be made is a failed run");
+}

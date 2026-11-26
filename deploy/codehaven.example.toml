@@ -18,6 +18,9 @@ trusted_proxies = []
 # addresses that name has are trusted, looked up again every 30 seconds.
 trusted_proxy_hosts = []
 request_timeout_secs = 60
+# A release file upload is not cut off at the request time above. The sender may be silent this long
+# between two chunks of the file at most.
+upload_idle_secs = 60
 
 [database]
 url_file = "/run/secrets/database_url"

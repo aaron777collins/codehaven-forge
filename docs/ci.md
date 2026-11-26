@@ -113,9 +113,13 @@ have no runner and no check run.
 
 What a called job may see is decided when the run is made, so it never sees what it was not given:
 
-- `inputs.x` becomes what the caller passed (or the input's default). `with:` values and `secrets:`
-  values may read `github`, `inputs` and `vars` only (not `needs`, `matrix`, `env`, `steps`), because they
-  are pasted into jobs that are not the caller. `with:` may not read `secrets`.
+- `inputs.x` becomes what the caller passed (or the input's default). `with:` values may read `github`,
+  `inputs`, `vars` and `needs`; `secrets:` values may read `github`, `inputs`, `vars` and `secrets` (never
+  `matrix`, `env` or `steps`), because they are pasted into jobs that are not the caller. `with:` may not
+  read `secrets`. A `with:` value may read the `result` and `outputs` of a job the calling job lists under
+  `needs` (`version: ${{ needs.prep.outputs.v }}`), as on GitHub: the called jobs wait for that job too and
+  are told its outputs. A job the call does not list is refused when the run is made, and so is the whole
+  `needs` context (`toJSON(needs)`).
 - `secrets.X` becomes what the caller passed under that name, or an empty string. `secrets: inherit`
   passes every secret. `GITHUB_TOKEN` is always the job's own. A called job that reads the whole
   `secrets` context is refused unless the caller used `inherit`.
@@ -134,8 +138,32 @@ in the Actions policy applies. Calls nest 4 deep, a run may call 20 workflows an
 in is capped (64 KB for one value, 8 MB for a run), and a workflow that calls itself is refused. A call that cannot be made shows as a failed run with the
 reason, like a workflow file that does not parse.
 
-Not supported yet: `strategy` on a calling job (one call per matrix cell), `needs` outputs inside `with:`,
-`concurrency` on a calling job, and `workflow_run`.
+Not supported, and not planned: `strategy` on a calling job (one call per matrix cell; put the `strategy` on a
+job of the called workflow instead), `concurrency` on a calling job (put it on the called workflow's jobs) and
+`workflow_run`. Each is refused with a reason when the file is read, never ignored.
+
+### Syntax and event payloads
+
+- **YAML anchors and aliases** work (`&base`, `*base`), anywhere a value may be written. The reader turns a
+  file that has them into the same file with every alias replaced by its value before the parser sees it
+  (`ch_workflow::anchors`). The expanded file may hold at most 10,000 nodes, counted as it is built, so a file of
+  aliases of aliases is refused with a reason before anything that big exists. Merge keys (`<<: *base`) are
+  refused, as GitHub refuses them. Line numbers in the errors of such a file refer to the text after the
+  aliases were replaced.
+- **`github.event`** has GitHub's shape for the fields workflows read. `repository` has `id`, `name`,
+  `full_name`, `private`, `visibility`, `owner`, `html_url`, `url`, `clone_url`, `default_branch`, `fork`,
+  `archived` and `created_at`. `sender` has `login`, `id`, `type`, `html_url`, `url` and `avatar_url`. A
+  `pull_request` event has the whole pull request object (ids, state, title, body, labels, `user`, `head` and
+  `base` with their repositories, `merged`, the links). A `release` event has the whole release with its files:
+  each has `size`, `digest`, `state`, `download_count` and `browser_download_url`. `workflow_dispatch` has
+  `inputs`, `ref` and `workflow`. No account object carries an e-mail address.
+- **`refs/pull/N/merge`** is the name a pull request run reports as `github.ref`, and the run tests the pull
+  request's head commit, not a merge of it into its base. Making a real merge commit would copy a fork's objects
+  into the base repository's store, which the visibility rules exist to prevent. A repository that wants its pull
+  requests tested merged turns on the merge queue, which tests the merged result before it merges.
+- **Step records**: a step the runner adds (`Post <name>` for a post step) is shown as a step of its own; the
+  steps of a composite action show inside the step that used it, with their log grouped there. There is no
+  separate record for each of them.
 
 ### Composite actions
 
@@ -237,3 +265,60 @@ Unlisting hides a version from search; asking for it by version still restores i
 - Status badges: `/{owner}/{repo}/actions/workflows/{file}/badge.svg` (`?branch=`, `?event=`), for
   signed-in viewers only, like every page here. `GET /runs/{id}/logs` is a zip with a text file per
   job. Only failed runs notify the person who started them.
+
+### Real actions, proven (ch-ctk.9)
+
+Real, unmodified actions from GitHub, pinned to full commit SHAs, run on a real runner in the e2e harness
+(steps 35 to 37, `SHOTS_JOBS_REACH_SERVER=1`, which gives the throwaway server an address jobs can reach). On
+2026-11-26, from a clean stack, the ten workflows of step 35 finished in 36 seconds (the whole step, with two re-runs
+and the release, in 61), step 36 in 6 and step 37 in 9. Versions as pinned: checkout 3d3c42e, setup-node 949feb2,
+setup-python 6d4fd22, cache 55cc834, upload-artifact cf430e0, download-artifact 9000827, github-script 3a2844b,
+softprops/action-gh-release 8a0cd65, docker setup-buildx f87e599, login 8aa5831, build-push c3c9e26, deploy-pages 368f82.
+Two things this run found and fixed: `sh` dropped hyphenated action inputs (below), and the job image did not look like
+Ubuntu 24.04 to `setup-python`.
+
+| Action | What the step checks |
+| --- | --- |
+| `actions/checkout` | the head commit is `GITHUB_SHA`; `fetch-depth: 0` with `path:` brings the whole history |
+| `actions/setup-node`, `actions/setup-python` | the version asked for is the version that runs |
+| `actions/cache` | the first attempt misses, a second attempt of the same run hits |
+| `actions/upload-artifact`, `actions/download-artifact` | a tree goes up in one job and comes down equal in the next |
+| `actions/github-script` | REST calls (`repos.get`, `issues.create`) with the job token, and `context.payload` |
+| `softprops/action-gh-release` | create, upload by `upload_url`, generated notes, digests; a re-run of the job replaces its files, makes no second release and starts no run |
+| `docker/setup-buildx-action`, `docker/login-action`, `docker/build-push-action` | fail at once with "failed to connect to the docker API at unix:///var/run/docker.sock": jobs have no Docker daemon (see below) |
+| `actions/deploy-pages` | fails at once with "Unable to get ACTIONS_ID_TOKEN_REQUEST_URL env variable" and "Ensure GITHUB_TOKEN has permission id-token: write": it needs OIDC and the Pages API |
+
+What does not work, by design, and says so instead of hanging: anything that needs a Docker daemon inside the
+job (`docker build`, buildx, `docker login`, Docker container actions; use a `docker://image` step or a `run:`
+step), cloud login through OIDC (`id-token: write` gives nothing), GraphQL (so most of `gh pr` and `gh issue`),
+Pages deploys, `environment:` URLs, `workflow_run`, `repository_dispatch` and `pull_request_target`. The
+container registry itself is proven with a real Docker client by `deploy/tests/registry-conformance.sh`.
+
+The attack step (36) runs a job with `permissions: contents: read` that tries, with its own token, to write a
+release, an issue and a status, to read another private repository of the same owner (API, contents and git),
+to call the runner API (job request, completing another job), and to find a Docker socket, a capability, runner
+configuration or a runner credential inside its container; and it prints a masked value whole and in two pieces.
+Every write and cross-repository read is refused, nothing of the runner is in reach, and the masked value never
+reaches the log. The fetch attacks (redirects, rebinding, fork-only commits, moved tags, archive bombs, names with
+`%2f`, blocked actions nested three deep, other owners' private repositories) are the unit and integration tests
+in `crates/codehaven/tests/actions_fetch.rs` and `ch-ci`; the token matrix (each scope against each route, after
+the job ends, from another job, from a fork, against protected branches and workflow files, no recursive run) is
+`crates/codehaven/tests/job_token.rs` and `releases_web.rs`.
+
+### Cutover notes
+
+CI runs on the Docker runner with the engine in `haven-runner` (the official worker is not used; see
+ch-ctk.4): there is no per-job VM (ch-ctk.3 stays deferred, by decision: invited people are trusted, so the
+risk the VM would remove is an insider's). What moved when:
+
+1. The runner and the server are deployed together: an older runner ignores `services:` and refuses fetched
+   actions. After a deploy, recreate the runner on the new image (`deploy/prod/ci-up.sh`), then
+   `codehaven admin runners` should show one online runner and no stale registration (`revoke-runner <id>`).
+2. Queued jobs in the old format are cancelled with a message that says to re-run them.
+3. The old built-in `uses:` names (`checkout`, `cache`, `upload-artifact`, `download-artifact`, with or without an
+   `actions/` or `codehaven/` prefix) still run the built-ins. Everything else is fetched under the site's policy
+   (Site admin > Actions: `selected` by default, a seed list, a block list that always wins, optionally full SHAs
+   only), which a failed run offers to widen in one click.
+4. Rolling back is `CODEHAVEN_NO_MIGRATE=1 up.sh` on the older commit (see operations.md). Migrations are
+   additive, so the older code ignores the columns and tables it does not know.
+5. The release API changes are additive too (migration 0146: `releases.marked_latest_at` and `never_latest`).

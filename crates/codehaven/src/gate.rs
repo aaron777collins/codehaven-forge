@@ -80,9 +80,12 @@ pub async fn gate(State(state): State<AppState>, mut req: Request, next: Next) -
         return r;
     }
 
-    // A personal access token may download a file a page serves (ch-8ee), nothing else there.
+    // A personal access token, or a running job's token, may download a file a page serves
+    // (ch-8ee, ch-ctk.10), nothing else there: a workflow fetches the `browser_download_url` of
+    // its own release file with the token it has. What the token may read is `Authz`'s decision,
+    // as on every route, and a job reads only its own repository.
     let token_file = match (&actor, kind) {
-        (Actor::Token { .. }, RouteKind::Page) => access::token_file_route(&method, &path),
+        (Actor::Token { .. } | Actor::Job { .. }, RouteKind::Page) => access::token_file_route(&method, &path),
         _ => None,
     };
     if let Some(pattern) = token_file {

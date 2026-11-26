@@ -35,6 +35,14 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-ini
  && chmod -R a+rwX /usr/local/rustup /usr/local/cargo \
  && rustup --version && cargo --version
 
+# Actions pick prebuilt tools by the distribution they find: the toolkit reads /etc/lsb-release first,
+# and setup-python, setup-java and the others look for their `ubuntu-24.04` builds. The runner's labels
+# say `ubuntu-latest` and `ubuntu-24.04`, so the image says the same there (and `ImageOS` as GitHub's
+# image sets it). The userland is Debian trixie, whose glibc is newer than Ubuntu 24.04's, so those
+# builds run (ch-ctk.9). /etc/os-release stays truthful.
+RUN printf 'DISTRIB_ID=Ubuntu\nDISTRIB_RELEASE=24.04\nDISTRIB_CODENAME=noble\nDISTRIB_DESCRIPTION="Ubuntu 24.04 (Debian trixie userland)"\n' > /etc/lsb-release
+ENV ImageOS=ubuntu24 ImageVersion=codehaven
+
 # The workspace belongs to the runner's user, not root. git refuses to work in a directory
 # owned by someone else unless it is told that is fine.
 RUN git config --system --add safe.directory '*' \

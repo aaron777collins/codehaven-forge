@@ -118,6 +118,8 @@ GET /{owner}/{repo}/pulls/{number}/files
 GET /{owner}/{repo}/raw/{*rest}
 GET /{owner}/{repo}/releases
 GET /{owner}/{repo}/releases/download/{tag}/{name}
+GET /{owner}/{repo}/releases/latest
+GET /{owner}/{repo}/releases/latest/download/{name}
 GET /{owner}/{repo}/releases/tag/{tag}
 GET /{owner}/{repo}/tags
 GET /{owner}/{repo}/tree/{*rest}
@@ -235,6 +237,8 @@ HEAD /{owner}/{repo}/pulls/{number}/files
 HEAD /{owner}/{repo}/raw/{*rest}
 HEAD /{owner}/{repo}/releases
 HEAD /{owner}/{repo}/releases/download/{tag}/{name}
+HEAD /{owner}/{repo}/releases/latest
+HEAD /{owner}/{repo}/releases/latest/download/{name}
 HEAD /{owner}/{repo}/releases/tag/{tag}
 HEAD /{owner}/{repo}/tags
 HEAD /{owner}/{repo}/tree/{*rest}

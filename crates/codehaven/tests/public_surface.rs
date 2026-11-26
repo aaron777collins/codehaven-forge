@@ -177,6 +177,7 @@ async fn seed(pool: PgPool) -> World {
         draft: false,
         prerelease: false,
         generate_notes: false,
+        make_latest: Default::default(),
     };
     let release = state.releases.create(&a, proj.id, draft, &c()).await.unwrap().release.id;
     let body: futures::stream::BoxStream<'static, std::io::Result<bytes::Bytes>> =
@@ -423,7 +424,7 @@ fn concrete(pattern: &str, w: &World, owner: &str, repo: &str) -> String {
                 "{name}" => {
                     if p.contains("/labels/") {
                         "bug".into()
-                    } else if p.contains("/releases/download/") {
+                    } else if p.contains("/releases/download/") || p.contains("/releases/latest/download/") {
                         "notes.txt".into()
                     } else if p.starts_with("/avatar/") {
                         "alice".into()
@@ -431,6 +432,7 @@ fn concrete(pattern: &str, w: &World, owner: &str, repo: &str) -> String {
                         "x".into()
                     }
                 }
+                "{asset}" => w.asset.to_string(),
                 "{run}" => w.run.to_string(),
                 "{job}" => w.job.to_string(),
                 "{workflow}" => w.workflow.to_string(),

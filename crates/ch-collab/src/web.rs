@@ -159,6 +159,7 @@ impl Tracker for TrackerSvc {
             draft: new.draft,
             prerelease: new.prerelease,
             generate_notes: false,
+            make_latest: Default::default(),
         };
         Ok(self.releases.create(actor, new.repo_id, draft, client).await?.release)
     }

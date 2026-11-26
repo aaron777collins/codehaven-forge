@@ -373,6 +373,14 @@ pub trait GitService: Send + Sync {
         let _ = (repo, sha);
         Err(Error::unavailable("reachable is not built yet"))
     }
+    /// The commits `base..head` (all the commits `head` reaches when there is no `base`), newest
+    /// first, as full shas, at most `limit` of them. The default reads a comparison, which keeps
+    /// 250 at most; the real store asks git for the list.
+    async fn range_shas(&self, repo: RepoId, base: Option<&str>, head: &str, limit: u32) -> Result<Vec<String>> {
+        let base = base.ok_or_else(|| Error::unavailable("a range with no base is not built here"))?;
+        let c = self.compare(repo, base, head).await?;
+        Ok(c.commits.into_iter().rev().take(limit as usize).map(|c| c.sha).collect())
+    }
     /// What one commit changed. A root commit is compared with the empty tree.
     async fn commit_diff(&self, repo: RepoId, sha: &str) -> Result<Diff> {
         let _ = (repo, sha);
@@ -987,6 +995,19 @@ pub trait Releases: Send + Sync {
     }
     async fn delete_asset(&self, actor: &Actor, repo: RepoId, asset: i64, client: &ClientInfo) -> Result<()> {
         let _ = (actor, repo, asset, client);
+        unbuilt("releases")
+    }
+    /// Renames an asset, sets its label, or both. A name another asset of the release has is a 422.
+    async fn update_asset(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        asset: i64,
+        name: Option<&str>,
+        label: Option<&str>,
+        client: &ClientInfo,
+    ) -> Result<AssetInfo> {
+        let _ = (actor, repo, asset, name, label, client);
         unbuilt("releases")
     }
     /// Counts a download and streams the file. `tag` and `name` are the parts of

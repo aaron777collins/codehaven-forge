@@ -84,10 +84,13 @@ async fn no_server_header(req: axum::extract::Request, next: axum::middleware::N
 async fn request_timeout(State(state): State<AppState>, req: Request, next: Next) -> Response {
     // Page, API and the MCP routes are timed. Git transfers, the registry and the runner API are
     // exempt: a large push legitimately takes minutes.
-    let exempt = !matches!(
-        access::classify_for(req.uri().path(), state.config.mcp.enabled),
-        RouteKind::Page | RouteKind::Api | RouteKind::Mcp | RouteKind::OAuth
-    );
+    // A release file upload is exempt too: it is bounded by its idle time between chunks instead
+    // (`http.upload_idle_secs`, enforced in the handler), not by the clock on the whole request.
+    let exempt = is_release_upload(req.method(), req.uri().path())
+        || !matches!(
+            access::classify_for(req.uri().path(), state.config.mcp.enabled),
+            RouteKind::Page | RouteKind::Api | RouteKind::Mcp | RouteKind::OAuth
+        );
     if exempt {
         return next.run(req).await;
     }
@@ -95,5 +98,41 @@ async fn request_timeout(State(state): State<AppState>, req: Request, next: Next
     match tokio::time::timeout(limit, next.run(req)).await {
         Ok(resp) => resp,
         Err(_) => (StatusCode::GATEWAY_TIMEOUT, "Timed out").into_response(),
+    }
+}
+
+/// A release file upload (ch-ctk.10, ch-ctk.11): `POST /api/v3/repos/{owner}/{repo}/releases/{id}/assets`
+/// from a tool, or `POST /{owner}/{repo}/releases/{id}/assets` from the release page.
+fn is_release_upload(method: &axum::http::Method, path: &str) -> bool {
+    if method != axum::http::Method::POST {
+        return false;
+    }
+    let seg: Vec<&str> = path.trim_matches('/').split('/').collect();
+    let id_ok = |id: &&str| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit());
+    match seg.as_slice() {
+        ["api", "v3", "repos", o, r, "releases", id, "assets"] => !o.is_empty() && !r.is_empty() && id_ok(id),
+        [o, r, "releases", id, "assets"] => !o.is_empty() && !r.is_empty() && id_ok(id),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_release_upload;
+    use axum::http::Method;
+
+    #[test]
+    fn only_the_release_upload_is_exempt_from_the_request_clock() {
+        let up = "/api/v3/repos/o/r/releases/12/assets";
+        assert!(is_release_upload(&Method::POST, up));
+        assert!(!is_release_upload(&Method::GET, up));
+        assert!(!is_release_upload(&Method::POST, "/api/v3/repos/o/r/releases/12/assets/3"));
+        assert!(!is_release_upload(&Method::POST, "/api/v3/repos/o/r/releases/latest/assets"));
+        assert!(!is_release_upload(&Method::POST, "/api/v3/repos/o/r/issues/12/assets"));
+        assert!(!is_release_upload(&Method::POST, "/api/v3/repos/o/r/releases/12"));
+        // The release page's own upload form.
+        assert!(is_release_upload(&Method::POST, "/o/r/releases/12/assets"));
+        assert!(!is_release_upload(&Method::POST, "/o/r/releases/12/assets/3/delete"));
+        assert!(!is_release_upload(&Method::POST, "/o/r/releases/new/assets"));
     }
 }

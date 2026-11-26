@@ -42,6 +42,17 @@ impl Registry {
         self
     }
 
+    /// POST of a file upload: the body is not capped at the default 2 MB, only at `max` bytes.
+    fn post_upload<H, T>(mut self, path: &'static str, max: usize, h: H) -> Self
+    where
+        H: Handler<T, AppState>,
+        T: 'static,
+    {
+        self.table.push(("POST", path));
+        self.router = self.router.route(path, post(h.layer(axum::extract::DefaultBodyLimit::max(max))));
+        self
+    }
+
     /// GET and POST on one path (a form page).
     fn form<G, TG, P, TP>(mut self, path: &'static str, g: G, p: P) -> Self
     where
@@ -226,7 +237,13 @@ pub fn build_for(mcp: bool) -> Registry {
         .get("/{owner}/{repo}/releases/tag/{tag}", releases::show)
         .get("/{owner}/{repo}/releases/download/{tag}/{name}", releases::download)
         .form("/{owner}/{repo}/releases/new", releases::new_get, releases::new_post)
+        .get("/{owner}/{repo}/releases/latest", releases::latest)
+        .get("/{owner}/{repo}/releases/latest/download/{name}", releases::latest_download)
         .post("/{owner}/{repo}/releases/{id}/delete", releases::delete)
+        .form("/{owner}/{repo}/releases/{id}/edit", releases::edit_get, releases::edit_post)
+        .post("/{owner}/{repo}/releases/{id}/publish", releases::publish)
+        .post_upload("/{owner}/{repo}/releases/{id}/assets", releases::UPLOAD_LIMIT, releases::upload)
+        .post("/{owner}/{repo}/releases/{id}/assets/{asset}/delete", releases::asset_delete)
         .get("/packages", packages::index)
         .get("/packages/{owner}", packages::owner)
         .form("/packages/{owner}/{kind}/{*name}", packages::show, packages::act)

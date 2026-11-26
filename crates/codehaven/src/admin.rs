@@ -221,6 +221,20 @@ pub async fn run(state: &AppState, command: AdminCommand) -> Result<()> {
                 if run_ci { " and started its workflows" } else { "" }
             );
         }
+        AdminCommand::RunCi { repo, workflow, branch } => {
+            let (owner, name) = repo.split_once('/').context("the repository must look like owner/name")?;
+            let r = state.repos.get_by_name(&sys, owner, name).await.map_err(describe)?;
+            // As the owner: the same checks as the Actions tab (write access, the right to run CI).
+            let user = state.accounts.get_user(r.owner_id).await.map_err(describe)?;
+            let as_owner = Actor::User { id: user.id, is_admin: false, has_2fa: false, via: ch_core::AuthVia::Session };
+            let run = state.ci.dispatch(&as_owner, r.id, &workflow, &branch, serde_json::json!({}), &cli_client).await.map_err(describe)?;
+            println!(
+                "Started run {} of {workflow} in {} on {}.",
+                run.0,
+                r.full_name(),
+                if branch.is_empty() { &r.default_branch } else { &branch }
+            );
+        }
         AdminCommand::Suspend { username } => {
             let user = state.accounts.get_by_username(&sys, &username).await.map_err(describe)?;
             state.accounts.suspend(&sys, user.id, &cli_client).await.map_err(describe)?;

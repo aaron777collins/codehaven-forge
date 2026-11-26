@@ -470,6 +470,23 @@ impl GitCore {
         Ok(out.code == 0 && !out.stdout_str().trim().is_empty())
     }
 
+    /// The commits `base..head` as full shas, newest first, at most `limit` (all of `head`'s
+    /// history when there is no `base`). Both ends are resolved first, so neither can be read as
+    /// an option.
+    pub(crate) async fn read_range_shas(&self, repo: RepoId, base: Option<&str>, head: &str, limit: u32) -> Result<Vec<String>> {
+        let head_sha = self.read_resolve(repo, head).await?;
+        let range = match base {
+            Some(b) => format!("{}..{head_sha}", self.read_resolve(repo, b).await?),
+            None => head_sha,
+        };
+        let max = format!("--max-count={}", limit.clamp(1, 100_000));
+        let out = self
+            .exec(self.git_reading(repo, None).args(["rev-list", &max, "--end-of-options", &range, "--"]))
+            .await
+            .map_err(map_missing)?;
+        Ok(out.stdout_str().lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
+    }
+
     /// What one commit changed. A root commit is compared with the empty tree.
     pub async fn commit_diff(&self, repo: RepoId, sha: &str) -> Result<Arc<Diff>> {
         let c = self.read_commit(repo, sha).await?;

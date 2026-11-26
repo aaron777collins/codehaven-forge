@@ -13,6 +13,7 @@
 
 pub mod action_def;
 pub mod actions;
+pub mod anchors;
 pub mod diag;
 pub mod discover;
 pub mod expr;

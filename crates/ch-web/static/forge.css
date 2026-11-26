@@ -255,6 +255,11 @@ details.step > summary .status-fail { color: var(--danger); }
 .release-file-name { overflow-wrap: anywhere; }
 .release-file-meta { font-size: 0.85rem; }
 .release-delete { margin-left: auto; }
+.release-file-sha { flex-basis: 100%; font-size: 0.8rem; min-width: 0; }
+.release-file-sha code { font-family: var(--mono, ui-monospace, monospace); overflow-wrap: anywhere; word-break: break-all; }
+.release-file-delete { margin-left: auto; }
+.release-manage { display: grid; gap: var(--s3); margin: var(--s3) 0; }
+.release-upload input[type=file] { max-width: 100%; }
 
 /* ---------- settings, repository settings, admin ---------- */
 .settings-tabs { display: flex; gap: var(--s1); border-bottom: 1px solid var(--border); margin-bottom: var(--s4); overflow-x: auto; }

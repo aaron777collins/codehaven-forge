@@ -234,6 +234,7 @@ async fn an_app_is_refused_every_forbidden_action_however_much_it_was_given(pool
                     draft: false,
                     prerelease: false,
                     generate_notes: false,
+                    make_latest: Default::default(),
                 },
                 &c(),
             )

@@ -223,3 +223,69 @@ async fn repo_import_makes_a_private_repository_for_an_existing_account_and_audi
     admin::run(&state, import("aaron", "second", &bare, true)).await.unwrap();
     assert_eq!(count(&pool, "SELECT count(*) FROM outbox_events WHERE kind = 'push'").await, before + 1);
 }
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn run_ci_starts_a_workflow_as_the_repository_owner(pool: PgPool) {
+    use ch_core::model::*;
+    let (state, _dir) = state(pool.clone()).await;
+    admin::run(&state, create("alice", true)).await.unwrap();
+    let alice: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = 'alice'").fetch_one(&pool).await.unwrap();
+    let who = Actor::User { id: ch_core::UserId(alice), is_admin: false, has_2fa: true, via: ch_core::AuthVia::Session };
+    let c = ClientInfo::local();
+    let repo = state
+        .repos
+        .create(
+            &who,
+            NewRepo {
+                owner_id: ch_core::UserId(alice),
+                name: "app".into(),
+                description: String::new(),
+                visibility: Visibility::Private,
+                default_branch: None,
+                auto_init: true,
+            },
+            &c,
+        )
+        .await
+        .unwrap();
+    let expected = state.git.resolve(repo.id, "refs/heads/main").await.unwrap();
+    state
+        .git
+        .commit_file_change(
+            &who,
+            CommitFileChange {
+                repo_id: repo.id,
+                branch: "main".into(),
+                new_branch: None,
+                expected_sha: Some(expected),
+                changes: vec![FileChange {
+                    path: ".codehaven/workflows/ci.yml".into(),
+                    content: Some(
+                        b"name: ci\non: workflow_dispatch\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n"
+                            .to_vec(),
+                    ),
+                    renamed_from: None,
+                }],
+                message: "workflow".into(),
+                author: Signature { name: "A".into(), email: "a@example.org".into(), at: chrono::Utc::now() },
+            },
+            &c,
+        )
+        .await
+        .unwrap();
+    let run = |repo: &str, workflow: &str| AdminCommand::RunCi { repo: repo.into(), workflow: workflow.into(), branch: String::new() };
+    // The owner may not run CI yet: refused in plain words, nothing created.
+    let err = admin::run(&state, run("alice/app", "ci.yml")).await.unwrap_err().to_string();
+    assert!(err.contains("Workflows are off"), "{err}");
+    sqlx::query("UPDATE users SET can_run_ci = true WHERE id = $1").bind(alice).execute(&pool).await.unwrap();
+    admin::run(&state, run("alice/app", "ci.yml")).await.unwrap();
+    let (event, jobs): (String, i64) =
+        sqlx::query_as("SELECT r.event, (SELECT count(*) FROM workflow_jobs j WHERE j.run_id = r.id) FROM workflow_runs r")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((event.as_str(), jobs), ("workflow_dispatch", 1));
+    assert!(admin::run(&state, run("alice/app", "nope.yml")).await.is_err());
+    assert!(admin::run(&state, run("alice/missing", "ci.yml")).await.is_err());
+    assert!(admin::run(&state, run("not-a-repo", "ci.yml")).await.is_err());
+}

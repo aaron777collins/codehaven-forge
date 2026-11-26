@@ -88,6 +88,11 @@ only after the proxy has a wildcard certificate for that name, which needs a DNS
 
 ## Runners
 
+After a deploy, recreate the runner on the new image and check `codehaven admin runners`: one online runner,
+and no second registration with the same name that has stopped calling in (revoke it with `revoke-runner`; the
+web page at Site admin > Runners does the same). A revoked runner stays in the table with a revoked time, which is
+the record that it was removed.
+
 `codehaven admin runners` lists the registered runners and when each last called in.
 `codehaven admin revoke-runner <id>` removes one: its credential stops working at once. Both run
 inside the server container, like the other admin commands:
@@ -142,6 +147,10 @@ passed, 2135 of 2135 tests:
 bash deploy/dev/host.sh <stream> 'CH_STREAM=<stream> bash deploy/dev/release.sh shots-mine'
 bash deploy/dev/host.sh <stream> 'SHOTS_STEPS=0-4,26 SHOTS_DOGFOOD=1 SHOTS_NO_SHOTS=1 bash deploy/dev/shots.sh --tag shots-mine'
 ```
+
+`SHOTS_JOBS_REACH_SERVER=1` is the same fixed address and guard exception without the builder and Postgres
+images. The real-actions steps (35 and 36) need it, and the internet, because the server fetches each action from
+GitHub: `SHOTS_STEPS=0-4,35,36 SHOTS_JOBS_REACH_SERVER=1 SHOTS_NO_SHOTS=1 bash deploy/dev/shots.sh --tag shots-mine`.
 
 `SHOTS_DOGFOOD=1` loads the builder and Postgres images into the stack's daemon, gives the server a
 fixed address on the runners network (`deploy/compose.shots-dogfood.yml`) and tells the daemon's

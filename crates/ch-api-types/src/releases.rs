@@ -23,6 +23,9 @@ pub struct ReleaseAsset {
     pub uploader: Option<SimpleUser>,
     /// `uploaded`, `open`, ...
     pub state: String,
+    /// `sha256:` and the 64 hex characters of the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
 }
 
 /// `GET /repos/{owner}/{repo}/releases/{id}`: a tagged release.
@@ -74,6 +77,12 @@ pub struct CreateRelease {
     pub prerelease: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generate_release_notes: Option<bool>,
+    /// `true`, `false` or `legacy`, as a string (GitHub's shape).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub make_latest: Option<String>,
+    /// Not supported here: a value is a 422 that names the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discussion_category_name: Option<String>,
 }
 
 /// Body of `PATCH /repos/{owner}/{repo}/releases/{id}`.
@@ -93,6 +102,19 @@ pub struct UpdateRelease {
     pub prerelease: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generate_release_notes: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub make_latest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discussion_category_name: Option<String>,
+}
+
+/// Body of `PATCH /repos/{owner}/{repo}/releases/assets/{id}`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateAsset {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// Body of `POST /repos/{owner}/{repo}/releases/generate-notes`.
@@ -123,6 +145,7 @@ mod tests {
             url: "https://code.example.com/api/v3/repos/octo/haven/releases/assets/99".into(),
             uploader: Some(crate::user("octocat", 1)),
             state: "uploaded".into(),
+            digest: None,
         }
     }
 
@@ -171,6 +194,8 @@ mod tests {
             draft: Some(false),
             prerelease: Some(false),
             generate_release_notes: Some(true),
+            make_latest: None,
+            discussion_category_name: None,
         };
         crate::roundtrip("releases_create_release", &req);
     }
@@ -185,6 +210,8 @@ mod tests {
             draft: None,
             prerelease: None,
             generate_release_notes: None,
+            make_latest: None,
+            discussion_category_name: None,
         };
         crate::roundtrip("releases_update_release", &req);
     }

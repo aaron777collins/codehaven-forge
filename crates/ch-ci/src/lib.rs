@@ -18,6 +18,7 @@ pub mod clock;
 pub mod ctx;
 pub mod discovery;
 pub mod environments;
+pub mod event_json;
 pub mod history;
 pub mod live;
 pub mod logs;

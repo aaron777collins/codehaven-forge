@@ -23,6 +23,8 @@ pub mod noreply;
 pub mod not_built;
 pub mod packages;
 pub mod pages;
+pub mod range;
+pub mod release_notes;
 pub mod services;
 pub mod state;
 pub mod text;

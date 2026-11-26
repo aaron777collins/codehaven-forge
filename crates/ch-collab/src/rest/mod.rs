@@ -120,7 +120,29 @@ pub fn page_of<T: Serialize>(items: Vec<T>, uri: &Uri, ext_url: &str, paging: Pa
     resp
 }
 
+/// One page of a list that is all in memory: the `Link` header says exactly whether there is a
+/// next page and which is the last.
+pub fn page_slice<T: Serialize>(all: Vec<T>, uri: &Uri, ext_url: &str, paging: Paging) -> Response {
+    let per = paging.per_page() as usize;
+    let total = all.len();
+    let start = (paging.page() as usize - 1).saturating_mul(per);
+    let has_next = start.saturating_add(per) < total;
+    let last = total.div_ceil(per).max(1) as u32;
+    let items: Vec<T> = all.into_iter().skip(start).take(per).collect();
+    let mut resp = ok(items);
+    if let Some(link) = link_header_with(uri, ext_url, paging, has_next, Some(last))
+        && let Ok(v) = HeaderValue::from_str(&link)
+    {
+        resp.headers_mut().insert(header::LINK, v);
+    }
+    resp
+}
+
 fn link_header(uri: &Uri, ext_url: &str, paging: Paging, has_next: bool) -> Option<String> {
+    link_header_with(uri, ext_url, paging, has_next, None)
+}
+
+fn link_header_with(uri: &Uri, ext_url: &str, paging: Paging, has_next: bool, last: Option<u32>) -> Option<String> {
     let page = paging.page();
     if !has_next && page == 1 {
         return None;
@@ -145,6 +167,9 @@ fn link_header(uri: &Uri, ext_url: &str, paging: Paging, has_next: bool) -> Opti
     let mut parts = Vec::new();
     if has_next {
         parts.push(format!("{}; rel=\"next\"", make(page + 1)));
+        if let Some(l) = last {
+            parts.push(format!("{}; rel=\"last\"", make(l)));
+        }
     }
     if page > 1 {
         parts.push(format!("{}; rel=\"prev\"", make(page - 1)));

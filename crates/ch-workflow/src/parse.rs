@@ -91,8 +91,17 @@ fn on_parser_stack<T: Send>(f: impl FnOnce() -> Result<T, Vec<Diagnostic>> + Sen
 
 /// The YAML parser, with the options every road here uses.
 fn load(text: &str) -> Result<Node, Vec<Diagnostic>> {
-    let opts = LoaderOptions::default().error_on_duplicate_keys(true).prevent_coercion(true);
-    marked_yaml::parse_yaml_with_options(0, text, opts).map_err(|e| vec![load_error(&e)])
+    let opts = || LoaderOptions::default().error_on_duplicate_keys(true).prevent_coercion(true);
+    match marked_yaml::parse_yaml_with_options(0, text, opts()) {
+        Ok(n) => Ok(n),
+        // The reader has no anchors, GitHub's syntax has: write the file out with each alias
+        // replaced by its value (size-limited, see `anchors`), and read that.
+        Err(LoadError::UnexpectedAnchor(m)) => {
+            let expanded = crate::anchors::expand(text).map_err(|msg| vec![Diagnostic::new(m.line() as u32, m.column() as u32, msg)])?;
+            marked_yaml::parse_yaml_with_options(0, &expanded, opts()).map_err(|e| vec![load_error(&e)])
+        }
+        Err(e) => Err(vec![load_error(&e)]),
+    }
 }
 
 /// Why a file was turned away before the YAML parser saw it.

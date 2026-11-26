@@ -432,6 +432,7 @@ impl Ctx {
             url: self.api(&format!("/releases/assets/{}", a.id)),
             uploader: a.uploader.as_ref().map(|u| self.user(u)),
             state: "uploaded".into(),
+            digest: (!a.sha256.is_empty()).then(|| format!("sha256:{}", a.sha256)),
         }
     }
 

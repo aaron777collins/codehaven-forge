@@ -22,7 +22,7 @@ pub mod manifests;
 pub mod names;
 pub mod nuget;
 pub mod packages;
-pub mod range;
+pub use ch_core::range;
 
 use access::{Access, authorize};
 use axum::Router;

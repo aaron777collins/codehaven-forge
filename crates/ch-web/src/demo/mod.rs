@@ -956,6 +956,7 @@ fn release_view(release: Release) -> ReleaseView {
             label: String::new(),
             content_type: "application/gzip".into(),
             size: 2_411_724,
+            sha256: "3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b".into(),
             download_count: 7,
             uploader: None,
             created_at: release.created_at,

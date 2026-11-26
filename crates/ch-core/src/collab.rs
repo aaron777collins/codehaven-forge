@@ -402,9 +402,36 @@ pub struct AssetInfo {
     pub label: String,
     pub content_type: String,
     pub size: i64,
+    /// The SHA-256 of the file, as 64 lower case hex characters.
+    pub sha256: String,
     pub download_count: i64,
     pub uploader: Option<UserRef>,
     pub created_at: DateTime<Utc>,
+}
+
+/// What `make_latest` asks for when a release is published or edited (GitHub's three values).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MakeLatest {
+    /// Make it the latest release. The default for a published release that is not a prerelease.
+    #[default]
+    True,
+    /// Never the latest.
+    False,
+    /// The latest only when its version is the highest published so far.
+    Legacy,
+}
+
+impl MakeLatest {
+    /// Reads the value of the REST field, which GitHub sends as a string.
+    pub fn parse(s: &str) -> Option<MakeLatest> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "true" => Some(MakeLatest::True),
+            "false" => Some(MakeLatest::False),
+            "legacy" => Some(MakeLatest::Legacy),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -424,6 +451,8 @@ pub struct ReleaseDraft {
     pub draft: bool,
     pub prerelease: bool,
     pub generate_notes: bool,
+    #[serde(default)]
+    pub make_latest: MakeLatest,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -435,6 +464,7 @@ pub struct ReleaseEdit {
     pub draft: Option<bool>,
     pub prerelease: Option<bool>,
     pub generate_notes: Option<bool>,
+    pub make_latest: Option<MakeLatest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

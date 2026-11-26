@@ -215,8 +215,11 @@ impl Ci for CiImpl {
             Some(u) => user_login(&self.ctx, u).await?.unwrap_or_default(),
             None => String::new(),
         };
-        let payload =
-            json!({ "inputs": resolved, "ref": full_ref, "repository": { "full_name": info.full_name() }, "sender": { "login": login } });
+        let payload = json!({
+            "inputs": resolved, "ref": full_ref, "workflow": d.path,
+            "repository": crate::triggers::repo_json(&self.ctx, &info).await,
+            "sender": crate::triggers::sender_json(&self.ctx, actor.author_id(), &login).await,
+        });
         let t = Trigger {
             repo,
             sha,

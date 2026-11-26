@@ -611,10 +611,9 @@ async fn releases_over_http(pool: PgPool) {
     assert_eq!(r.headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
     assert_eq!(r.headers[header::CONTENT_LENGTH], "13");
     assert_eq!(api.get(&carol, &format!("{R}/releases/assets/{aid}")).await.json()["download_count"], 1);
-    assert_eq!(
-        api.call(&bob, "PATCH", &format!("{R}/releases/assets/{aid}"), Some(json!({ "name": "x" }))).await.status,
-        StatusCode::METHOD_NOT_ALLOWED
-    );
+    // An asset is renamed in place (ch-ctk.10), and its digest is in the answer.
+    let r = api.call(&bob, "PATCH", &format!("{R}/releases/assets/{aid}"), Some(json!({ "name": "x" }))).await;
+    assert_eq!((r.status, r.json()["name"].as_str()), (StatusCode::OK, Some("x")));
     assert_eq!(api.call(&bob, "DELETE", &format!("{R}/releases/assets/{aid}"), None).await.status, StatusCode::NO_CONTENT);
     assert_eq!(api.get(&carol, &format!("{R}/releases/assets/{aid}")).await.status, StatusCode::NOT_FOUND);
 
@@ -625,6 +624,158 @@ async fn releases_over_http(pool: PgPool) {
     assert_eq!(g.json()["name"], "v2");
     assert_eq!(api.call(&bob, "DELETE", &format!("{R}/releases/{id}"), None).await.status, StatusCode::NO_CONTENT);
     assert_eq!(api.get(&carol, &format!("{R}/releases/{id}")).await.status, StatusCode::NOT_FOUND);
+}
+
+/// A request with a `Range` header; the shared `raw` has no place for one.
+async fn ranged(api: &Api, actor: &Actor, method: &str, uri: &str, range: &str) -> Reply {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(format!("/api/v3{uri}"))
+        .header(header::ACCEPT, "application/octet-stream")
+        .header(header::RANGE, range)
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut().insert(actor.clone());
+    let resp = api.app.clone().oneshot(req).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    Reply { status: parts.status, headers: parts.headers, body: body.collect().await.unwrap().to_bytes() }
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn release_lists_are_paged_with_a_link_header(pool: PgPool) {
+    let w = World::new(pool).await;
+    let api = Api::new(&w).await;
+    let (bob, carol) = (w.bob_a(), w.carol_a());
+    // Nothing yet: an empty list and no Link header.
+    let r = api.get(&carol, &format!("{R}/releases")).await;
+    assert_eq!((r.status, r.json()), (StatusCode::OK, json!([])));
+    assert!(r.headers.get(header::LINK).is_none());
+    for n in 0..31 {
+        let r = api.call(&bob, "POST", &format!("{R}/releases"), Some(json!({ "tag_name": format!("v{n}") }))).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.message());
+    }
+    let p1 = api.get(&carol, &format!("{R}/releases")).await;
+    assert_eq!(p1.json().as_array().unwrap().len(), 30, "30 by default");
+    let link = p1.headers[header::LINK].to_str().unwrap().to_string();
+    assert!(link.contains("page=2>; rel=\"next\"") && link.contains("page=2>; rel=\"last\""), "{link}");
+    assert!(!link.contains("rel=\"prev\"") && !link.contains("rel=\"first\""), "{link}");
+    let p2 = api.get(&carol, &format!("{R}/releases?page=2")).await;
+    assert_eq!(p2.json().as_array().unwrap().len(), 1);
+    let link = p2.headers[header::LINK].to_str().unwrap().to_string();
+    assert!(link.contains("rel=\"prev\"") && link.contains("rel=\"first\"") && !link.contains("rel=\"next\""), "{link}");
+    // Newest first, and a page past the end is empty.
+    assert_eq!(p1.json()[0]["tag_name"], "v30");
+    assert_eq!(api.get(&carol, &format!("{R}/releases?page=9")).await.json(), json!([]));
+    // per_page is capped at 100 and 4 pages of 10 cover 31 releases.
+    assert_eq!(api.get(&carol, &format!("{R}/releases?per_page=500")).await.json().as_array().unwrap().len(), 31);
+    let p4 = api.get(&carol, &format!("{R}/releases?per_page=10&page=4")).await;
+    assert_eq!(p4.json().as_array().unwrap().len(), 1);
+    let first = api.get(&carol, &format!("{R}/releases?per_page=10")).await;
+    assert!(first.headers[header::LINK].to_str().unwrap().contains("page=4>; rel=\"last\""));
+
+    // Assets page the same way.
+    let id = p1.json()[0]["id"].as_i64().unwrap();
+    for n in 0..3 {
+        let r = api.raw(&bob, "POST", &format!("{R}/releases/{id}/assets?name=f{n}"), Some("text/plain"), None, Body::from("x")).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.message());
+    }
+    let a1 = api.get(&carol, &format!("{R}/releases/{id}/assets?per_page=2")).await;
+    assert_eq!(a1.json().as_array().unwrap().len(), 2);
+    assert!(a1.headers[header::LINK].to_str().unwrap().contains("rel=\"next\""));
+    assert_eq!(api.get(&carol, &format!("{R}/releases/{id}/assets?per_page=2&page=2")).await.json().as_array().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn release_assets_have_digests_ranges_and_can_be_renamed(pool: PgPool) {
+    let w = World::new(pool).await;
+    let api = Api::new(&w).await;
+    let (bob, carol, eve) = (w.bob_a(), w.carol_a(), w.eve_a());
+    let id = api.call(&bob, "POST", &format!("{R}/releases"), Some(json!({ "tag_name": "v1" }))).await.json()["id"].as_i64().unwrap();
+    let up = |name: &'static str, data: &'static str| {
+        let uri = format!("{R}/releases/{id}/assets?name={name}");
+        let (api, bob) = (&api, &bob);
+        async move { api.raw(bob, "POST", &uri, Some("text/plain"), None, Body::from(data)).await }
+    };
+    let a = up("a.txt", "hello world").await.json();
+    let aid = a["id"].as_i64().unwrap();
+    assert_eq!(a["digest"], "sha256:b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+    up("b.txt", "other").await;
+
+    // Rename and label. A name that is taken is a 422, a reader may not, another repository's id is a 404.
+    let r = api.call(&bob, "PATCH", &format!("{R}/releases/assets/{aid}"), Some(json!({ "name": "renamed.txt", "label": "Notes" }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.message());
+    assert_eq!((r.json()["name"].as_str(), r.json()["label"].as_str()), (Some("renamed.txt"), Some("Notes")));
+    assert_eq!(r.json()["browser_download_url"], "https://test.example/alice/demo/releases/download/v1/renamed.txt");
+    let clash = api.call(&bob, "PATCH", &format!("{R}/releases/assets/{aid}"), Some(json!({ "name": "b.txt" }))).await;
+    assert_eq!(clash.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(clash.json()["errors"][0]["code"], "already_exists", "{}", String::from_utf8_lossy(&clash.body));
+    assert_eq!(
+        api.call(&carol, "PATCH", &format!("{R}/releases/assets/{aid}"), Some(json!({ "name": "x" }))).await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        api.call(&eve, "PATCH", &format!("{R}/releases/assets/{aid}"), Some(json!({ "name": "x" }))).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        api.call(&bob, "PATCH", &format!("{R}/releases/assets/999999"), Some(json!({ "name": "x" }))).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    // One range, HEAD, a range past the end, and a range that is not one.
+    let uri = format!("{R}/releases/assets/{aid}");
+    let part = ranged(&api, &carol, "GET", &uri, "bytes=0-4").await;
+    assert_eq!(part.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(&part.body[..], b"hello");
+    assert_eq!(part.headers[header::CONTENT_RANGE], "bytes 0-4/11");
+    assert_eq!(part.headers[header::CONTENT_LENGTH], "5");
+    assert_eq!(part.headers[header::ACCEPT_RANGES], "bytes");
+    let tail = ranged(&api, &carol, "GET", &uri, "bytes=6-").await;
+    assert_eq!((tail.status, &tail.body[..]), (StatusCode::PARTIAL_CONTENT, &b"world"[..]));
+    let past = ranged(&api, &carol, "GET", &uri, "bytes=50-").await;
+    assert_eq!(past.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(past.headers[header::CONTENT_RANGE], "bytes */11");
+    let odd = ranged(&api, &carol, "GET", &uri, "bytes=a-b").await;
+    assert_eq!((odd.status, odd.body.len()), (StatusCode::OK, 11), "a range that is not one is ignored");
+    let head = ranged(&api, &carol, "HEAD", &uri, "bytes=0-4").await;
+    assert_eq!((head.status, head.body.len()), (StatusCode::OK, 0));
+    assert_eq!(head.headers[header::CONTENT_LENGTH], "11");
+    // Every read of bytes counted (the first range, the tail and the whole file); the refusal and the HEAD did not.
+    assert_eq!(api.get(&carol, &uri).await.json()["download_count"], 3);
+    // A draft's file is not for a reader, range or not.
+    let d = api.call(&bob, "POST", &format!("{R}/releases"), Some(json!({ "tag_name": "v2", "draft": true }))).await.json()["id"]
+        .as_i64()
+        .unwrap();
+    let r = api.raw(&bob, "POST", &format!("{R}/releases/{d}/assets?name=secret.bin"), Some("text/plain"), None, Body::from("s")).await;
+    let sid = r.json()["id"].as_i64().unwrap();
+    assert_eq!(ranged(&api, &carol, "GET", &format!("{R}/releases/assets/{sid}"), "bytes=0-0").await.status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "ch_db::MIGRATOR")]
+async fn release_bodies_for_release_actions(pool: PgPool) {
+    let w = World::new(pool).await;
+    let api = Api::new(&w).await;
+    let (bob, carol) = (w.bob_a(), w.carol_a());
+    // Discussions are not built: the field is refused by name.
+    let r = api
+        .call(&bob, "POST", &format!("{R}/releases"), Some(json!({ "tag_name": "v1", "discussion_category_name": "Announcements" })))
+        .await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(r.json()["errors"][0]["field"], "discussion_category_name");
+    // An empty one is nothing.
+    let ok = api.call(&bob, "POST", &format!("{R}/releases"), Some(json!({ "tag_name": "v1", "discussion_category_name": "" }))).await;
+    assert_eq!(ok.status, StatusCode::CREATED, "{}", ok.message());
+    // make_latest is a string, as GitHub sends it, and anything else is a 422.
+    let bad = api.call(&bob, "POST", &format!("{R}/releases"), Some(json!({ "tag_name": "v2", "make_latest": "sometimes" }))).await;
+    assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(bad.json()["errors"][0]["field"], "make_latest");
+    let r = api.call(&bob, "POST", &format!("{R}/releases"), Some(json!({ "tag_name": "v2", "make_latest": "false" }))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.message());
+    assert_eq!(api.get(&carol, &format!("{R}/releases/latest")).await.json()["tag_name"], "v1");
+    let id = r.json()["id"].as_i64().unwrap();
+    let r = api.call(&bob, "PATCH", &format!("{R}/releases/{id}"), Some(json!({ "make_latest": "true" }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.message());
+    assert_eq!(api.get(&carol, &format!("{R}/releases/latest")).await.json()["tag_name"], "v2");
 }
 
 #[sqlx::test(migrator = "ch_db::MIGRATOR")]

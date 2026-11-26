@@ -102,6 +102,7 @@ async fn seed(pool: PgPool) -> World {
         draft: false,
         prerelease: false,
         generate_notes: false,
+        make_latest: Default::default(),
     };
     state.releases.create(&a, proj.id, draft, &c()).await.unwrap();
     sqlx::query("INSERT INTO webhooks (scope, repo_id, url, events) VALUES ('repo', $1, 'https://hooks.example.org/x', '{push}')")

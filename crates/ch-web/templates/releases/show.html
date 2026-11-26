@@ -19,12 +19,35 @@
   <h4 class="release-files-h">Files</h4>
   <ul class="release-file-list">
     {% for a in row.assets %}
-    <li class="release-file"><a class="release-file-name" href="{{ a.href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>{{ a.name }}</a><span class="muted release-file-meta">{{ a.size }}, {{ a.downloads }}</span></li>
+    <li class="release-file"><a class="release-file-name" href="{{ a.href }}"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>{{ a.name }}</a><span class="muted release-file-meta">{{ a.size }}, {{ a.downloads }}</span>
+      <span class="release-file-sha muted"><span class="release-file-sha-label">SHA-256</span> <code>{{ a.sha256 }}</code></span>
+      {% if can_write %}
+      <form method="post" action="{{ asset_delete_base }}/{{ a.id }}/delete" class="release-file-delete" data-confirm="Delete this file? This cannot be undone.">
+        {% call ui::csrf_field(c.csrf) %}
+        <button class="btn small danger" type="submit" aria-label="Delete file {{ a.name }}"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"/></svg>Delete file</button>
+      </form>
+      {% endif %}
+    </li>
     {% endfor %}
   </ul>
 </section>
 {% endif %}
   {% if can_write %}
+  <section class="release-manage" aria-label="Manage this release">
+    <form method="post" action="{{ upload_action }}" enctype="multipart/form-data" class="release-upload">
+      <label for="release-files" class="release-files-h">Add files</label>
+      <div class="row"><input id="release-files" name="file" type="file" multiple required><button class="btn" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>Upload files</button></div>
+    </form>
+    <div class="row release-actions">
+      {% if row.draft %}
+      <form method="post" action="{{ publish_action }}">
+        {% call ui::csrf_field(c.csrf) %}
+        <button class="btn btn-primary" type="submit">Publish release</button>
+      </form>
+      {% endif %}
+      <a class="btn" href="{{ edit_href }}"><svg class="icon" aria-hidden="true"><use href="#i-pencil"/></svg>Edit</a>
+    </div>
+  </section>
   <form method="post" action="{{ delete_action }}" class="release-delete" data-confirm="Delete this release? This cannot be undone.">
     {% call ui::csrf_field(c.csrf) %}
     <button class="btn small danger" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"/></svg>Delete this release</button>

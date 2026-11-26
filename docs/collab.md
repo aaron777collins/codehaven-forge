@@ -62,6 +62,7 @@ each, rather than the older ones that return bare ids.
 Everything is under `/api/v3` and private to signed-in callers (the gate in `codehaven` enforces that, and
 `anonymous_surface.rs` walks these routes too). A repository the caller cannot read is a 404.
 Lists take `page` and `per_page` and answer with a `Link` header, offering `next` whenever the page came back full.
+The release and release-asset lists are paged from memory, so their `Link` says exactly whether there is a next page and which is the last.
 
 ```
 GET  /issues, /user/issues                              ?filter=assigned|created|mentioned|review_requested
@@ -93,7 +94,7 @@ GET POST DELETE .../pulls/{n}/requested_reviewers
 
 GET POST .../releases   GET .../releases/latest   GET .../releases/tags/{tag...}   POST .../releases/generate-notes
 GET PATCH DELETE .../releases/{id}                      GET POST .../releases/{id}/assets   (raw body, ?name= &label=)
-GET DELETE .../releases/assets/{id}                     (Accept: application/octet-stream downloads the file)
+GET PATCH DELETE .../releases/assets/{id}               (Accept: application/octet-stream downloads the file; PATCH renames and labels)
 
 GET /search/repositories, /search/issues, /search/users, /search/code   (code needs `repo:owner/name`)
 ```
@@ -210,3 +211,32 @@ gives no commits to one that is, unless an open pull request from it was confirm
   `/pulls/comments`, as GitHub's.
 
 All of these need a signed-in person; signed out they answer like a repository that is not there.
+
+## Releases for release actions (ch-ctk.10, ch-ctk.11)
+
+What `softprops/action-gh-release`, `ncipollo/release-action` and the `gh` CLI's REST calls need, over
+`/api/v3/repos/{owner}/{repo}/releases`:
+
+- **A job's own token** creates, uploads, replaces and publishes when its workflow says `contents: write`
+  (the release is the `codehaven-actions` bot's, and starts no workflow). A read-only job is refused.
+  A job's token may also fetch the `browser_download_url` of a file of its own repository.
+- **Uploads** use the release's `upload_url` (the same server) and are not cut off by the request clock: the sender
+  may be silent for `http.upload_idle_secs` (60) between two chunks and no longer. A file is at most 2 GiB. A second
+  file of the same name is a 422 `already_exists`; delete the old one (or rename it with `PATCH .../assets/{id}`,
+  `{name, label}`) first, which is what the actions do to replace a file.
+- **`digest`** on every asset (`sha256:` and 64 hex characters, in the API, the page and the `release` event);
+  `HEAD` and a single `Range` on downloads (206, 416 past the end, an unusable header is ignored, only a read of
+  bytes counts as a download); an `ETag` that is the digest.
+- **`make_latest`** (`"true"`, `"false"`, `"legacy"`, as a string): the latest release is the newest mark among
+  published releases that are not prereleases and did not ask to be left out (`false`); publishing marks a release,
+  `legacy` marks only a release whose version is the highest so far. `discussion_category_name` is a 422 that names
+  the field. Migration 0146 backfills the marks from the publish dates.
+- **Generated notes** list the pull requests whose merge commit is between the previous tag and the target (not those
+  merged "since a date"), grouped by label. A `.github/release.yml` (or `.codehaven/release.yml`) on the default branch
+  names the sections (`changelog.categories`, labels, `*`) and what to leave out (`exclude.labels`,
+  `exclude.authors`); a file that cannot be read means the built-in grouping, never an error.
+- **The web** can edit (`/{owner}/{repo}/releases/{id}/edit`), publish a draft, upload files (a multipart form that
+  streams into storage, the CSRF token checked from the query before the body is read) and delete a file; every
+  file shows its SHA-256. `/{owner}/{repo}/releases/latest` and `.../releases/latest/download/{name}` redirect to the
+  latest release and its file, for a README to link to; signed out they answer only for a public repository, and
+  look like a page that is not there for any other.

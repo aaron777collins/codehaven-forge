@@ -142,6 +142,16 @@ impl FieldErrors {
         }
     }
 
+    /// The general message, else the first field's, else a plain fallback: one sentence for a flash.
+    pub fn general_or_first(&self) -> String {
+        if !self.general.is_empty() {
+            return self.general.clone();
+        }
+        let mut keys: Vec<&String> = self.map.keys().collect();
+        keys.sort();
+        keys.first().and_then(|k| self.map.get(*k)).cloned().unwrap_or_else(|| "That did not work.".to_string())
+    }
+
     pub fn general(msg: &str) -> Self {
         FieldErrors { general: msg.into(), map: HashMap::new() }
     }

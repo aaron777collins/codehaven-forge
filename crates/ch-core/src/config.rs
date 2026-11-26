@@ -52,6 +52,9 @@ pub struct HttpConfig {
     /// neighbour on a shared Docker network (ch-dc1).
     pub trusted_proxy_hosts: Vec<String>,
     pub request_timeout_secs: u64,
+    /// A release file upload may take as long as it needs, but the sender may stay silent this
+    /// long at most between two chunks of the body.
+    pub upload_idle_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -239,7 +242,7 @@ impl Default for ServerConfig {
 }
 impl Default for HttpConfig {
     fn default() -> Self {
-        Self { trusted_proxies: Vec::new(), trusted_proxy_hosts: Vec::new(), request_timeout_secs: 60 }
+        Self { trusted_proxies: Vec::new(), trusted_proxy_hosts: Vec::new(), request_timeout_secs: 60, upload_idle_secs: 60 }
     }
 }
 impl Default for DatabaseConfig {

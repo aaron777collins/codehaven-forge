@@ -867,8 +867,9 @@ impl<'a> Engine<'a> {
         self.log.line(n, "##[endgroup]").await;
 
         let pid_path = self.dirs.pid_path(n);
-        let argv = shell::wrap_with_pidfile(&pid_path.to_string_lossy(), &plan.argv(&script_path.to_string_lossy()));
-        let spec = ExecSpec { argv, env: self.exec_env(step_env, files), workdir: Some(workdir), user: None };
+        let mut exec_env = self.exec_env(step_env, files);
+        let argv = shell::wrap_with_pidfile(&pid_path.to_string_lossy(), &plan.argv(&script_path.to_string_lossy()), &mut exec_env);
+        let spec = ExecSpec { argv, env: exec_env, workdir: Some(workdir), user: None };
         self.own_for_container().await;
         self.dirty = true;
         self.owner = Owner::Container;
@@ -1548,13 +1549,13 @@ impl Engine<'_> {
             return StepRun::failed();
         }
         let pid_path = self.dirs.pid_path(n);
-        let argv = shell::wrap_with_pidfile(&pid_path.to_string_lossy(), &["node".to_string(), script.to_string_lossy().into_owned()]);
-        let spec = ExecSpec {
-            argv,
-            env: self.exec_env(env, files),
-            workdir: Some(self.dirs.workspace.to_string_lossy().into_owned()),
-            user: None,
-        };
+        let mut exec_env = self.exec_env(env, files);
+        let argv = shell::wrap_with_pidfile(
+            &pid_path.to_string_lossy(),
+            &["node".to_string(), script.to_string_lossy().into_owned()],
+            &mut exec_env,
+        );
+        let spec = ExecSpec { argv, env: exec_env, workdir: Some(self.dirs.workspace.to_string_lossy().into_owned()), user: None };
         self.own_for_container().await;
         self.dirty = true;
         self.owner = Owner::Container;

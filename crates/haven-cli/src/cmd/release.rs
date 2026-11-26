@@ -29,6 +29,8 @@ async fn create(ctx: &Ctx, a: ReleaseCreateArgs) -> Result<i32> {
         draft: Some(a.draft),
         prerelease: Some(a.prerelease),
         generate_release_notes: if a.generate_notes { Some(true) } else { None },
+        make_latest: None,
+        discussion_category_name: None,
     };
     let api = ctx.api()?;
     let rel: Release = api.post(&format!("/repos/{owner}/{repo}/releases"), &req).await?;

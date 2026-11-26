@@ -503,6 +503,18 @@ impl Releases for ReleasesSvc {
         actor.deny_app("manage releases")?;
         self.0.release_delete_asset(actor, repo, asset, client).await
     }
+    async fn update_asset(
+        &self,
+        actor: &Actor,
+        repo: RepoId,
+        asset: i64,
+        name: Option<&str>,
+        label: Option<&str>,
+        client: &ClientInfo,
+    ) -> Result<AssetInfo> {
+        actor.deny_app("manage releases")?;
+        self.0.release_update_asset(actor, repo, asset, name, label, client).await
+    }
     async fn open_asset(
         &self,
         actor: &Actor,

@@ -373,10 +373,41 @@ pub fn contexts_read(expr: &str) -> Vec<String> {
     found.into_iter().collect()
 }
 
+/// The jobs an expression reads through `needs`, lower case, each once: `needs.build.outputs.v` and
+/// `needs['build'].result` both give `build`. The whole context (`toJSON(needs)`, `needs.*`) is
+/// an error, because what it reads cannot be named.
+pub fn needs_read(expr: &str) -> Result<Vec<String>, String> {
+    let mut found = std::collections::BTreeSet::new();
+    scan(expr, |tok, end| {
+        let Tok::Word { text, root: true } = tok else { return Ok(None) };
+        if !text.eq_ignore_ascii_case("needs") {
+            return Ok(None);
+        }
+        match access_at(expr, end) {
+            Access::Named(name, next) => {
+                found.insert(name.to_ascii_lowercase());
+                Ok(Some(next))
+            }
+            Access::Other => Err("the whole `needs` context cannot be used here, name the job you need".into()),
+        }
+    })?;
+    Ok(found.into_iter().collect())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn needs_read_names_the_jobs() {
+        assert_eq!(needs_read("needs.build.outputs.v == needs['Test'].result").unwrap(), ["build", "test"]);
+        assert_eq!(needs_read("format('{0}', needs.a.outputs.x, needs.a.result)").unwrap(), ["a"]);
+        assert_eq!(needs_read("'needs.x' == github.needs.y").unwrap(), Vec::<String>::new());
+        for bad in ["toJSON(needs)", "needs.*", "needs[github.ref]"] {
+            assert!(needs_read(bad).unwrap_err().contains("whole `needs` context"), "{bad}");
+        }
+    }
 
     fn rw() -> Rewrite {
         let mut r = Rewrite::default();
