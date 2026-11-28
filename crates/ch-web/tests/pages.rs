@@ -1361,3 +1361,48 @@ async fn the_notification_settings_page_says_whether_email_is_possible() {
     assert_eq!(r.status, StatusCode::SEE_OTHER);
     assert!(r.location().starts_with("/login?next="), "{}", r.location());
 }
+
+// ------------------------------------------------------------------ docs link
+
+fn docs_hrefs(html: &str) -> usize {
+    html.matches("target=\"_blank\" rel=\"noopener noreferrer\">Docs</a>").count()
+        + html
+            .matches("rel=\"noopener noreferrer\"><svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-book-open\"/></svg>Docs</a>")
+            .count()
+}
+
+#[tokio::test]
+async fn the_docs_link_shows_signed_in_and_signed_out_and_follows_the_setting() {
+    const DEFAULT: &str = "https://aaron777collins.github.io/codehaven-forge/";
+    let anchor = |u: &str| format!("<a href=\"{u}\" target=\"_blank\" rel=\"noopener noreferrer\">Docs</a>");
+
+    // Default: footer and account menu when signed in, footer on the sign-in page.
+    let page = get("/").await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains(&anchor(DEFAULT)), "footer link");
+    assert!(
+        page.body.contains(&format!("<a role=\"menuitem\" href=\"{DEFAULT}\" target=\"_blank\" rel=\"noopener noreferrer\">")),
+        "menu link"
+    );
+    let out = send(&app(), Method::GET, "/login", None, None, None).await;
+    assert!(out.body.contains(&anchor(DEFAULT)), "signed-out footer link");
+    assert!(!out.body.contains("role=\"menuitem\""), "no account menu when signed out");
+
+    // Override.
+    let mut c = demo::config();
+    c.server.docs_url = "https://docs.example.org/x/".into();
+    let custom = send(&demo::router_with(c), Method::GET, "/", Some(&ada()), None, None).await;
+    assert!(custom.body.contains(&anchor("https://docs.example.org/x/")));
+    assert!(!custom.body.contains(DEFAULT));
+
+    // Empty turns it off everywhere.
+    let mut c = demo::config();
+    c.server.docs_url = String::new();
+    let off = demo::router_with(c);
+    let page = send(&off, Method::GET, "/", Some(&ada()), None, None).await;
+    let out = send(&off, Method::GET, "/login", None, None, None).await;
+    for html in [&page.body, &out.body] {
+        assert_eq!(docs_hrefs(html), 0);
+        assert!(!html.contains(">Docs</a>"));
+    }
+}

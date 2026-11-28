@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Using CI | Codehaven</title>
+<meta name="description" content="Workflows are written in the syntax of GitHub Actions.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html" aria-current="page">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html" aria-current="page">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#turn-ci-on">Turn CI on</a></li><li class="l2"><a href="#write-a-workflow">Write a workflow</a></li><li class="l3"><a href="#events">Events</a></li><li class="l3"><a href="#what-the-syntax-covers">What the syntax covers</a></li><li class="l3"><a href="#actions">Actions</a></li><li class="l3"><a href="#reusable-workflows-and-composite-actions">Reusable workflows and composite actions</a></li><li class="l3"><a href="#services-and-containers">Services and containers</a></li><li class="l2"><a href="#secrets-variables-and-tokens">Secrets, variables and tokens</a></li><li class="l3"><a href="#environments">Environments</a></li><li class="l2"><a href="#runs-logs-artifacts-and-caches">Runs, logs, artifacts and caches</a></li><li class="l2"><a href="#what-is-not-supported">What is not supported</a></li><li class="l2"><a href="#run-codehavens-own-ci-on-itself">Run Codehaven's own CI on itself</a></li></ul></div></details>
+<article class="prose">
+<h1 id="using-ci">Using CI <a class="anchor" href="#using-ci" aria-label="Link to this section">#</a></h1>
+<p>Workflows are written in the syntax of GitHub Actions. A registered runner picks up each job and runs it in a container. This page covers setting CI up, writing workflows, and what is and is not supported. The inner workings are in <a href="ci.html">CI</a> and <a href="runner.html">The runner and the CLI</a>.</p>
+<h2 id="turn-ci-on">Turn CI on <a class="anchor" href="#turn-ci-on" aria-label="Link to this section">#</a></h2>
+<p>If you want a guided first run, follow "Your first CI run" in <a href="getting-started.html">Getting started</a>. CI needs four things.</p>
+<ol>
+<li>
+<p><strong>A runner.</strong> A site admin takes a one-use registration token at Site admin, Runners, then on the instance's host:</p>
+<pre tabindex="0"><code class="language-sh">HAVEN_RUNNER_TOKEN=&lt;token&gt; sudo -E bash deploy/prod/ci-up.sh register runner-1
+sudo bash deploy/prod/ci-up.sh</code></pre>
+<p>The first command saves the runner's credential. The second starts the runner's own Docker daemon (<code>dind</code>), builds the job image <code>codehaven-job:trixie</code> and loads it into that daemon, and starts the runner. It is safe to run again. A token lasts 60 minutes and works once; a failed attempt needs a new one. After restoring a backup, register with <code>--replace</code>.</p>
+<p>The token can also come from the server: <code>deploy/compose.sh exec server codehaven admin runner-token</code>. Add <code>--repo owner/name</code> to make a runner that serves only that repository.</p>
+</li>
+<li>
+<p><strong>Permission for the repository's owner to run CI.</strong> Workflows run only when the account that owns the repository has the "Can run CI" role. The first admin has it. An invite grants it when you tick "Their pushes may run workflows on this server's runners". Otherwise a site admin chooses Allow CI at Site admin, Users. An organization starts with the permission its creator had at that moment. Until then the Actions tab says "Workflows cannot run here yet", pushes start nothing and Run workflow is refused.</p>
+</li>
+<li>
+<p><strong>A server address that jobs can reach.</strong> A job gets its code from <code>CODEHAVEN_EXTERNAL_URL</code>. Jobs run in a separate Docker daemon that may reach the internet and nothing else on the host, except tcp/443 on the host's own public addresses. So the address must be a public <code>https</code> name on port 443. A loopback or private address, or another port, makes every checkout fail.</p>
+</li>
+<li>
+<p><strong>Actions on for the repository</strong> (the default) and the repository not archived.</p>
+</li>
+</ol>
+<p><code>haven-runner</code> is the runner program. On the instance's host it already runs in the <code>runner</code> container, so you never run it by hand there. A runner on another Linux machine needs Docker and a copy of the binary. Take it out of the runner image that <code>up.sh</code> built (the tag is <code>CODEHAVEN_TAG</code>, or the short commit id of the checkout), or build it from <code>crates/haven-runner</code> with Rust (<code>cargo build --release -p haven-runner</code>):</p>
+<pre tabindex="0"><code class="language-sh">docker create --name hr codehaven-runner:&lt;tag&gt;
+docker cp hr:/usr/local/bin/haven-runner ./haven-runner
+docker rm hr</code></pre>
+<p>Then, on that machine:</p>
+<pre tabindex="0"><code class="language-sh">HAVEN_RUNNER_TOKEN=&lt;token&gt; haven-runner register --url https://code.example.com --name runner-2
+haven-runner run</code></pre>
+<p><code>haven-runner check</code> reports problems with the credential, the settings file, Docker, the work directory, disk and the server.</p>
+<h2 id="write-a-workflow">Write a workflow <a class="anchor" href="#write-a-workflow" aria-label="Link to this section">#</a></h2>
+<p>Put a YAML file in <code>.codehaven/workflows/</code> or <code>.github/workflows/</code> in the repository, ending in <code>.yml</code> or <code>.yaml</code>. If both directories have a file of the same name, <code>.codehaven</code> wins. Files over 256 KiB are refused, and a file that does not parse shows as a failed run with the line and the reason.</p>
+<pre tabindex="0"><code class="language-yaml">name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test</code></pre>
+<h3 id="events">Events <a class="anchor" href="#events" aria-label="Link to this section">#</a></h3>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Event</th><th scope="col">Notes</th></tr></thead><tbody><tr><td><code>push</code></td><td><code>branches</code>, <code>branches-ignore</code>, <code>tags</code>, <code>tags-ignore</code>, <code>paths</code>, <code>paths-ignore</code>. Patterns use <code>*</code>, <code>**</code>, <code>?</code>, <code>+</code>, <code>[]</code> and <code>!</code>. Path filters are skipped for pushes of more than 3000 files</td></tr><tr><td><code>pull_request</code></td><td><code>types</code> (default <code>opened</code>, <code>synchronize</code>, <code>reopened</code>) and branch and path filters. It tests the pull request's head commit, not a merge into the base</td></tr><tr><td><code>workflow_dispatch</code></td><td>A manual run from the Actions tab, the API or <code>haven workflow run</code>, with typed <code>inputs</code></td></tr><tr><td><code>schedule</code></td><td>Cron entries, in UTC</td></tr><tr><td><code>release</code></td><td><code>types</code>: published, created, released, prereleased, unpublished, edited, deleted</td></tr><tr><td><code>workflow_call</code></td><td>Makes the workflow reusable (below)</td></tr></tbody></table></div>
+<p>Any other event, including <code>workflow_run</code>, <code>repository_dispatch</code> and <code>pull_request_target</code>, is refused when the file is read, with a reason. They are never ignored silently.</p>
+<h3 id="what-the-syntax-covers">What the syntax covers <a class="anchor" href="#what-the-syntax-covers" aria-label="Link to this section">#</a></h3>
+<p>Workflow keys: <code>name</code>, <code>run-name</code>, <code>on</code>, <code>env</code>, <code>defaults</code>, <code>concurrency</code>, <code>permissions</code> and <code>jobs</code>. Job keys: <code>name</code>, <code>runs-on</code>, <code>needs</code>, <code>if</code>, <code>env</code>, <code>defaults</code>, <code>outputs</code>, <code>steps</code>, <code>strategy</code>, <code>container</code>, <code>services</code>, <code>environment</code>, <code>timeout-minutes</code>, <code>continue-on-error</code>, <code>concurrency</code>, <code>permissions</code>, and <code>uses</code> with <code>with</code> and <code>secrets</code> for a reusable workflow. Step keys: <code>id</code>, <code>name</code>, <code>if</code>, <code>uses</code>, <code>with</code>, <code>run</code>, <code>shell</code>, <code>working-directory</code>, <code>env</code>, <code>continue-on-error</code> and <code>timeout-minutes</code>. An unknown key is an error that names the nearest valid one.</p>
+<p>Expressions (<code>${{ }}</code>) follow the Actions rules, with the <code>github</code>, <code>env</code>, <code>vars</code>, <code>secrets</code>, <code>needs</code>, <code>matrix</code>, <code>steps</code>, <code>job</code>, <code>runner</code>, <code>inputs</code> and <code>strategy</code> contexts, and the functions <code>format</code>, <code>join</code>, <code>toJSON</code>, <code>fromJSON</code>, <code>contains</code>, <code>startsWith</code>, <code>endsWith</code>, <code>hashFiles</code>, <code>success</code>, <code>failure</code>, <code>always</code> and <code>cancelled</code>. A matrix may have <code>include</code> and <code>exclude</code> and at most 256 cells. YAML anchors and aliases work; merge keys (<code>&lt;&lt;: *base</code>) are refused, as GitHub refuses them.</p>
+<p><code>runs-on</code> takes a label. The runner stack offers <code>ubuntu-latest</code>, <code>ubuntu-24.04</code> and <code>linux</code>, and all three run the job image: Debian trixie with git, a C toolchain, Node, Python and Rust (stable, clippy and rustfmt). It identifies itself as Ubuntu 24.04 so tools such as <code>setup-python</code> fetch the builds they publish. A queued job whose labels no registered runner has fails after 15 minutes, and its page lists the labels the runners offer. Any other job fails as timed out after a day in the queue.</p>
+<h3 id="actions">Actions <a class="anchor" href="#actions" aria-label="Link to this section">#</a></h3>
+<p><code>uses:</code> names an action:</p>
+<ul>
+<li><strong>Built in:</strong> <code>actions/checkout</code>, <code>actions/cache</code> (with <code>restore</code> and <code>save</code>), <code>actions/upload-artifact</code>, <code>actions/download-artifact</code> and <code>docker://image</code>.</li>
+<li><strong>From GitHub:</strong> <code>owner/repo@ref</code>, fetched and run, pinned to a commit for the whole run. JavaScript actions (<code>node12</code> to <code>node24</code>) and composite actions work. Real, unmodified actions run, such as <code>setup-node</code>, <code>setup-python</code>, <code>setup-go</code>, <code>setup-java</code>, <code>setup-dotnet</code>, <code>ruby/setup-ruby</code>, <code>dtolnay/rust-toolchain</code>, <code>actions/github-script</code>, <code>softprops/action-gh-release</code> and <code>ncipollo/release-action</code>.</li>
+<li><strong>From this server:</strong> <code>haven_owner/repo@ref</code> for a repository here, used when it is the job's own, public, or the same owner's and at least as visible, and readable by whoever started the run.</li>
+<li><strong>In the job's workspace:</strong> <code>./path/to/action</code>.</li>
+</ul>
+<p>A site admin controls which actions may run, at Site admin, Actions: none, selected actions (an allow list of <code>owner/*</code> or <code>owner/repo</code>), or all public actions, a block list that always wins, an option to require full commit SHAs, and whether repositories on this instance may be used. Actions in the job's own repository are always allowed. A failed run offers to widen the list in one click.</p>
+<h3 id="reusable-workflows-and-composite-actions">Reusable workflows and composite actions <a class="anchor" href="#reusable-workflows-and-composite-actions" aria-label="Link to this section">#</a></h3>
+<p>A workflow with <code>on: workflow_call</code> (with <code>inputs</code>, <code>secrets</code> and <code>outputs</code>) can be called by a job of another: <code>uses: ./.codehaven/workflows/build.yml</code> for a file in the same repository, or <code>uses: haven_owner/repo/.codehaven/workflows/build.yml@ref</code> for another repository here. <code>.github/workflows</code> works in both. Workflows are never fetched from GitHub. A calling job takes only <code>name</code>, <code>needs</code>, <code>if</code>, <code>uses</code>, <code>with</code>, <code>secrets</code> and <code>permissions</code>. Put <code>strategy</code> and <code>concurrency</code> on a job of the called workflow instead. Calls nest 4 deep. Called jobs see only what the caller passed: <code>secrets: inherit</code> passes every secret, and the called token is never wider than the caller's.</p>
+<p>An action with <code>runs.using: composite</code> (a folder with <code>action.yml</code>) runs its steps inside the step that used it. It cannot read <code>secrets</code>, <code>vars</code>, <code>needs</code> or <code>matrix</code> itself: pass what it needs in <code>with:</code>.</p>
+<h3 id="services-and-containers">Services and containers <a class="anchor" href="#services-and-containers" aria-label="Link to this section">#</a></h3>
+<p><code>services:</code> start before the first step, in the job's network, so the job reaches a service at <code>localhost:&lt;port&gt;</code> and by its name (<code>postgres:5432</code>). The job waits up to 120 seconds for each port a service lists. <code>container:</code> sets the job's image. Options are limited to a safe list: no <code>--privileged</code>, <code>--network</code> or <code>--cap-add</code>.</p>
+<h2 id="secrets-variables-and-tokens">Secrets, variables and tokens <a class="anchor" href="#secrets-variables-and-tokens" aria-label="Link to this section">#</a></h2>
+<p>At Settings, Secrets and variables (needs Admin):</p>
+<ul>
+<li><strong>Secrets</strong> are write only. Workflows read them as <code>${{ secrets.NAME }}</code>, people cannot. The name is saved in upper case, and saving again replaces the value. The runner masks every secret value in logs before sending them.</li>
+<li><strong>Variables</strong> are readable and editable, as <code>${{ vars.NAME }}</code>.</li>
+<li><strong>Workflow permissions</strong> cap what a job's own token may do: read only, or read and write when the workflow asks.</li>
+</ul>
+<p>Secrets and variables can also be set for a whole organization through the REST API.</p>
+<p><code>GITHUB_TOKEN</code> (<code>${{ secrets.GITHUB_TOKEN }}</code> or <code>${{ github.token }}</code>) is a short-lived token for one job. With no <code>permissions:</code> it reads contents and packages. <code>contents: write</code> pushes, tags and makes releases; <code>statuses: write</code> posts commit statuses; <code>issues</code> or <code>pull-requests: write</code> opens and comments on issues and pull requests; <code>packages: write</code> pushes packages of the job's own repository. Naming any scope sets the others to none. Its writes go through branch protection with no bypass, never change workflow files and start no workflow. A pull request from a fork gets read access to contents and nothing else.</p>
+<h3 id="environments">Environments <a class="anchor" href="#environments" aria-label="Link to this section">#</a></h3>
+<p>A job can name where it deploys with <code>environment: prod</code>. A repository admin sets what that environment asks for at Settings, Environments:</p>
+<ul>
+<li><strong>Required reviewers</strong>: up to 6 people with write access. One of them must approve each job that reaches it, on the run page.</li>
+<li><strong>Wait timer</strong>: 0 to 43,200 minutes, from when the job reaches the environment.</li>
+<li><strong>Branches</strong>: patterns for the branches that may deploy (<code>main</code>, <code>release/*</code>). A tag is <code>tags/v*</code>. A run from any other ref fails at once. A pull request from a fork never matches.</li>
+<li><strong>Secrets</strong>: only that environment's jobs read them, only after the reviewers and timer allow it, and they win over a repository secret of the same name.</li>
+</ul>
+<p>An environment that does not exist deploys with no gate. <code>environment:</code> URLs are not supported.</p>
+<h2 id="runs-logs-artifacts-and-caches">Runs, logs, artifacts and caches <a class="anchor" href="#runs-logs-artifacts-and-caches" aria-label="Link to this section">#</a></h2>
+<p>The Actions tab lists workflows and runs. Open a run to see its jobs, and a job to follow its log live. From there you can run a workflow by hand (Run workflow), re-run all jobs or only failed ones, cancel, and approve a run that waits. <code>GET /runs/{id}/logs</code> is a zip with a text file per job.</p>
+<ul>
+<li><strong>Logs</strong> stop growing at 64 MiB per job, with a note. They are kept 90 days.</li>
+<li><strong>Artifacts</strong> from <code>upload-artifact</code>: up to 2 GiB each, 100 per run, kept at most 90 days. A job reads its own run's artifacts. The v4 toolkit works too.</li>
+<li><strong>Caches</strong> from <code>actions/cache</code> and the setup actions' built in caches: up to 2 GiB each and 10 GiB per repository (the least recently used go first), dropped after 7 days unused. A job restores caches saved on its own ref, the default branch or, for a pull request, its base branch, never another branch's. A pull request from a fork reads and never writes.</li>
+<li><strong>Status badges</strong> at <code>/{owner}/{repo}/actions/workflows/&lt;file&gt;/badge.svg</code>, for signed-in viewers.</li>
+<li><strong>Who is told:</strong> only failed runs notify the person who started them.</li>
+</ul>
+<p>A pull request from a fork waits for someone with write access to approve that commit before anything runs. A push or pull request from a connected app that lacks the workflows permission also waits for approval.</p>
+<h2 id="what-is-not-supported">What is not supported <a class="anchor" href="#what-is-not-supported" aria-label="Link to this section">#</a></h2>
+<p>Jobs run in containers on a Docker daemon of their own, with no socket and no extra capabilities. By design:</p>
+<ul>
+<li><strong>Docker inside a job</strong> (<code>docker build</code>, buildx, <code>docker login</code>, Docker container actions) fails at once with a reason. Use a <code>docker://image</code> step or a <code>run:</code> step. The container registry itself works from outside, with a real Docker client.</li>
+<li><strong>OIDC and cloud login</strong> (<code>id-token: write</code> gives nothing), GraphQL (so most of <code>gh pr</code> and <code>gh issue</code>), the Pages deploy action, <code>environment:</code> URLs, <code>workflow_run</code>, <code>repository_dispatch</code> and <code>pull_request_target</code> fail with a named error and do not hang.</li>
+<li><strong>Windows, macOS and ARM runners.</strong> Runners are Linux containers.</li>
+<li><strong><code>strategy</code> or <code>concurrency</code> on a calling job</strong> of a reusable workflow.</li>
+<li><strong>A virtual machine for each job.</strong> Jobs share the runner's daemon. Invited people are trusted, so this is a limit for now, not a gap.</li>
+</ul>
+<p>See <a href="state.html">State of the project</a> for the reasons.</p>
+<h2 id="run-codehavens-own-ci-on-itself">Run Codehaven's own CI on itself <a class="anchor" href="#run-codehavens-own-ci-on-itself" aria-label="Link to this section">#</a></h2>
+<p><code>.codehaven/workflows/ci.yml</code> runs <code>make ci CH_NATIVE=1</code> in the builder image. To use it on your instance, load the builder image once with <code>CODEHAVEN_CI_BUILDER=1 sudo -E bash deploy/prod/ci-up.sh</code> (a few GiB), make sure the owner may run CI, and push the source to a private repository. <a href="operations.html">Running an instance</a> has the steps.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="pull-requests.html"><small>Previous</small>Issues and pull requests</a><a class="next" href="packages.html"><small>Next</small>Container registry and packages</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/using-ci.md" rel="noopener">docs/using-ci.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#turn-ci-on">Turn CI on</a></li><li class="l2"><a href="#write-a-workflow">Write a workflow</a></li><li class="l3"><a href="#events">Events</a></li><li class="l3"><a href="#what-the-syntax-covers">What the syntax covers</a></li><li class="l3"><a href="#actions">Actions</a></li><li class="l3"><a href="#reusable-workflows-and-composite-actions">Reusable workflows and composite actions</a></li><li class="l3"><a href="#services-and-containers">Services and containers</a></li><li class="l2"><a href="#secrets-variables-and-tokens">Secrets, variables and tokens</a></li><li class="l3"><a href="#environments">Environments</a></li><li class="l2"><a href="#runs-logs-artifacts-and-caches">Runs, logs, artifacts and caches</a></li><li class="l2"><a href="#what-is-not-supported">What is not supported</a></li><li class="l2"><a href="#run-codehavens-own-ci-on-itself">Run Codehaven's own CI on itself</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

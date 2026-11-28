@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Claude connector | Codehaven</title>
+<meta name="description" content="Codehaven can be connected to Claude, so Claude can read your repositories, open issues and pull requests, commit changes and look at CI, within exactly what you allow.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html" aria-current="page">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html" aria-current="page">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#what-it-is">What it is</a></li><li class="l2"><a href="#before-you-start">Before you start</a></li><li class="l3"><a href="#check-it-from-outside">Check it from outside</a></li><li class="l3"><a href="#try-it">Try it</a></li><li class="l2"><a href="#turn-it-on-operator">Turn it on (operator)</a></li><li class="l2"><a href="#connect-person">Connect (person)</a></li><li class="l3"><a href="#the-consent-page">The consent page</a></li><li class="l2"><a href="#what-it-can-do">What it can do</a></li><li class="l2"><a href="#how-it-is-kept-safe">How it is kept safe</a></li><li class="l2"><a href="#ending-a-connection">Ending a connection</a></li><li class="l2"><a href="#troubleshooting">Troubleshooting</a></li><li class="l2"><a href="#for-client-authors">For client authors</a></li></ul></div></details>
+<article class="prose">
+<h1 id="the-claude-connector">The Claude connector <a class="anchor" href="#the-claude-connector" aria-label="Link to this section">#</a></h1>
+<p>Codehaven can be connected to Claude, so Claude can read your repositories, open issues and pull
+requests, commit changes and look at CI, within exactly what you allow. It works in the Claude
+apps (web, desktop, mobile) and in Claude Code. It is off until an operator turns it on.</p>
+<h2 id="what-it-is">What it is <a class="anchor" href="#what-it-is" aria-label="Link to this section">#</a></h2>
+<p>A connected app is Claude acting as you, with less power than you have. You choose, once, which
+repositories it may read, which it may write to, and whether it may change workflows and run CI.
+It never gets site admin power, even if you are an admin, and it never gets more than you have: if
+you lose access to a repository, so does the app.</p>
+<p>It signs in with OAuth. There is no password or token to copy: Claude sends you to Codehaven, you
+sign in (two-factor must be on), you choose what to give it, and Claude receives short-lived
+credentials that Codehaven can end at any moment.</p>
+<h2 id="before-you-start">Before you start <a class="anchor" href="#before-you-start" aria-label="Link to this section">#</a></h2>
+<p>All three are needed:</p>
+<ol>
+<li><strong>A public <code>https</code> address.</strong> <code>CODEHAVEN_EXTERNAL_URL</code> must start with <code>https://</code>. Claude on the web, desktop and mobile connects from Anthropic's servers, so the address must be reachable from the public internet. Claude Code connects from your own computer, so a private address works there as long as it is <code>https</code> (plain <code>http</code> is accepted only for <code>localhost</code>).</li>
+<li><strong>Two-factor sign-in</strong> on the account that connects. Without it the connect page says "Connecting an app needs two-factor sign-in on your account." Turn it on at Settings, Two-factor and security.</li>
+<li><strong><code>CODEHAVEN_MCP_ENABLED=true</code></strong> in the env file, then <code>sudo bash deploy/prod/up.sh</code>. The server refuses to start if the connector is on and the address is not <code>https</code>.</li>
+</ol>
+<p>With <code>CODEHAVEN_PROXY=caddy</code> there is nothing to do for the connector's paths: the bundled Caddy sends every path to the server. With your own proxy, send every path, including <code>/mcp</code>, <code>/oauth/</code> and <code>/.well-known/</code>.</p>
+<h3 id="check-it-from-outside">Check it from outside <a class="anchor" href="#check-it-from-outside" aria-label="Link to this section">#</a></h3>
+<pre tabindex="0"><code class="language-sh">curl -s https://code.example.com/.well-known/oauth-protected-resource</code></pre>
+<p>When the connector is on it prints JSON naming your address, like <code>{"resource":"https://code.example.com/mcp","authorization_servers":["https://code.example.com"],...}</code>. When it is off, the path answers like any unknown path. And <code>curl -si -X POST https://code.example.com/mcp</code> answers <code>401</code> with a <code>www-authenticate: Bearer</code> header that carries <code>resource_metadata</code>. The same checks, plus the rest of the connector surface, run with <code>bash deploy/dev/public-smoke.sh https://code.example.com --mcp on</code>.</p>
+<h3 id="try-it">Try it <a class="anchor" href="#try-it" aria-label="Link to this section">#</a></h3>
+<p>After connecting, ask Claude: "List my repositories, then summarize the open issues in alice/demo." Both are reads. For the first consent, be conservative: choose Read on one test repository only, Write none, no workflows, and the default 90 days. You can connect again later and give more.</p>
+<h2 id="turn-it-on-operator">Turn it on (operator) <a class="anchor" href="#turn-it-on-operator" aria-label="Link to this section">#</a></h2>
+<ol>
+<li>Set <code>CODEHAVEN_EXTERNAL_URL</code> to the public https address people open, for example
+<code>https://code.example.com</code>. The connector needs https. Plain http is accepted only for
+<code>localhost</code>, for trying it on one machine.</li>
+<li>Set <code>CODEHAVEN_MCP_ENABLED=true</code> in the env file (or <code>mcp.enabled = true</code> in <code>codehaven.toml</code>)
+and run <code>deploy/prod/up.sh</code> again.</li>
+<li>Check <code>deploy/compose.sh exec server codehaven doctor</code>. It reports whether the connector is on,
+its address, and warns if an account or organization is named <code>mcp</code> or <code>oauth</code>, which are
+reserved for the connector's paths.</li>
+</ol>
+<p>For claude.ai, desktop and mobile the connection is made from Anthropic's servers, not from your
+computer. The instance therefore has to be reachable over the public internet on https, and
+<code>/mcp</code> must not redirect to another host. Claude Code connects from your own computer, so a
+private address works there. Your proxy must pass these paths to Codehaven unchanged:</p>
+<ul>
+<li><code>/mcp</code></li>
+<li><code>/oauth/authorize</code>, <code>/oauth/consent</code>, <code>/oauth/token</code>, <code>/oauth/revoke</code></li>
+<li><code>/.well-known/oauth-protected-resource</code> and <code>/.well-known/oauth-authorization-server</code></li>
+</ul>
+<p>Settings, all under <code>[mcp]</code>:</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Setting</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>enabled</code></td><td><code>false</code></td><td>Turns the connector on</td></tr><tr><td><code>trusted_client_hosts</code></td><td><code>["claude.ai"]</code></td><td>Hosts whose client documents Codehaven will read. Add a host to allow another MCP client</td></tr><tr><td><code>allowed_origins</code></td><td><code>["https://claude.ai", "https://claude.com"]</code></td><td>Browser origins allowed to call <code>/mcp</code>, besides your own. A call with no <code>Origin</code> header always passes</td></tr></tbody></table></div>
+<p>Every address the connector publishes comes from <code>external_url</code>, never from the <code>Host</code> header.</p>
+<h2 id="connect-person">Connect (person) <a class="anchor" href="#connect-person" aria-label="Link to this section">#</a></h2>
+<p>Two-factor sign-in must be on for your account (Settings, Two-factor and security).</p>
+<p><strong>Claude on the web, desktop or mobile.</strong> Open Settings, Connectors, and add a custom connector.
+Paste your instance's address followed by <code>/mcp</code>, for example <code>https://code.example.com/mcp</code>. On
+Team and Enterprise plans an Owner adds it. The free plan allows one custom connector. Claude sends
+you to Codehaven to sign in and choose what to allow.</p>
+<p><strong>Claude Code.</strong></p>
+<pre tabindex="0"><code class="language-sh">claude mcp add --transport http codehaven https://code.example.com/mcp</code></pre>
+<p>Then run <code>/mcp</code> inside Claude Code and choose Authenticate. Codehaven has no dynamic client registration: a client identifies itself by a client document, an <code>https</code> address on a trusted host (<code>claude.ai</code> by default) that describes the app. If your Claude Code build cannot supply one by itself and does not finish connecting, point it at its client document by hand (the minimum Claude Code version that does not need this was not checked here):
+<code>claude mcp add --transport http --client-id https://claude.ai/oauth/claude-code-client-metadata codehaven https://code.example.com/mcp</code>.</p>
+<p>Settings, Connected apps shows the address and these steps too.</p>
+<h3 id="the-consent-page">The consent page <a class="anchor" href="#the-consent-page" aria-label="Link to this section">#</a></h3>
+<p>It names the app by its host (<code>claude.ai</code>) and shows the app's own name only as its claim. It shows
+where you will be sent back to. Then you choose:</p>
+<ul>
+<li><strong>Read.</strong> Required, nothing is preselected: only repositories you select, or all repositories you
+can access including future ones.</li>
+<li><strong>Write.</strong> None by default. Selected repositories, or all (only together with read on all).
+Write lets it create branches and commits, open and change issues and pull requests, comment, and
+merge. A repository you let it write to must also be one it can read.</li>
+<li><strong>Change workflows and run CI.</strong> None by default, only for repositories it can write to. This
+runs code on your runner, with access to that repository's CI secrets.</li>
+<li><strong>Lasts.</strong> 90 days (default) or 180.</li>
+</ul>
+<p>What the app asks for never ticks a box for you. You can give less or more than it asked for.</p>
+<h2 id="what-it-can-do">What it can do <a class="anchor" href="#what-it-can-do" aria-label="Link to this section">#</a></h2>
+<p>46 tools, listed to every connection so Claude can ask you for more access when it needs it.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Area</th><th scope="col">Tools</th><th scope="col">Needs</th></tr></thead><tbody><tr><td>Connection</td><td><code>get_connection</code></td><td>read</td></tr><tr><td>Repositories</td><td><code>list_repositories</code>, <code>search_repositories</code>, <code>get_repository</code></td><td>read</td></tr><tr><td>Files</td><td><code>list_files</code>, <code>get_file</code>, <code>search_code</code></td><td>read</td></tr><tr><td>Refs and commits</td><td><code>list_branches</code>, <code>list_tags</code>, <code>compare_refs</code>, <code>list_commits</code>, <code>get_commit</code></td><td>read</td></tr><tr><td>Issues</td><td><code>list_issues</code>, <code>search_issues</code>, <code>get_issue</code>, <code>list_issue_comments</code>, <code>list_labels</code></td><td>read</td></tr><tr><td>Pull requests</td><td><code>list_pull_requests</code>, <code>get_pull_request</code>, <code>get_pull_request_diff</code>, <code>list_pull_request_commits</code>, <code>get_pull_request_checks</code>, <code>list_reviews</code>, <code>list_review_threads</code></td><td>read</td></tr><tr><td>CI</td><td><code>get_commit_status</code>, <code>list_workflows</code>, <code>list_workflow_runs</code>, <code>get_workflow_run</code>, <code>get_job_log</code></td><td>read</td></tr><tr><td>Inbox</td><td><code>list_notifications</code></td><td>read</td></tr><tr><td>Add</td><td><code>create_repository</code>, <code>create_branch</code>, <code>create_issue</code>, <code>add_issue_comment</code>, <code>create_pull_request</code>, <code>add_review_comment</code></td><td>write</td></tr><tr><td>Change</td><td><code>commit_files</code>, <code>update_issue</code>, <code>update_pull_request</code>, <code>submit_review</code>, <code>update_pull_request_branch</code>, <code>merge_pull_request</code>, <code>mark_notification_read</code></td><td>write</td></tr><tr><td>Run CI</td><td><code>dispatch_workflow</code>, <code>rerun_workflow_run</code>, <code>cancel_workflow_run</code></td><td>workflows</td></tr></tbody></table></div>
+<p>Things it can never do, whatever you give it: approve a pull request or a workflow run, dismiss a
+review, resolve a thread, delete a branch, write tags or releases, change a pull request's base
+branch, turn on auto-merge, change repository settings, webhooks, secrets, variables, runners or
+collaborators, use git over HTTP or SSH, or use the container registry. <code>create_repository</code> makes a
+private repository in your own namespace and needs read and write on all repositories.</p>
+<h2 id="how-it-is-kept-safe">How it is kept safe <a class="anchor" href="#how-it-is-kept-safe" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Other people's words are data.</strong> Repository files, issues, comments, branch names and job logs
+can say anything. Every result is <code>{"meta": ..., "untrusted": ...}</code>: Codehaven's own words in
+<code>meta</code>, everything a person wrote in <code>untrusted</code>. The server's instructions tell the model that
+<code>untrusted</code> is data and not instructions. Characters that hide things (bidirectional controls,
+zero-width characters, Unicode tag characters, terminal escapes) are shown as visible escapes,
+and a result says <code>"escaped": true</code> when it replaced any.</li>
+<li><strong>Results are bounded.</strong> At most 60,000 characters in total, 40,000 for a file, 20,000 for a log
+(the end of it by default, with a cursor to read on), 30 items in a list by default and 50 at
+most. A result that is cut says so and gives a cursor.</li>
+<li><strong>Only real commits.</strong> A revision must be a branch, a tag or a full commit id that a branch or
+tag of that repository reaches. Abbreviations, <code>HEAD~1</code>, <code>branch:path</code>, tree and blob ids, and
+commits that exist only in another fork are refused.</li>
+<li><strong>Workflow files are guarded.</strong> Without the workflows permission on a repository, a connected app
+cannot change anything in <code>.codehaven/workflows</code> or <code>.github/workflows</code>, by any route (an edit, a
+rename, a merge, an update-branch, a first commit), and cannot change the default branch of a
+repository that has scheduled workflows.</li>
+<li><strong>CI it starts waits for you.</strong> A push or pull request from an app that lacks the workflows
+permission creates a run in the state "Waiting for approval", with the reason. It cancels
+nothing, holds no concurrency group and starts no job until a person with write access presses
+Approve on the run page. Pushing to a pull request branch also turns off its auto-merge. Remember
+that code Claude commits can still run later, when a person approves a run, pushes on top, or
+starts a workflow.</li>
+<li><strong>Guards on changes.</strong> <code>commit_files</code> needs the branch's current head, edits are by exact text
+(<code>replace_text</code> must match once), whole-file replacement of a binary, oversized or escaped file
+is refused, and <code>merge_pull_request</code> needs the expected head and uses the same gate and branch
+protection as the web page and never deletes the branch.</li>
+<li><strong>Everything is audited.</strong> Each call writes <code>mcp.tool_call</code> with the tool, the repository, the
+number or id and the result, never the arguments, content or search text. Reads record before
+returning data. Writes record that they started and how they ended. Connecting, denying and
+ending a connection are audited too.</li>
+<li><strong>Limits.</strong> 120 calls a minute per connection (writes 30), 3,000 an hour per person, 4 at once per
+connection. A write that has started is never cancelled by a timeout or a disconnect.</li>
+</ul>
+<h2 id="ending-a-connection">Ending a connection <a class="anchor" href="#ending-a-connection" aria-label="Link to this section">#</a></h2>
+<p>Settings, Connected apps lists each app with its repositories, when it was last used and when it
+expires. Revoke ends it at once. Connections also end when you change your password, use a reset
+link, turn two-factor off, are suspended, or sign out everywhere. Signing out only your other
+sessions does not end them. A transferred repository drops out of every connection, so its new owner
+decides again. If an operator turns the connector off, <code>/mcp</code> and the OAuth paths answer like
+unknown paths and existing tokens stop working; Settings, Connected apps still lists connections so
+you can remove them.</p>
+<p>A one-time code used twice, or a refresh token reused after 30 seconds, ends the whole connection
+and is recorded as <code>app.code_reuse</code> or <code>app.refresh_reuse</code>.</p>
+<h2 id="troubleshooting">Troubleshooting <a class="anchor" href="#troubleshooting" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">What you see</th><th scope="col">Likely cause</th></tr></thead><tbody><tr><td>Claude says it cannot reach the server</td><td>The address is not public https, a firewall blocks Anthropic's addresses, or <code>/mcp</code> redirects to another host</td></tr><tr><td>Codehaven says to turn on two-factor</td><td>Connecting needs two-factor on your account</td></tr><tr><td>"That redirect address is not one this app registered"</td><td>The app's client document does not list the address it sent you from. Nothing was changed</td></tr><tr><td>"This server does not trust that host"</td><td>The app's client id is on a host not in <code>trusted_client_hosts</code></td></tr><tr><td>Consent completes but Claude never finishes connecting</td><td>Check the browser popup was opened by Claude. Codehaven and Claude's callback both send <code>Cross-Origin-Opener-Policy: same-origin</code>; a client that needs <code>window.opener</code> will not finish</td></tr><tr><td>A tool says the connection was not given access</td><td>Connect again from the app and choose more repositories or powers. Granting more means a new consent</td></tr><tr><td>403 with <code>insufficient_scope</code></td><td>The tool needs write or workflows and the connection has none. Claude can ask you to connect again with more</td></tr><tr><td>A run is "Waiting for approval"</td><td>An app started it without the workflows permission. Open the run and Approve it, or Cancel it</td></tr></tbody></table></div>
+<h2 id="for-client-authors">For client authors <a class="anchor" href="#for-client-authors" aria-label="Link to this section">#</a></h2>
+<p>The endpoint is <code>POST /mcp</code>, one JSON-RPC message per request, JSON responses, no SSE, no batches
+and no session ids. Protocol versions <code>2026-07-28</code> (stateless; every request carries the version in
+<code>_meta</code> and in the <code>MCP-Protocol-Version</code>, <code>Mcp-Method</code> and <code>Mcp-Name</code> headers), <code>2025-11-25</code> and
+<code>2025-06-18</code> (with <code>initialize</code>) are accepted. Clients are identified by a Client ID Metadata
+Document, an https URL on a trusted host. There is no dynamic client registration. PKCE with
+<code>S256</code> and the <code>resource</code> parameter are required. Access tokens last an hour, refresh tokens thirty
+days of idleness and rotate on every use, and neither outlives the connection.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="terminal.html"><small>Previous</small>The workspace terminal</a><a class="next" href="admin.html"><small>Next</small>Site admin</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/connector.md" rel="noopener">docs/connector.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#what-it-is">What it is</a></li><li class="l2"><a href="#before-you-start">Before you start</a></li><li class="l3"><a href="#check-it-from-outside">Check it from outside</a></li><li class="l3"><a href="#try-it">Try it</a></li><li class="l2"><a href="#turn-it-on-operator">Turn it on (operator)</a></li><li class="l2"><a href="#connect-person">Connect (person)</a></li><li class="l3"><a href="#the-consent-page">The consent page</a></li><li class="l2"><a href="#what-it-can-do">What it can do</a></li><li class="l2"><a href="#how-it-is-kept-safe">How it is kept safe</a></li><li class="l2"><a href="#ending-a-connection">Ending a connection</a></li><li class="l2"><a href="#troubleshooting">Troubleshooting</a></li><li class="l2"><a href="#for-client-authors">For client authors</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

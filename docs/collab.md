@@ -3,6 +3,8 @@
 Issues, labels, milestones, pull requests, reviews, the merge gate, auto-merge, releases and search.
 It reaches git and identity only through the traits in `ch_core::services`.
 
+> Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at [Getting started](getting-started.md).
+
 ## Shape
 
 ```
@@ -123,7 +125,8 @@ GET /search/repositories, /search/issues, /search/users, /search/code   (code ne
 
 - Cross-repository code search (the plan keeps it for `tantivy` later). Code search is per repository.
 - Webhook payloads for the new events (the notify stream owns them).
-- Transferring or deleting an issue, and reordering pinned issues.
+- Nothing from the earlier list of transferring or deleting an issue, or reordering pinned issues: all three are built (see
+  "Deleting, moving and ordering issues" below).
 - Repository-wide lists of issue comments and review comments (`/issues/comments`, `/pulls/comments`).
 
 ## Issue forms and the merge queue (ch-dxk)

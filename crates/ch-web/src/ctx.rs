@@ -206,6 +206,7 @@ impl Ctx {
         let mut c = Chrome::base(title, &instance, &self.theme());
         c.csrf = if self.public_read { String::new() } else { self.csrf_token() };
         c.signed_out_reader = self.public_read;
+        c.docs_url = self.state.config.server.docs_url.clone();
         c.flash = self.read_flash();
         if let Actor::User { id, is_admin, has_2fa, .. } = &self.actor {
             let user = self.state.accounts.get_user(*id).await.ok();

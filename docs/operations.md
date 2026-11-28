@@ -1,7 +1,8 @@
 # Running an instance
 
 What an operator does after the first run (`docs/integration.md`): look after the settings, take
-backups, restore, upgrade and roll back. Every command runs on the host, as root, from the
+backups, restore, upgrade and roll back. Every setting is explained in `docs/configuration.md`, and
+`docs/troubleshooting.md` lists the failures you are likely to meet with the command to run for each. Every command runs on the host, as root, from the
 checkout. The scripts read one env file; copy `.env.example` to `.env` to make it, or keep it
 next to the checkout as `../codehaven.env`, or point `CH_ENV_FILE` at it. Use one place only: with
 two candidates the scripts stop and say so.
@@ -43,8 +44,12 @@ history can no longer be fetched. The old store is kept unreachable for 7 days u
 
 Codehaven sends no mail until `[mail.smtp]` is set in `codehaven.toml` (see
 `deploy/codehaven.example.toml`), or the same keys as `CODEHAVEN__MAIL__SMTP__HOST` and so on.
-With it set, two things are mailed: a reset link when someone uses "Forgot your password", and an
-invite a site admin makes for an email address. Notifications are not mailed.
+The stock compose file passes neither to the server, so on a `deploy/prod` install you set them
+with an extra compose file (`docs/configuration.md`, "Settings the env file does not carry").
+With it set, three things are mailed: a reset link when someone uses "Forgot your password", an
+invite a site admin makes for an email address, and notifications for the people who turn email
+on at Settings, Notifications (off until chosen; each mail holds a title and a link, never the
+text of a comment, and a failed send is tried again up to five times).
 
 - TLS is required. `tls = "starttls"` is the default, `tls = "tls"` is for port 465, and
   `tls = "none"` is accepted only when `host` is `localhost`, `127.0.0.1` or `::1`.
@@ -275,9 +280,11 @@ losing that disk, and a copy off the host is the way to change that.
 
 ## Restoring
 
-Restore into an empty location. Make a new env file (or edit a copy) with a new
-`CODEHAVEN_PROJECT`, `CODEHAVEN_DATA_DIR` and `CODEHAVEN_SECRETS_DIR`, and ports that do not clash
-with a running instance, then:
+Restore into an empty location. On a new host, use your env file as it is: install the checkout
+and the env file first (the archive holds a copy as `codehaven.env.restored`). To restore beside a
+running instance, make an env file with a new `CODEHAVEN_PROJECT`, `CODEHAVEN_DATA_DIR` and
+`CODEHAVEN_SECRETS_DIR`, and ports that do not clash. The script refuses only when the project
+already has containers or a directory is not empty. Then:
 
 ```sh
 sudo bash deploy/prod/restore.sh <archive>
@@ -338,11 +345,17 @@ with `environment:` is refused as before, so a job that waited at an environment
 a repository that turned its merge queue on merges the ordinary way again (the older code does not know
 the queue exists), with whatever waited in it left in place until the queue code returns.
 
+Migrations 0143 to 0146 (repository access holds, a package orphan reason, passkeys, and the latest-release mark) only add
+tables and columns too. An image from before 0145 does not know passkeys, so passkeys people registered are kept in the database
+but that image does not offer them.
+
 Do not restore the database for a rollback of an additive migration; the old code ignores what it
 does not know. Restore from backup only when data itself was damaged. Take the next upgrade from
 a clean `up.sh` without the variable, so migrations apply again.
 
 ## When something is wrong
+
+`docs/troubleshooting.md` has the long list. The short one:
 
 | Symptom | Look at |
 | --- | --- |

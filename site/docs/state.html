@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>State of the project | Codehaven</title>
+<meta name="description" content="Written at the end of batch C14, 2026-11-26.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html" aria-current="page">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html" aria-current="page">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#what-is-built">What is built</a></li><li class="l2"><a href="#how-it-is-checked">How it is checked</a></li><li class="l2"><a href="#what-is-left-out-and-why">What is left out, and why</a></li><li class="l2"><a href="#known-limits-worth-knowing">Known limits worth knowing</a></li></ul></div></details>
+<article class="prose">
+<h1 id="state-of-the-project">State of the project <a class="anchor" href="#state-of-the-project" aria-label="Link to this section">#</a></h1>
+<p>Written at the end of batch C14, 2026-11-26. Every open bead of the three big epics is closed. This page
+says what is built, how each part is checked, and what is left out on purpose.</p>
+<h2 id="what-is-built">What is built <a class="anchor" href="#what-is-built" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Area</th><th scope="col">What works</th><th scope="col">Where to read</th></tr></thead><tbody><tr><td>Git</td><td>Clone, fetch and push over HTTP and SSH, branch protection enforced in a pre-receive hook, forks with lineage, large raw files streamed from git</td><td><a href="git.html"><code>docs/git.md</code></a></td></tr><tr><td>Accounts</td><td>Invite-only sign-up, passwords with two-factor (authenticator app or passkey), personal access tokens with scopes, SSH keys, organizations and teams, a lockout and rate limits on every sign-in path</td><td><a href="identity.html"><code>docs/identity.md</code></a></td></tr><tr><td>Collaboration</td><td>Issues, pull requests with review, line comments, labels, milestones, reactions, notifications, webhooks, merge queue, releases with files and digests</td><td><a href="collab.html"><code>docs/collab.md</code></a></td></tr><tr><td>Visibility</td><td>Private, internal and public repositories. Signed out, a private, an internal and a missing repository look the same. Public repositories need the site admin's switch</td><td><a href="identity.html"><code>docs/identity.md</code></a>, <code>tests/access/</code></td></tr><tr><td>CI</td><td>Workflows in <code>.codehaven/workflows</code> or <code>.github/workflows</code>, real actions fetched from GitHub at pinned commits, reusable workflows, matrix, services, YAML anchors, caches, artifacts, job tokens with <code>permissions:</code>, live logs</td><td><a href="ci.html"><code>docs/ci.md</code></a>, <a href="runner.html"><code>docs/runner.md</code></a></td></tr><tr><td>Packages</td><td>A container registry at <code>/v2</code>, a NuGet feed at <code>/nuget/{owner}</code>, package pages, push with a job token</td><td><a href="ci.html"><code>docs/ci.md</code></a></td></tr><tr><td>Pages</td><td>A static site per repository from a branch, on a host of its own, sandboxed</td><td><a href="design/pages.html"><code>docs/design/pages.md</code></a></td></tr><tr><td>Browser workspace</td><td>Monaco editor, tree, search, diff, many-file commits, run panel with live logs, a shell in the tab that touches nothing until you tick it in review</td><td><a href="web.html"><code>docs/web.md</code></a>, <a href="terminal.html"><code>docs/terminal.md</code></a></td></tr><tr><td>Claude connector</td><td>An MCP endpoint behind OAuth with per-repository grants for read, write and workflows</td><td><a href="connector.html"><code>docs/connector.md</code></a></td></tr><tr><td>Operations</td><td>One-command setup, daily backups with restore, an optional off-host backup target, upgrade and rollback by image tag</td><td><a href="operations.html"><code>docs/operations.md</code></a></td></tr></tbody></table></div>
+<h2 id="how-it-is-checked">How it is checked <a class="anchor" href="#how-it-is-checked" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><code>make ci</code> is the gate: the portability check, formatting, clippy with warnings denied, the build and the tests.</li>
+<li><code>make e2e</code> and <code>deploy/dev/shots.sh</code> start a throwaway stack with real runners and run the end-to-end steps in
+<code>tests/e2e/e2e_full.py</code> (0 to 38). Steps 35 to 38 run real, unmodified actions from GitHub at pinned commits.</li>
+<li>The signed-out surface is a committed table per tier (<code>tests/access/anonymous.*.txt</code>), checked against every route the
+router registers (<code>crates/codehaven/tests/public_surface.rs</code>).</li>
+<li>Every other credential is a second committed table (<code>tests/access/matrix.*.txt</code>, <code>crates/codehaven/tests/access_matrix.rs</code>):
+every registered route, with every method, for each credential (none, session, basic, personal access token with read
+and with write scope, job token with contents read and write, a job token of another repository, runner, connected app),
+at each tier, with the owner's contribution limit on and off. A route that is not in <code>matrix.routes.txt</code> fails the
+build, so a new route cannot arrive unreviewed. See <a href="operations.html"><code>docs/operations.md</code></a> for how to regenerate it.</li>
+<li>The flood test (<code>crates/codehaven/src/public_gate.rs</code>, module <code>flood</code>) holds the per-address and instance caps for
+heavy signed-out requests under a thousand addresses.</li>
+<li>The workspace is run in Chromium, Firefox and WebKit (<code>tests/e2e/workspace.mjs</code>, <code>monaco_worker.mjs</code>, <code>terminal.mjs</code>).
+The build host has Chrome only, so Firefox and WebKit run from a machine that has them (<a href="terminal.html"><code>docs/terminal.md</code></a>).</li>
+</ul>
+<h2 id="what-is-left-out-and-why">What is left out, and why <a class="anchor" href="#what-is-left-out-and-why" aria-label="Link to this section">#</a></h2>
+<p>The threat that matters here is a stranger with no account, and losing data. Invited people are trusted, so work that
+only protects against an invited person is kept simple or left out.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Left out</th><th scope="col">Why</th></tr></thead><tbody><tr><td>A throwaway virtual machine for each CI job (ch-ctk.3)</td><td>The risk it removes is an invited person's. Jobs run in containers on a separate Docker daemon with no socket and no extra capabilities. It can be added later without changing the workflow format</td></tr><tr><td>Docker inside a job (<code>docker build</code>, buildx, <code>docker login</code>)</td><td>There is no Docker daemon in a job, by design. These fail at once with a reason. A <code>docker://image</code> step or a <code>run:</code> step works. The registry itself is tested with a real Docker client</td></tr><tr><td>OIDC, GraphQL, <code>workflow_run</code>, <code>repository_dispatch</code>, <code>pull_request_target</code>, <code>environment:</code> URLs, Windows, macOS and ARM runners</td><td>Not needed for a forge for people who know each other, and each is a large feature. Actions that need them fail with a named error and do not hang</td></tr><tr><td>Linux in the browser tab (ch-1ke.9)</td><td>Optional and large. The shell in the tab covers everyday commands</td></tr><tr><td>A wildcard certificate for Pages full mode (ch-lr5)</td><td>Needs a DNS challenge and a proxy build with a DNS provider module. The default mode, on one host, works without it</td></tr><tr><td>A sign-up page</td><td>There is none on purpose. The first account is made on the server and every other comes from an invite</td></tr></tbody></table></div>
+<h2 id="known-limits-worth-knowing">Known limits worth knowing <a class="anchor" href="#known-limits-worth-knowing" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>The <code>terminal</code> switch stored in the instance settings is the admin's choice. Turning it off does not close a terminal
+that is already open; that one runs until its page closes, and the admin page says so.</li>
+<li>Firefox and WebKit ignore an iframe's <code>allow</code> list for the clipboard, and WebKit allows a shared worker in a
+sandboxed frame. The terminal frame removes both itself, before any other script runs.</li>
+<li>Cache and artifact access follow the run: a job reads its own run's artifacts and the caches of its own branch, the
+default branch or, for a pull request, the base branch. A pull request from a fork reads and never writes.</li>
+</ul>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="identity.html"><small>Previous</small>Identity</a><a class="next" href="architecture.html"><small>Next</small>Architecture</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/state.md" rel="noopener">docs/state.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#what-is-built">What is built</a></li><li class="l2"><a href="#how-it-is-checked">How it is checked</a></li><li class="l2"><a href="#what-is-left-out-and-why">What is left out, and why</a></li><li class="l2"><a href="#known-limits-worth-knowing">Known limits worth knowing</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

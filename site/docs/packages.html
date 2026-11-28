@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Container registry and packages | Codehaven</title>
+<meta name="description" content="Codehaven keeps container images in a built-in registry and NuGet packages in a feed per account.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html" aria-current="page">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html" aria-current="page">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#container-images">Container images</a></li><li class="l3"><a href="#who-can-pull-and-push">Who can pull and push</a></li><li class="l3"><a href="#package-pages">Package pages</a></li><li class="l2"><a href="#nuget-packages">NuGet packages</a></li><li class="l2"><a href="#limits-that-apply-to-uploads">Limits that apply to uploads</a></li></ul></div></details>
+<article class="prose">
+<h1 id="container-registry-and-packages">Container registry and packages <a class="anchor" href="#container-registry-and-packages" aria-label="Link to this section">#</a></h1>
+<p>Codehaven keeps container images in a built-in registry and NuGet packages in a feed per account. Both are on the same address as the rest of the site, with no extra service to run. Both use personal access tokens from Settings, Access tokens (see <a href="accounts.html">Accounts and sign-in</a>).</p>
+<p>A token needs the Packages scope (<code>write:packages</code>) to push and Packages, read only (<code>read:packages</code>) to pull or restore.</p>
+<h2 id="container-images">Container images <a class="anchor" href="#container-images" aria-label="Link to this section">#</a></h2>
+<p>The registry speaks the OCI Distribution Spec 1.1 at <code>/v2/</code>, on the same host as the site, so Docker clients need no insecure-registry setting once the proxy terminates TLS. An image is named <code>&lt;owner&gt;/&lt;name&gt;</code>, where the owner is an account or an organization.</p>
+<pre tabindex="0"><code class="language-sh">echo $TOKEN | docker login code.example.com -u alice --password-stdin
+docker tag myapp code.example.com/alice/myapp:1.0
+docker push code.example.com/alice/myapp:1.0
+docker pull code.example.com/alice/myapp:1.0</code></pre>
+<p>Use the host name only, with no <code>https://</code>. The registry supports chunked and monolithic uploads, cross-repository mounts, tag listing, manifest and tag deletes, referrers, range requests on layers, the catalog, and garbage collection. Layers are stored once and shared across images. Docker schema 1 is not supported. The conformance suite and a real Docker client are run against it by <code>deploy/tests/registry-conformance.sh</code>.</p>
+<h3 id="who-can-pull-and-push">Who can pull and push <a class="anchor" href="#who-can-pull-and-push" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>An image with no repository belongs to its owner. For an organization, members pull and owners push.</li>
+<li>An image <strong>linked to a repository</strong> follows that repository: read access pulls, write access pushes. The first push links the image when a repository of the same name exists and the pusher can write to it.</li>
+<li>Signed out, only an image linked to a <strong>public</strong> repository can be pulled, and only while public repositories are allowed. Every other pull and every push needs a token. Anything the caller may not see looks exactly like an image that does not exist.</li>
+</ul>
+<h3 id="package-pages">Package pages <a class="anchor" href="#package-pages" aria-label="Link to this section">#</a></h3>
+<p><code>/packages</code> lists every image and package you could pull. <code>/packages/&lt;owner&gt;</code> lists one account's, and a repository's Packages tab lists the ones linked to it. A package page shows the <code>docker pull</code> or <code>dotnet</code> commands, and the tags or versions with their digest, platforms, size and push time. These pages need you to be signed in.</p>
+<p>The owner of a package can link it to one of their repositories that they can write to (the page first shows who would gain access, and a public repository lets anyone pull it), unlink it, delete one tag or version, or delete the whole package by typing its name. Deleting a tag keeps its manifest while another tag or an index still points at it, so a multi-architecture image keeps working. Each change is audited.</p>
+<p>A workflow job pushes with its <code>GITHUB_TOKEN</code> when its <code>permissions:</code> allow <code>packages: write</code>, to a package of its own repository. It never creates one for a public repository, because the first push would publish it. Docker itself is not available inside a job (see <a href="using-ci.html">Using CI</a>), so build images where Docker runs and push from there.</p>
+<h2 id="nuget-packages">NuGet packages <a class="anchor" href="#nuget-packages" aria-label="Link to this section">#</a></h2>
+<p>Every account has a NuGet v3 feed at <code>/nuget/&lt;owner&gt;/index.json</code>, for push, restore, search and unlist. It is for signed-in people and tokens only. A signed-out request gets a Basic challenge, the same whether the feed exists or not, and there is no public feed.</p>
+<pre tabindex="0"><code class="language-sh">dotnet nuget add source https://code.example.com/nuget/alice/index.json -n codehaven -u alice -p TOKEN --store-password-in-clear-text
+dotnet nuget push Pkg.1.0.0.nupkg -s codehaven -k TOKEN
+dotnet add package Pkg
+dotnet nuget delete Pkg 1.0.0 -s codehaven -k TOKEN      # unlists, never removes</code></pre>
+<p>The package page in the browser shows the add-source command with <code>/v3/index.json</code> at the end. The address the server answers is <code>/nuget/&lt;owner&gt;/index.json</code>, so use that one.</p>
+<ul>
+<li>A package is <code>owner/id</code>, in the same table as images, and follows the same rules: no repository means it belongs to its owner, a linked package follows its repository.</li>
+<li>A version is written once. <code>1.0</code> and <code>1.0.0</code> are the same version, and pushing it again is refused with a 409.</li>
+<li>The server reads the zip's directory and its one top-level <code>.nuspec</code> (512 KiB at most, no DOCTYPE or entity) and unpacks nothing. A package is at most 250 MiB, and a package holds at most 5000 versions.</li>
+<li>Unlisting hides a version from search. Asking for it by version still restores it.</li>
+<li>A job pushes with <code>GITHUB_TOKEN</code> as the key when its <code>packages: write</code> allows it. A job with <code>packages: read</code> restores the packages of its own repository.</li>
+<li>With a plain <code>http</code> source, the NuGet client needs <code>allowInsecureConnections</code> in <code>NuGet.Config</code>, and the token in the source's credentials as well as in <code>--api-key</code>.</li>
+</ul>
+<h2 id="limits-that-apply-to-uploads">Limits that apply to uploads <a class="anchor" href="#limits-that-apply-to-uploads" aria-label="Link to this section">#</a></h2>
+<p>Uploads, pushes and release files are refused when they would leave the data disk with less than <code>storage.min_free_gib</code> free, 10 GiB by default. See <a href="configuration.html">Configuration</a>.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="using-ci.html"><small>Previous</small>Using CI</a><a class="next" href="pages.html"><small>Next</small>Pages</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/packages.md" rel="noopener">docs/packages.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#container-images">Container images</a></li><li class="l3"><a href="#who-can-pull-and-push">Who can pull and push</a></li><li class="l3"><a href="#package-pages">Package pages</a></li><li class="l2"><a href="#nuget-packages">NuGet packages</a></li><li class="l2"><a href="#limits-that-apply-to-uploads">Limits that apply to uploads</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

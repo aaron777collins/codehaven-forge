@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accounts and sign-in | Codehaven</title>
+<meta name="description" content="How people get an account, sign in, protect it with two-factor, and what to do when something is lost.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html" aria-current="page">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html" aria-current="page">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#how-accounts-are-made">How accounts are made</a></li><li class="l3"><a href="#invites">Invites</a></li><li class="l2"><a href="#signing-in">Signing in</a></li><li class="l3"><a href="#forgot-your-password">Forgot your password</a></li><li class="l3"><a href="#lockouts">Lockouts</a></li><li class="l2"><a href="#two-factor-sign-in">Two-factor sign-in</a></li><li class="l3"><a href="#authenticator-app">Authenticator app</a></li><li class="l3"><a href="#passkeys">Passkeys</a></li><li class="l3"><a href="#recent-security-events">Recent security events</a></li><li class="l2"><a href="#recovery">Recovery</a></li><li class="l2"><a href="#access-tokens">Access tokens</a></li><li class="l2"><a href="#ssh-keys">SSH keys</a></li><li class="l2"><a href="#other-settings">Other settings</a></li><li class="l2"><a href="#organizations-and-teams">Organizations and teams</a></li></ul></div></details>
+<article class="prose">
+<h1 id="accounts-and-sign-in">Accounts and sign-in <a class="anchor" href="#accounts-and-sign-in" aria-label="Link to this section">#</a></h1>
+<p>How people get an account, sign in, protect it with two-factor, and what to do when something is lost. For installing and making the first admin, see <a href="getting-started.html">Getting started</a>.</p>
+<h2 id="how-accounts-are-made">How accounts are made <a class="anchor" href="#how-accounts-are-made" aria-label="Link to this section">#</a></h2>
+<p>There is no sign-up page, no sign-up route and no sign-in through a proxy header. An identity header from a proxy in front signs nobody in.</p>
+<ul>
+<li>The first account is made on the server, by someone with root on the host: <code>sudo bash deploy/prod/first-admin.sh &lt;username&gt; &lt;email&gt;</code>. It prints a link that works once, for one hour. The script refuses to run when any account exists.</li>
+<li>Every other account comes from an invite.</li>
+</ul>
+<h3 id="invites">Invites <a class="anchor" href="#invites" aria-label="Link to this section">#</a></h3>
+<p>A site admin makes an invite at Site admin, Invites, or on the server:</p>
+<pre tabindex="0"><code class="language-sh">deploy/compose.sh exec server codehaven admin invite create --email bob@example.com</code></pre>
+<p>An invite can name an email address (the account must then use it), make the new account a site admin, allow its workflows to run, and put it in an organization and a team. It works once and lasts 7 days by default, from 1 hour to 30 days. <code>codehaven admin invite list</code> shows them and <code>codehaven admin invite revoke &lt;id&gt;</code> ends one.</p>
+<p>The invitee opens the link, picks a username, an optional display name, an email address and a password, and has an account. A used, revoked, expired or made-up link all show the same "This invite link doesn't work any more" page, so a link cannot be probed for. A mistake in the form, such as a name that is taken, does not use the invite up.</p>
+<p>A username is up to 39 letters, numbers and single hyphens, starting and ending with a letter or number. It becomes part of the address of everything the person owns, and it cannot be changed later.</p>
+<p>A password is 12 to 128 characters, must not be easy to guess (common passwords, names, keyboard runs, dates and repeats are refused), and must not contain the username or the email name. A few random words works well.</p>
+<h2 id="signing-in">Signing in <a class="anchor" href="#signing-in" aria-label="Link to this section">#</a></h2>
+<p>Enter the username (or email) and the password. Every refusal says the same thing, "That username and password don't match.", whether the name exists, the password is wrong or the account is suspended.</p>
+<p>If the account has two-factor sign-in on, a second step follows. Give one of:</p>
+<ul>
+<li>the 6 digit code from your authenticator app,</li>
+<li>a recovery code, which looks like <code>abcde-fghjk</code> and works once,</li>
+<li>or use a passkey, if you added one.</li>
+</ul>
+<p>A half-signed-in session lasts 10 minutes and ends after 5 wrong codes. A finished sign-in lasts 7 days without use, and 30 days in all. Settings, Sessions lists every browser the account is signed in on and signs any of them out.</p>
+<h3 id="forgot-your-password">Forgot your password <a class="anchor" href="#forgot-your-password" aria-label="Link to this section">#</a></h3>
+<p>Choose "Forgot your password?" on the sign-in page. The answer is the same whether or not an account matched.</p>
+<ul>
+<li>With mail set up (see <a href="configuration.html">Configuration</a>), the account's primary email gets a link that works once for an hour. At most one is sent per account every ten minutes. Asking for one signs nobody out; choosing the new password signs the account out everywhere.</li>
+<li>Without mail, the page says to ask a site admin. A site admin uses Site admin, Users, Reset password, or on the server <code>codehaven admin reset-password &lt;username&gt;</code>. Either prints a link, signs the person out everywhere and revokes their access tokens.</li>
+</ul>
+<p>A reset does not turn two-factor off. After choosing the new password the person signs in, through the second step when it is on.</p>
+<h3 id="lockouts">Lockouts <a class="anchor" href="#lockouts" aria-label="Link to this section">#</a></h3>
+<p>Ten wrong passwords for one account from one address in 15 minutes lock that address out of that account for 15 minutes, doubling up to 24 hours. A stranger who knows a username cannot lock the owner out from the owner's own address. Forty failures from one address lock that address. Wrong two-factor codes count across all addresses, because only someone who knew the password got that far. The page says "Too many attempts. Try again in N minutes." and nothing about the account.</p>
+<p>A site admin clears a lockout at Site admin, Users, Unlock, or with <code>codehaven admin unlock &lt;username&gt;</code>.</p>
+<h2 id="two-factor-sign-in">Two-factor sign-in <a class="anchor" href="#two-factor-sign-in" aria-label="Link to this section">#</a></h2>
+<p>Turn it on at Settings, Two-factor and security. It is optional for everyone except site admins: the admin pages stay closed until the admin has it on, and the Claude connector needs it too.</p>
+<h3 id="authenticator-app">Authenticator app <a class="anchor" href="#authenticator-app" aria-label="Link to this section">#</a></h3>
+<p>Choose "Set up an authenticator app". The page shows a QR code and the key. Scan or type it into any authenticator app, enter the code it shows, and Codehaven gives you ten recovery codes. They are shown once. Store them somewhere safe, away from the phone that holds the app.</p>
+<p>A code can be used once. "Make new recovery codes" replaces the set and needs your password. Turning the app off needs your password and a current code or a recovery code.</p>
+<h3 id="passkeys">Passkeys <a class="anchor" href="#passkeys" aria-label="Link to this section">#</a></h3>
+<p>A passkey is a second step you approve with a fingerprint, face, screen lock or security key, instead of an app code. Add one under Passkeys on the same page. You can hold up to 10. You still type your password first.</p>
+<p>Passkeys need the site to be opened by a domain name over https: an IP address cannot be a passkey's site, and the page says "Passkeys need this site to be opened by a domain name over https. Ask the administrator to set its address." when <code>CODEHAVEN_EXTERNAL_URL</code> is not one.</p>
+<p>Removing the last passkey when it is your only second step turns two-factor off, so it asks for your password and a recovery code.</p>
+<h3 id="recent-security-events">Recent security events <a class="anchor" href="#recent-security-events" aria-label="Link to this section">#</a></h3>
+<p>The same page lists the last 30 things that happened to the account: sign-ins, password changes, new keys and tokens, with the address and the outcome. If an account was locked since you last signed in, a notice says so once, with the addresses.</p>
+<h2 id="recovery">Recovery <a class="anchor" href="#recovery" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">What is lost</th><th scope="col">What to do</th></tr></thead><tbody><tr><td>The password</td><td>"Forgot your password?" if mail is set up, or ask a site admin for a reset link (above). If you are the only admin, run on the server <code>deploy/compose.sh exec server codehaven admin reset-password &lt;username&gt;</code> and open the link it prints</td></tr><tr><td>The authenticator app, but you have recovery codes</td><td>Sign in with a recovery code, then set up the app again and make new codes</td></tr><tr><td>The app and every recovery code, and no passkey</td><td>There is no admin page or command that turns two-factor off for another account, by design. Keep recovery codes safe, and add a passkey as a second way in</td></tr><tr><td>The first admin's password</td><td><code>deploy/compose.sh exec server codehaven admin reset-password &lt;username&gt;</code> prints a new one-hour link, and it works for the only admin. It does not turn two-factor off</td></tr><tr><td>The first admin's second step</td><td>Its recovery codes are the way back in. Nothing resets accounts or empties an instance, and nothing needs to</td></tr><tr><td>An account that must stop now</td><td>A site admin suspends it (Site admin, Users, or <code>codehaven admin suspend &lt;username&gt;</code>). That ends its sessions, disables its tokens and stops its SSH keys. <code>unsuspend</code> lifts it</td></tr></tbody></table></div>
+<h2 id="access-tokens">Access tokens <a class="anchor" href="#access-tokens" aria-label="Link to this section">#</a></h2>
+<p>Git over HTTPS uses a personal access token as the password. Make one at Settings, Access tokens.</p>
+<ul>
+<li>Give it a name, choose its scopes and how long it lasts: 30, 90, 180 days or one year. The default is 90 days and the longest is 365.</li>
+<li>The token is shown once. Codehaven keeps only a hash of it.</li>
+<li>An account can hold 100 active tokens.</li>
+<li>A token never carries site admin powers, whatever its scopes.</li>
+</ul>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Scope</th><th scope="col">What it allows</th></tr></thead><tbody><tr><td>Repositories (<code>repo</code>)</td><td>Read and write your repositories</td></tr><tr><td>Repositories, read only (<code>repo:read</code>)</td><td>Read your repositories, private ones included</td></tr><tr><td>Profile (<code>user</code>)</td><td>Read and update your profile</td></tr><tr><td>Organizations, read only (<code>read:org</code>)</td><td>See the organizations and teams you belong to</td></tr><tr><td>Organizations (<code>admin:org</code>)</td><td>Manage them</td></tr><tr><td>Packages (<code>write:packages</code>)</td><td>Upload and delete packages</td></tr><tr><td>Packages, read only (<code>read:packages</code>)</td><td>Download packages</td></tr><tr><td>Workflows (<code>workflow</code>)</td><td>Update workflow files and trigger runs. A push that changes <code>.codehaven/workflows</code> needs it</td></tr><tr><td>Repository webhooks (<code>admin:repo_hook</code>)</td><td>Manage webhooks on your repositories</td></tr><tr><td>Notifications (<code>notifications</code>)</td><td>Read your notifications</td></tr></tbody></table></div>
+<p>A password works for git over HTTPS only on an account without two-factor. On one that has it, git answers "use a personal access token as the password".</p>
+<h2 id="ssh-keys">SSH keys <a class="anchor" href="#ssh-keys" aria-label="Link to this section">#</a></h2>
+<p>Add a public key at Settings, SSH keys: a title that says which device it lives on, and the one-line public key, usually <code>~/.ssh/id_ed25519.pub</code>. Never paste a private key. Ed25519, ECDSA, FIDO security keys and RSA keys of 3072 bits or more are accepted. <code>ssh-keygen -t ed25519</code> makes a good one.</p>
+<p>The SSH server accepts only <code>git-upload-pack</code>, <code>git-receive-pack</code> and <code>git-upload-archive</code>. A shell, a terminal or any other command gets a short message and the session ends. A removed key stops working at once, and so does every key of a suspended account.</p>
+<h2 id="other-settings">Other settings <a class="anchor" href="#other-settings" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Password.</strong> Settings, Password changes it. A change ends your other sessions and gives this one a new cookie.</li>
+<li><strong>Profile.</strong> The username cannot be changed. The display name is shown next to your work. The email is optional.</li>
+<li><strong>Notifications.</strong> With mail set up on the server, you can choose to be emailed when something new needs your attention: mentions, assignments, review requests and repositories you watch. The email holds the title and a link, never the text of a comment. Without mail the inbox is all there is.</li>
+<li><strong>Connected apps.</strong> Lists every app, such as Claude, that you connected, with what it may reach, and lets you revoke it. See <a href="connector.html">The Claude connector</a>.</li>
+</ul>
+<h2 id="organizations-and-teams">Organizations and teams <a class="anchor" href="#organizations-and-teams" aria-label="Link to this section">#</a></h2>
+<p>Repositories can belong to an organization instead of a person. Make one at New organization (<code>/new/org</code>). The name follows the same rules as a username.</p>
+<ul>
+<li>People need an account first. An organization owner adds existing accounts as Member or Owner. Only a site admin can invite someone new, and can add them to the organization in the same step.</li>
+<li>An organization has a default repository permission for its members (none, read, write or admin) and teams that give more or less on chosen repositories. A team has a permission and a list of members and repositories.</li>
+<li>An organization starts with the permission to run CI that its creator had at that moment.</li>
+<li>Deleting an organization needs its repositories to be deleted or transferred first.</li>
+</ul>
+<p>The permissions on a repository are listed in <a href="repositories.html">Repositories</a>.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="operations.html"><small>Previous</small>Running an instance</a><a class="next" href="repositories.html"><small>Next</small>Repositories</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/accounts.md" rel="noopener">docs/accounts.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#how-accounts-are-made">How accounts are made</a></li><li class="l3"><a href="#invites">Invites</a></li><li class="l2"><a href="#signing-in">Signing in</a></li><li class="l3"><a href="#forgot-your-password">Forgot your password</a></li><li class="l3"><a href="#lockouts">Lockouts</a></li><li class="l2"><a href="#two-factor-sign-in">Two-factor sign-in</a></li><li class="l3"><a href="#authenticator-app">Authenticator app</a></li><li class="l3"><a href="#passkeys">Passkeys</a></li><li class="l3"><a href="#recent-security-events">Recent security events</a></li><li class="l2"><a href="#recovery">Recovery</a></li><li class="l2"><a href="#access-tokens">Access tokens</a></li><li class="l2"><a href="#ssh-keys">SSH keys</a></li><li class="l2"><a href="#other-settings">Other settings</a></li><li class="l2"><a href="#organizations-and-teams">Organizations and teams</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

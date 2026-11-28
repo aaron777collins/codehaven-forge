@@ -3,6 +3,8 @@
 What the runner stream built, how to run it, how to test it, and the choices the other streams
 need to know about. `ARCHITECTURE.md` sections 2.5, 9.4, 9.5 and 13 have the design.
 
+> Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at [Getting started](getting-started.md).
+
 ## haven-runner
 
 One binary, three commands.

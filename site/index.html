@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codehaven</title>
+<meta name="description" content="Codehaven is a self-hosted code forge written in Rust: git over HTTP and SSH, issues, pull requests with review, CI, releases, packages and a container registry.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="index.html"><img src="favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="docs/index.html">Docs</a><a href="screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<main id="main">
+<section class="hero"><div class="wrap">
+<h1>Codehaven</h1>
+<p class="tag">A self-hosted code forge written in Rust.</p>
+<p class="lede">It hosts git over HTTP and SSH and has issues, pull requests with review, CI with registered runners, releases, packages and a container registry.</p>
+<div class="actions">
+<a class="btn primary" href="#quick-start">Quick start</a>
+<a class="btn" href="docs/index.html">Read the docs</a>
+<a class="btn" href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">View on GitHub</a>
+</div>
+<div class="hero-shot"><figure class="shot"><picture><source data-scheme="dark" media="(prefers-color-scheme: dark)" srcset="img/home-desktop-dark.png"><source data-scheme="light" media="(prefers-color-scheme: light)" srcset="img/home-desktop-light.png"><img src="img/home-desktop-light.png" width="1440" height="900" loading="lazy" decoding="async" alt="Codehaven home: the home page after sign-in (desktop, sample data)"></picture><figcaption>Home (sample data)</figcaption></figure></div>
+</div></section>
+
+<section class="block" id="why" aria-labelledby="why-h"><div class="wrap">
+<h2 id="why-h">Why Codehaven</h2>
+<p class="sub">It is made to be run by anyone, on a machine you control.</p>
+<div class="grid"><div class="card"><h3>Self-hosted</h3><p>You run it on a Linux machine with Docker. The server is one binary, with Postgres beside it, and everything builds and runs in containers, so the host needs neither Rust nor PostgreSQL.</p></div><div class="card"><h3>Invite-only</h3><p>There is no sign-up page. The first account is made on the server with one command, and every account after it comes from an invite.</p></div><div class="card"><h3>Private by default</h3><p>A repository starts private; its owner can widen it to every signed-in account on the server, or to anyone on the internet while the site admin allows public repositories.</p></div><div class="card"><h3>Nothing from another site</h3><p>The browser workspace is served entirely by your instance: every file the editor needs comes from it, with nothing loaded from another site.</p></div></div>
+</div></section>
+
+<section class="block" id="features" aria-labelledby="features-h"><div class="wrap">
+<h2 id="features-h">What it does</h2>
+<p class="sub">One server for the whole loop: push, review, build, release.</p>
+<div class="grid"><div class="card"><h3>Git over HTTP and SSH</h3><p>Clone, fetch and push over HTTP or SSH.</p><a class="more" href="docs/repositories.html">Read more<span class="visually-hidden"> about Git over HTTP and SSH</span></a></div><div class="card"><h3>Issues and pull requests</h3><p>Issues, and pull requests with review.</p><a class="more" href="docs/pull-requests.html">Read more<span class="visually-hidden"> about Issues and pull requests</span></a></div><div class="card"><h3>CI with runners</h3><p>Register a runner and run workflows written in GitHub Actions syntax. Real, unmodified actions from GitHub run on it, such as checkout, setup-node, cache and upload-artifact. A few need things jobs do not get here, and the CI page says which.</p><a class="more" href="docs/using-ci.html">Read more<span class="visually-hidden"> about CI with runners</span></a></div><div class="card"><h3>Releases, packages, registry</h3><p>Publish releases and packages, and keep container images in a built-in registry.</p><a class="more" href="docs/packages.html">Read more<span class="visually-hidden"> about Releases, packages, registry</span></a></div><div class="card"><h3>Pages</h3><p>Publish a static site from a branch, from its root or its docs folder. A failed copy says why and the last good one keeps serving.</p><a class="more" href="docs/pages.html">Read more<span class="visually-hidden"> about Pages</span></a></div><div class="card"><h3>Browser workspace</h3><p>An editor (Monaco) with a file tree, tabs, search and diff, many-file commits, live workflow runs, and a bash terminal that runs in your browser.</p><a class="more" href="docs/workspace.html">Read more<span class="visually-hidden"> about Browser workspace</span></a></div><div class="card"><h3>Claude connector</h3><p>Connect Claude over OAuth and MCP, within exactly what you allow. It is off until an operator turns it on.</p><a class="more" href="docs/connector.html">Read more<span class="visually-hidden"> about Claude connector</span></a></div><div class="card"><h3>Three visibility tiers</h3><p>A repository is private, internal or public. Public means anyone, only while the site admin allows public repositories.</p><a class="more" href="docs/repositories.html">Read more<span class="visually-hidden"> about Three visibility tiers</span></a></div><div class="card"><h3>Backups</h3><p>Back up and restore with one script each, to a directory outside the checkout. Upgrade and rollback are covered too.</p><a class="more" href="docs/operations.html">Read more<span class="visually-hidden"> about Backups</span></a></div></div>
+</div></section>
+
+<section class="block" id="visibility" aria-labelledby="vis-h"><div class="wrap">
+<h2 id="vis-h">Who can see a repository</h2>
+<p class="sub">A repository starts private; its owner can widen it to every signed-in account on the server, or to anyone on the internet while the site admin allows public repositories.</p>
+<ul class="tiers">
+<li><strong>Private</strong>Only people who are granted access.</li>
+<li><strong>Internal</strong>Also every signed-in account on the server.</li>
+<li><strong>Public</strong>Also anyone on the internet, while the site admin allows public repositories.</li>
+</ul>
+<p class="note">The tiers are described in <a href="docs/repositories.html">the repositories guide</a>. Nobody who is signed out can open a workspace page, even for a public repository.</p>
+</div></section>
+
+<section class="block" id="quick-start" aria-labelledby="quick-h"><div class="wrap">
+<h2 id="quick-h">Quick start</h2>
+<div class="prose"><p>You need a Linux machine with Docker (Compose 2.24 or newer, and buildx), git, openssl, curl,
+python3 and iproute2, 4 GB of memory and 20 GB of free disk. You do not need Rust or PostgreSQL
+on the host. Everything builds and runs in containers.</p>
+<pre tabindex="0"><code class="language-sh">git clone https://github.com/aaron777collins/codehaven-forge codehaven &amp;&amp; cd codehaven
+cp .env.example .env                      # set the URL, the paths and the proxy
+sudo bash deploy/prod/setup.sh            # checks the host, makes the directories and secrets
+sudo bash deploy/prod/up.sh               # builds the images and starts the instance
+sudo bash deploy/prod/first-admin.sh &lt;username&gt; &lt;email&gt;</code></pre>
+<p><code>first-admin.sh</code> prints a link that works once, for one hour. Open it, choose a password, then turn
+on two-factor sign-in in Settings (site admin pages and the Claude connector need it). The script refuses to run when any account exists, and it never deletes
+one.</p>
+<p>The first build compiles the server, so it takes a while. Setup generates the database password
+once and never prints it, and the server makes its own master key on first start.</p>
+<p>Next steps (a first repository, a pull request, a first CI run, a backup) are in
+<a href="docs/getting-started.html"><code>docs/getting-started.md</code></a>.</p></div>
+<p>The full walk-through, including the proxy, the first admin and the first push, is in <a href="docs/getting-started.html">Getting started</a>.</p>
+</div></section>
+
+<section class="block" id="screenshots" aria-labelledby="shots-h"><div class="wrap">
+<h2 id="shots-h">Screenshots</h2>
+<p class="sub">Real pages from a test instance, with invented data: the users alice and root, the repository alice/demo and the organization acme.</p>
+<div class="shots"><figure class="shot"><picture><source data-scheme="dark" media="(prefers-color-scheme: dark)" srcset="img/home-desktop-dark.png"><source data-scheme="light" media="(prefers-color-scheme: light)" srcset="img/home-desktop-light.png"><img src="img/home-desktop-light.png" width="1440" height="900" loading="lazy" decoding="async" alt="Codehaven home: the home page after sign-in (desktop, sample data)"></picture><figcaption>Home (sample data)</figcaption></figure><figure class="shot"><picture><source data-scheme="dark" media="(prefers-color-scheme: dark)" srcset="img/repo-home-desktop-dark.png"><source data-scheme="light" media="(prefers-color-scheme: light)" srcset="img/repo-home-desktop-light.png"><img src="img/repo-home-desktop-light.png" width="1440" height="900" loading="lazy" decoding="async" alt="Codehaven repository: a repository home page (desktop, sample data)"></picture><figcaption>Repository (sample data)</figcaption></figure><figure class="shot"><picture><source data-scheme="dark" media="(prefers-color-scheme: dark)" srcset="img/pull-files-desktop-dark.png"><source data-scheme="light" media="(prefers-color-scheme: light)" srcset="img/pull-files-desktop-light.png"><img src="img/pull-files-desktop-light.png" width="1440" height="900" loading="lazy" decoding="async" alt="Codehaven pull request files: the files changed in a pull request (desktop, sample data)"></picture><figcaption>Pull request files (sample data)</figcaption></figure><figure class="shot"><picture><source data-scheme="dark" media="(prefers-color-scheme: dark)" srcset="img/run-desktop-dark.png"><source data-scheme="light" media="(prefers-color-scheme: light)" srcset="img/run-desktop-light.png"><img src="img/run-desktop-light.png" width="1440" height="900" loading="lazy" decoding="async" alt="Codehaven workflow run: one workflow run and its jobs (desktop, sample data)"></picture><figcaption>Workflow run (sample data)</figcaption></figure><figure class="shot"><picture><source data-scheme="dark" media="(prefers-color-scheme: dark)" srcset="img/consent-desktop-dark.png"><source data-scheme="light" media="(prefers-color-scheme: light)" srcset="img/consent-desktop-light.png"><img src="img/consent-desktop-light.png" width="1440" height="900" loading="lazy" decoding="async" alt="Codehaven claude connector consent: the screen where a person chooses what Claude may do (desktop, sample data)"></picture><figcaption>Claude connector consent (sample data)</figcaption></figure></div>
+<p class="actions"><a class="btn" href="screenshots.html">See all screenshots</a></p>
+</div></section>
+
+<section class="block" id="docs" aria-labelledby="docs-h"><div class="wrap">
+<h2 id="docs-h">Documentation</h2>
+<p class="sub">Install and run it, use it, fix it, and how it is built.</p>
+<div class="actions"><a class="btn" href="docs/getting-started.html">Getting started</a><a class="btn" href="docs/configuration.html">Configuration</a><a class="btn" href="docs/operations.html">Backup, restore, upgrade</a><a class="btn" href="docs/using-ci.html">CI and runners</a><a class="btn" href="docs/troubleshooting.html">Troubleshooting</a><a class="btn" href="docs/index.html">All docs</a></div>
+</div></section>
+
+<section class="block" id="license" aria-labelledby="lic-h"><div class="wrap">
+<h2 id="lic-h">License and source</h2>
+<p>Codehaven is MIT licensed. The source, the issue tracker and the release history are on <a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a>.</p>
+</div></section>
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

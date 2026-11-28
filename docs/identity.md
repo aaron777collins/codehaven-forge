@@ -4,6 +4,8 @@ Written by the identity stream (`ch-auth`, `ch-notify`). `ARCHITECTURE.md` secti
 8.5 have the design. This file is the working guide for the web, git, collab and ci streams, and
 for whoever integrates.
 
+> Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at [Getting started](getting-started.md).
+
 ## The shape
 
 The instance is invite-only. There is no sign-up route, no setup page, no proxy-header login and
@@ -142,9 +144,8 @@ match them.
 `issue_assignees`, `issue_subscriptions`, `issue_comments`, `review_requests`, `reviews`,
 `review_comments`, `watches`.
 
-Collab: **there is no `ReviewRequested` event**, so a requested reviewer only hears about a
-pull request when it is opened. Add the event (and a line in `fanout.rs`) to notify on later
-requests. Delete the `review_requests` row when the review comes in, or the stale request keeps
+Collab: `ReviewRequested` is an event now, and `fanout.rs` gives the requested reviewer the reason
+`review_requested`. Delete the `review_requests` row when the review comes in, or the stale request keeps
 outranking the reviewer's other reasons.
 
 Everyone notified is checked with `Authz::repo_permission >= Read` first, so a title never reaches a

@@ -1,9 +1,13 @@
 # Going public and first run
 
 How a checkout of this repository becomes a running, public, invite-only instance: the first run
-on a host, the first admin, inviting people, runners, and what to check from outside. The lower
+on a host, the first admin, inviting people, runners, and what to check from outside. If this is
+your first time, `docs/getting-started.md` is the gentler walk-through, and `docs/configuration.md`
+explains every setting. The lower
 half of the page keeps the record of what the six stream merges settled and how the end-to-end
 run and the screenshots work. `ARCHITECTURE.md` section 2.4 has the design of the public surface.
+
+> The first half of this page is the short first-run checklist; [Getting started](getting-started.md) is the full walk-through and the one kept up to date. The lower half is contributor history of how the work was merged and tested.
 
 ## The first run on a host
 
@@ -20,7 +24,7 @@ the host needs no Rust and no PostgreSQL.
 2. `sudo bash deploy/prod/setup.sh`, once. It checks the host, makes the data directories owned
    by the server's unprivileged user (uid 10001), and writes the database credentials into
    `CODEHAVEN_SECRETS_DIR`, where they stay; it never prints them.
-3. `sudo bash deploy/prod/up.sh`, or `make up` from the machine you build on. It builds the
+3. `sudo bash deploy/prod/up.sh`. (`make up` runs the same script through make, on another host over ssh when `CH_HOST` is set; the `sudo bash` form is the documented one.) It builds the
    images when the tag has none, starts the instance, waits for the server to be healthy, checks
    that the published ports are only where `CODEHAVEN_HTTP_BIND` and `CODEHAVEN_SSH_BIND` say
    (loopback by default), and curls `/healthz`.
@@ -149,8 +153,8 @@ The Rust harness in `tests/e2e/src` runs steps 0 and 1 inside the same throwaway
 2 and later live in the Python script because they need `git`, `ssh` and a runner, and the e2e
 compose project has neither a runner nor a Docker daemon for jobs.
 
-Step 14 checks that a runner registration token works once and is refused the second time. Not
-covered yet: the OCI registry with a real `docker login`. The live job log is covered by step 21,
+Step 14 checks that a runner registration token works once and is refused the second time. The
+OCI registry with a real `docker login` is covered by `deploy/tests/registry-conformance.sh`. The live job log is covered by step 21,
 which runs `tests/e2e/livelog.mjs` in a real browser.
 
 ## Screenshots

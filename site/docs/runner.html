@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The runner and the haven CLI | Codehaven</title>
+<meta name="description" content="What the runner stream built, how to run it, how to test it, and the choices the other streams need to know about.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html" aria-current="page">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html" aria-current="page">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#haven-runner">haven-runner</a></li><li class="l3"><a href="#in-the-compose-stack">In the compose stack</a></li><li class="l3"><a href="#what-happens-to-a-job">What happens to a job</a></li><li class="l3"><a href="#built-in-actions">Built-in actions</a></li><li class="l3"><a href="#other-actions">Other actions</a></li><li class="l3"><a href="#services">Services</a></li><li class="l3"><a href="#the-job-token">The job token</a></li><li class="l3"><a href="#logs">Logs</a></li><li class="l2"><a href="#contract-choices-the-ci-stream-should-match">Contract choices the ci stream should match</a></li><li class="l2"><a href="#expression-engine">Expression engine</a></li><li class="l2"><a href="#tests">Tests</a></li><li class="l2"><a href="#haven">haven</a></li><li class="l2"><a href="#what-a-job-can-reach">What a job can reach</a></li></ul></div></details>
+<article class="prose">
+<h1 id="the-runner-and-the-haven-cli">The runner and the <code>haven</code> CLI <a class="anchor" href="#the-runner-and-the-haven-cli" aria-label="Link to this section">#</a></h1>
+<p>What the runner stream built, how to run it, how to test it, and the choices the other streams
+need to know about. <a href="architecture.html"><code>ARCHITECTURE.md</code></a> sections 2.5, 9.4, 9.5 and 13 have the design.</p>
+<blockquote>
+<p>Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at <a href="getting-started.html">Getting started</a>.</p>
+</blockquote>
+<h2 id="haven-runner">haven-runner <a class="anchor" href="#haven-runner" aria-label="Link to this section">#</a></h2>
+<p>One binary, three commands.</p>
+<pre tabindex="0"><code class="language-sh">haven-runner register --url http://server:3200 --name runner-1 [--labels ubuntu-latest,linux,x64]
+                                    # the token comes from HAVEN_RUNNER_TOKEN (kept out of `ps`)
+haven-runner run [--config config.toml] [--concurrency 2] [--work-dir /work]
+haven-runner check                  # credential, settings, Docker, work dir, disk, server</code></pre>
+<p>Without <code>--labels</code>, <code>register</code> offers the labels of its settings file's <code>[labels]</code> table (the
+stack's <code>deploy/runner.toml</code>: <code>ubuntu-latest</code>, <code>ubuntu-24.04</code> and <code>linux</code>) plus the architecture
+(<code>x64</code> or <code>arm64</code>), so the server offers it exactly the jobs it has an image for.</p>
+<p><code>register</code> saves <code>.runner</code> (mode 0600, written atomically) next to where it runs, or under
+<code>$HAVEN_RUNNER_HOME</code>. A second <code>register</code> is refused without <code>--replace</code>. The registration token
+is single use, so a failed attempt needs a new one from Site admin &gt; Runners.</p>
+<p><code>run</code> needs Docker. It reads <code>DOCKER_HOST</code> (and <code>DOCKER_TLS_VERIFY</code>, <code>DOCKER_CERT_PATH</code>), which in
+the compose stack point at the separate <code>dind</code> daemon. The host's socket is never involved.
+<code>deploy/runner.example.toml</code> documents every setting. Unknown keys are an error.</p>
+<h3 id="in-the-compose-stack">In the compose stack <a class="anchor" href="#in-the-compose-stack" aria-label="Link to this section">#</a></h3>
+<pre tabindex="0"><code class="language-sh">CH_STREAM=src bash deploy/dev/release.sh            # builds codehaven-runner and the other images
+HAVEN_RUNNER_TOKEN=&lt;token&gt; sudo -E bash deploy/prod/ci-up.sh register runner-1
+sudo bash deploy/prod/ci-up.sh                      # dind, the job image inside it, the runner</code></pre>
+<p><code>ci-up.sh</code> builds <code>codehaven-job:trixie</code> (<code>deploy/images/job.Dockerfile</code>: Debian trixie with git,
+a C toolchain, Node, Python and Rust through rustup with stable, clippy and rustfmt; no Docker
+CLI, since jobs cannot reach a daemon) with the host's buildx
+builder and loads it into <code>dind</code> with <code>docker save | docker load</code>. Nothing is started on the host
+by these scripts until you run them; the runner name defaults to <code>CODEHAVEN_RUNNER_NAME</code>
+(<code>runner-1</code> in <code>.env.example</code>).</p>
+<h3 id="what-happens-to-a-job">What happens to a job <a class="anchor" href="#what-happens-to-a-job" aria-label="Link to this section">#</a></h3>
+<ol>
+<li><code>POST /jobs/request</code> long-polls (30 s). A slot is taken first, so a runner with 2 slots never
+holds a job it cannot start. The disk guard runs before each poll.</li>
+<li>A directory <code>&lt;work_dir&gt;/job-&lt;id&gt;-&lt;n&gt;/</code> is created and bind-mounted into the job container at the
+same path. The container is <code>tail -f /dev/null</code> with limits (<code>--cpus 4</code>, 8 GiB, 4096 pids, no
+swap), never privileged, no devices, no added capabilities, no host network, no socket.</li>
+<li>Each step: evaluate <code>if:</code> against the job status so far, evaluate <code>env</code>, <code>with</code> and <code>run</code>, run
+it, read <code>$GITHUB_OUTPUT</code>, <code>$GITHUB_ENV</code>, <code>$GITHUB_PATH</code> and <code>$GITHUB_STEP_SUMMARY</code>, report.
+<code>run:</code> steps are <code>docker exec</code> of a script file under <code>_runner/scripts</code>.</li>
+<li>Cancel (from a heartbeat answer) stops the current step, kills its whole process tree, and
+still runs <code>always()</code> and <code>cancelled()</code> steps. A timeout does the same and the job ends as
+<code>timed_out</code>. Shutdown works the same way after a grace period, and a second signal stops
+everything at once.</li>
+<li>Always: remove the container, take back ownership of what root made, delete the directory.
+A job container that died on its own is handled with a throwaway container. A runner that was
+killed leaves containers labelled <code>org.codehaven.runner=&lt;id&gt;</code> and <code>job-*</code> directories, and the
+next start removes both.</li>
+</ol>
+<p>Environment: every <code>GITHUB_*</code> variable has a <code>CODEHAVEN_*</code> twin, plus <code>CI=true</code>, <code>RUNNER_*</code>, and
+<code>GIT_CONFIG_*</code> for <code>safe.directory</code> on the workspace (it belongs to the runner's user, not the
+container's). <code>GITHUB_TOKEN</code> is not in the environment; <code>${{ secrets.GITHUB_TOKEN }}</code> and
+<code>${{ github.token }}</code> give the job token.</p>
+<h3 id="built-in-actions">Built-in actions <a class="anchor" href="#built-in-actions" aria-label="Link to this section">#</a></h3>
+<p><code>checkout</code>, <code>cache</code> (and <code>cache/restore</code>, <code>cache/save</code>), <code>upload-artifact</code>, <code>download-artifact</code>,
+<code>docker://image</code>, each with or without an <code>actions/</code> or <code>codehaven/</code> prefix and a version.
+Every other <code>uses:</code> is fetched and run, as the next section says. They run inside the runner process, so they work on the
+workspace from outside the container. The rules for what they may touch:</p>
+<ul>
+<li>File patterns never leave the workspace: no <code>..</code>, absolute paths only inside it, and symbolic
+links are never followed (otherwise a job could upload the runner's own <code>.runner</code>).</li>
+<li>Cache archives are unpacked with only regular files and directories, no setuid bits, and
+nothing outside the workspace. Zips are unpacked with <code>enclosed_name</code> and a byte count.</li>
+<li><code>checkout</code> sends the job token only to the server's own origin (<code>http.&lt;origin&gt;/.extraheader</code>),
+and masks both the token and its base64 form.</li>
+<li><code>checkout</code> never runs anything the job left behind or writes while it works. A process from an
+earlier step can still be running, so git never touches the workspace: it fetches and checks
+out into a new repository in the runner's private directory, with <code>--git-dir</code> and
+<code>--work-tree</code> on every call. The finished tree, <code>.git</code> included, is then moved into the
+workspace one directory at a time without following a link, replacing whatever the job left at
+those names (an old <code>.git</code> too). After that the <code>.git</code> is the job's, and the runner never runs
+git on it again. Every git call also runs with <code>core.hooksPath=/dev/null</code>,
+<code>core.fsmonitor=false</code>, <code>protocol.ext.allow=never</code>, no credential helper, and no global or
+system config.</li>
+<li>The runner's own files in the job directory (step scripts, <code>$GITHUB_OUTPUT</code>, <code>$GITHUB_ENV</code>,
+<code>$GITHUB_PATH</code>, <code>$GITHUB_STEP_SUMMARY</code>, <code>event.json</code>) are written and read one directory at a
+time without following a symbolic link. A link the job put at one of those names is replaced, a
+link on the way to them stops the step, and only regular files are read back. Archives the
+runner builds or downloads live in a private directory beside the job's, which the job cannot
+reach.</li>
+</ul>
+<p>These rules keep one job's files from reaching the runner. They are not a sandbox: a job still
+runs in a container on a shared Docker daemon. Jobs in virtual machines (ch-ctk.3) are the
+stronger option if Codehaven ever runs code from people it does not trust.</p>
+<h3 id="other-actions">Other actions <a class="anchor" href="#other-actions" aria-label="Link to this section">#</a></h3>
+<p>Any other <code>uses:</code> is fetched (ch-ctk.4, ch-ctk.5):</p>
+<ul>
+<li><code>owner/repo[/path]@ref</code> is a public GitHub action. <code>haven_owner/repo[/path]@ref</code> is a
+repository on this instance, served when it is the job's own, public, or the same owner's and
+as visible, and readable by the person who started the run. A scheduled run has no such person,
+so it uses only its own repository's actions and public ones. <code>./path</code> is an action in the
+job's own workspace.</li>
+<li>The runner asks the server (<code>POST /jobs/{id}/actions/resolve</code>, with the job token). The server
+checks the site's policy (Site admin &gt; Actions: none, selected or all, an allow list, a block
+list that always wins, optionally full SHAs only), resolves the ref to a commit that a branch
+or tag of that repository reaches (a tag before a branch; never a fork's commit that GitHub
+serves under the parent's name, never <code>refs/pull/*</code>), keeps a tarball of that commit and pins
+the answer to the run. Later jobs and re-runs of failed jobs get the same commit, and the run
+page lists every action with its commit.</li>
+<li>A repository here is used when it is the job's own, public, or has the same owner and is at
+least as visible as the job's repository. A pull request from a fork uses public ones only.
+Any other looks exactly like a repository that does not exist.</li>
+<li>The runner downloads the archive with the job token, checks its sha256, unpacks regular files
+and folders only under <code>_runner/actions/&lt;archive&gt;</code> and reads <code>action.yml</code>.</li>
+<li>An input with a hyphen in its name reaches the action as <code>INPUT_NODE-VERSION</code>, as on GitHub. <code>sh</code> on Debian drops
+every environment variable that is not a shell identifier, and the wrapper that records a step's process id is
+<code>sh</code>, so such variables are set by <code>env NAME=value</code> after it, as plain arguments (ch-ctk.9: before this,
+<code>setup-node</code> and <code>setup-python</code> never saw their <code>node-version</code> and <code>python-version</code>).</li>
+<li>The job image says <code>Ubuntu 24.04</code> in <code>/etc/lsb-release</code> (and sets <code>ImageOS=ubuntu24</code>), because the toolkit
+chooses prebuilt tools by that file and <code>setup-python</code> and the like only publish <code>ubuntu-24.04</code> builds, which
+is also what the <code>ubuntu-latest</code> and <code>ubuntu-24.04</code> labels promise. The userland is Debian trixie (a newer glibc
+than Ubuntu 24.04's, so those builds run) and <code>/etc/os-release</code> says so. After changing the image, load it into
+the runner's daemon again (<code>deploy/prod/ci-up.sh</code>).</li>
+<li>JavaScript actions (<code>node12</code> to <code>node24</code>) run with the job image's <code>node</code>: inputs as
+<code>INPUT_*</code>, <code>GITHUB_ACTION_PATH</code>, <code>GITHUB_STATE</code>, a <code>pre</code> script before the main one, and a
+<code>post</code> script as a step of its own after the workflow's steps, last first, when its
+<code>post-if</code> (default <code>always()</code>) holds. A post step shows as <code>Post &lt;name&gt;</code>.</li>
+<li>Composite actions run their steps inside the step that used them, with their own <code>inputs</code> and
+<code>steps</code> contexts and <code>github.action_path</code>; their <code>outputs</code> are their <code>value</code> expressions.
+Nesting stops at 9 levels. Inside one, <code>secrets</code>, <code>vars</code>, <code>needs</code> and <code>matrix</code> are empty (and so
+are they when an input's <code>default:</code> is worked out): what an action needs from them, the step passes in
+<code>with:</code>.</li>
+<li>Docker container actions (<code>using: docker</code>) need a Docker daemon, which jobs do not have, so
+they fail with a message that says to use a <code>docker://image</code> step or a <code>run:</code> step.</li>
+<li>JavaScript actions also get <code>ACTIONS_RUNTIME_TOKEN</code> and <code>ACTIONS_CACHE_URL</code>, so the cache
+built into <code>setup-node</code>, <code>setup-python</code>, <code>setup-go</code>, <code>setup-java</code> and the rest works
+(ch-ctk.6). The token is a JWT the runner signs with the sha256 of the job token, which the
+server checks against the hash it keeps, and dies with the job. Like GitHub's, it reaches the
+cache service and nothing else: it carries none of the job token's scopes, so an action that
+was never given the job token cannot write a status, an issue or a release with it. Cache
+uploads that are never finished are dropped after an hour, or when the job ends, and the
+server holds at most 4 GiB of them at once. Caches follow the built-in cache's rules: a job reads
+its own ref, then a pull request's base, then the default branch, and writes only its own.
+The toolkit downloads an archive with no credential, so the lookup answers with a link this
+server signed for that one entry, which stops working after an hour.</li>
+<li>The same token opens the artifact service, so an action that bundles <code>@actions/artifact</code> (v4
+artifacts) works: <code>ACTIONS_RESULTS_URL</code> is the server's address, and the toolkit calls
+<code>/twirp/github.actions.results.api.v1.ArtifactService/</code> there (CreateArtifact,
+FinalizeArtifact, ListArtifacts, GetSignedArtifactURL, DeleteArtifact). The upload is a signed
+link the toolkit writes blocks to and the download is another, both made by this server for one
+upload or one artifact and good for an hour, because the toolkit sends no credential with them
+(the one public route, <code>/api/runner/v1/toolkit/blobs/{grant}</code>, now also takes PUT; anything
+without a good link is a plain 404). A job reads the artifacts of its own run and writes only
+its own; a pull request from a fork reads and never writes. As on GitHub, a name is written once
+per run: delete it to write it again. Artifacts stay the built-in action's 2 GiB, 100 per run,
+90 days at most. Blocks that are never joined go with the upload, after an hour or when the job
+ends.</li>
+</ul>
+<h3 id="services">Services <a class="anchor" href="#services" aria-label="Link to this section">#</a></h3>
+<p><code>services:</code> (ch-ctk.7) start before the first step, each in the job container's network, so the
+job reaches a service at <code>localhost:&lt;port&gt;</code> and by its name (<code>postgres:5432</code>). The job waits up
+to <code>limits.service_wait_seconds</code> (120) for each port the service lists under <code>ports:</code>; health
+check options are accepted and the port wait stands in for them. Options are the same safe list
+as a job container's. <code>job.services.&lt;id&gt;.id</code> and <code>.ports</code> are in the <code>job</code> context. Services go
+when the job ends.</p>
+<h3 id="the-job-token">The job token <a class="anchor" href="#the-job-token" aria-label="Link to this section">#</a></h3>
+<p>What <code>GITHUB_TOKEN</code> may do follows the workflow's <code>permissions:</code> (ch-ctk.8). With none it reads
+contents and packages. <code>contents: write</code> pushes, tags and makes releases; <code>statuses: write</code>
+posts commit statuses; <code>issues</code> or <code>pull-requests: write</code> opens and comments on issues and pull
+requests (one scope here); <code>packages: write</code> pushes images linked to the job's own repository.
+Naming any scope sets the others to none, and a job's block replaces the workflow's. <code>contents: write</code> is write
+permission on the job's own repository for everything its API does, so a job with it can also open issues, add labels
+and edit pull requests as that account (<code>tests/access/matrix.job_write.txt</code> records it). Anyone who can write the
+workflow could do the same with a token of their own. Writes are
+made as the <code>codehaven-actions</code> account, which cannot sign in, go through branch protection with
+no bypass, never change workflow files and start no workflow. A repository admin can cap every
+token at read (Settings &gt; Secrets, or <code>PUT /repos/{o}/{r}/actions/permissions/workflow</code>). A pull
+request from a fork reads contents and nothing else.</p>
+<h3 id="logs">Logs <a class="anchor" href="#logs" aria-label="Link to this section">#</a></h3>
+<p>Lines are masked first (every secret value, every line of a multi-line secret, <code>::add-mask::</code>
+values, the job token, the runner's own credential), then batched every 500 ms or 64 KB. Step <code>0</code>
+is the job's own log: image pulls, cap notices, post-job cache saves. Markers follow GitHub's raw
+log format so the web stream can fold them: <code>##[group]</code>, <code>##[endgroup]</code>, <code>##[error]</code>,
+<code>##[warning]</code>, <code>##[notice]</code>, <code>##[debug]</code>. A step's header, <code>##[group]Run &lt;first line&gt;</code>, echoes the
+script. A job log stops growing at <code>limits.max_log_megabytes</code>; the job carries on.</p>
+<h2 id="contract-choices-the-ci-stream-should-match">Contract choices the ci stream should match <a class="anchor" href="#contract-choices-the-ci-stream-should-match" aria-label="Link to this section">#</a></h2>
+<p>The runner follows <code>ch_api_types::runner</code> and <a href="architecture.html"><code>ARCHITECTURE.md</code></a> 9.4. Where those leave room, it
+chose as follows. If <code>ch-ci</code> chooses otherwise, change one side in the same pull request.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Topic</th><th scope="col">What the runner does</th></tr></thead><tbody><tr><td>Credentials</td><td><code>Bearer &lt;runner credential&gt;</code> for register-less calls. <code>Bearer &lt;job token&gt;</code> for artifacts and cache. Git gets <code>Basic x-access-token:&lt;job token&gt;</code></td></tr><tr><td>Log <code>seq</code></td><td>One counter per job across all steps, from 0. A batch is for one step. <code>next_seq</code> in the answer is honoured when it is ahead</td></tr><tr><td>Lost lease</td><td><code>404</code>, <code>410</code> or <code>409</code> on a heartbeat or step update stops the job and nothing is reported. <code>401</code> ends the runner with an error</td></tr><tr><td>Retries</td><td><code>5xx</code>, <code>429</code> (with <code>Retry-After</code>) and network errors retry with backoff and jitter. Logs 8 times, steps 6, complete 14 (about 5 minutes), heartbeat 2. Other <code>4xx</code> never retry</td></tr><tr><td>Step updates</td><td><code>in_progress</code>, then <code>completed</code> with a conclusion and outputs. A skipped step gets only <code>completed</code> with <code>skipped</code>. Steps that never started (job aborted) are not reported</td></tr><tr><td>Job conclusion</td><td><code>success</code>, <code>failure</code>, <code>cancelled</code>, <code>timed_out</code></td></tr><tr><td>Artifact upload</td><td><code>PUT /jobs/{id}/artifacts/{name}</code> with a zip body, <code>Content-Length</code> set, optional <code>?retention_days=N</code> (not in the DTOs)</td></tr><tr><td>Cache</td><td><code>POST /cache/lookup</code>, <code>PUT /cache/{key}?version=&lt;v&gt;</code> with a tar.gz body (<code>409</code> means it exists and is fine), <code>GET /cache/{id}</code>. <code>version</code> is a hash of the paths</td></tr><tr><td>Checkout by sha</td><td>If the run's ref has moved, the runner fetches the commit by sha, which needs <code>uploadpack.allowAnySHA1InWant</code> (or protocol v2 behaviour) on the git side</td></tr><tr><td>Server URL in jobs</td><td><code>github.server_url</code> and <code>GITHUB_SERVER_URL</code> are <code>context.server_url</code> unchanged. A job container in <code>dind</code> cannot resolve compose names such as <code>server</code>, so give it the public URL</td></tr></tbody></table></div>
+<h2 id="expression-engine">Expression engine <a class="anchor" href="#expression-engine" aria-label="Link to this section">#</a></h2>
+<p><code>src/expr.rs</code> is a full evaluator for <code>${{ }}</code> (contexts, <code>&amp;&amp;</code> and <code>||</code> returning operands, loose
+equality, <code>a.*.b</code> filters, <code>format</code>, <code>join</code>, <code>toJSON</code>, <code>fromJSON</code>, <code>contains</code>, <code>startsWith</code>,
+<code>endsWith</code>, the status functions, <code>hashFiles</code>). <a href="architecture.html"><code>ARCHITECTURE.md</code></a> 9.2 gives the engine to
+<code>ch-workflow</code>, which the ci stream builds in parallel. The runner needed it before that crate had
+one, so it has its own. The surface the runner uses is three functions (<code>eval_condition</code>,
+<code>interpolate</code>, <code>eval_template</code>). When <code>ch-workflow</code>'s engine lands, replace the module body with
+an adapter over those three and keep the tests, which pin GitHub's semantics.</p>
+<h2 id="tests">Tests <a class="anchor" href="#tests" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">make STREAM=runner test P=haven-runner       # unit and integration tests, in the builder
+make STREAM=runner test P=haven-cli
+make STREAM=runner docker-test               # the executor against a real, throwaway Docker daemon</code></pre>
+<ul>
+<li><code>tests/job_engine.rs</code>, <code>actions.rs</code>, <code>runner_loop.rs</code>, <code>client.rs</code> run the real client and engine
+against an in-memory server over HTTP (<code>haven_runner::testing::FakeServer</code>). The host stands in
+for the container (<code>LocalBackend</code>). They cover step logic, masking, cancel and timeout (including
+process trees), artifacts, cache, checkout against a real git repository, retries, concurrency,
+shutdown, the disk guard and startup cleanup.</li>
+<li><code>tests/docker.rs</code> needs a daemon. <code>deploy/dev/docker-tests.sh</code> starts <code>dind-test</code> (profile
+<code>docker-tests</code> in <code>deploy/compose.dev.yml</code>, its own daemon on the private <code>dev</code> network), builds
+the job image into it, and runs the file with <code>HAVEN_REQUIRE_DOCKER=1</code>. Without that variable and
+a daemon the tests skip with a note. The <code>nonroot_*</code> tests re-run themselves as uid 10001 under
+<code>setpriv</code>, which is how the runner runs in its container, to prove files root made inside the
+container can be taken back and removed.</li>
+<li><code>deploy/dev/clean.sh</code> removes the test daemon's volumes.</li>
+</ul>
+<h2 id="haven">haven <a class="anchor" href="#haven" aria-label="Link to this section">#</a></h2>
+<p><code>haven</code> is a REST v3 client built on <code>ch-api-types</code>. Commands: `auth login|logout|status|token|
+git-credential|setup-git<code>, </code>repo create|clone|view|fork|list<code>, </code>issue list|view|create|close|
+comment<code>, </code>pr create|list|view|checkout|diff|review|merge<code>, </code>run list|view|watch|logs|rerun|cancel`,
+<code>workflow list|run</code>, <code>release create|list|upload</code>, <code>api</code>.</p>
+<ul>
+<li>The token is stored in the OS keyring (service <code>haven</code>), or in <code>~/.config/haven/tokens.toml</code>
+with mode 0600 when there is no keyring. <code>HAVEN_TOKEN</code> and <code>HAVEN_HOST</code> override both.</li>
+<li>It sends the token only to the host it was issued for, never to a link that points elsewhere.</li>
+<li><code>-R owner/name</code> picks the repository, otherwise the <code>origin</code> remote of the current directory.</li>
+<li><code>--json</code> on list and view commands prints the DTOs. <code>haven api</code> takes <code>-f</code> (strings), <code>-F</code>
+(typed), <code>-H</code>, <code>--input</code>, <code>--include</code> and <code>--paginate</code>.</li>
+<li><code>pr merge --auto</code> turns on auto-merge (with <code>--squash</code>, <code>--rebase</code> or <code>--merge</code>), <code>--disable-auto</code> turns it off.</li>
+<li><code>tests/cli.rs</code> drives every command against a fake server whose bodies are the committed
+<code>ch-api-types</code> snapshots.</li>
+</ul>
+<h2 id="what-a-job-can-reach">What a job can reach <a class="anchor" href="#what-a-job-can-reach" aria-label="Link to this section">#</a></h2>
+<p>A job is code that anyone with <code>can_run_ci</code> wrote, so it gets the internet and nothing else on the
+host. <code>deploy/dind/guard.sh</code> is the <code>dind</code> service's entry point. Before it hands over to
+<code>dockerd</code> it keeps three rules in place inside the daemon's own network namespace, so the host's
+firewall is never touched:</p>
+<ul>
+<li>A job container may not open a connection to a private range (10/8, 172.16/12, 192.168/16,
+169.254/16, 100.64/10) through the <code>runners</code> network. Before this, a job could connect to ssh,
+postgres, redis and the local-only helpers on every host bridge address.</li>
+<li>A job container may not talk to the daemon's own address.</li>
+<li>Nothing inside the daemon, host-network jobs included, may open a connection to a private
+range. The runner's own connection and its replies are already established, so they pass.</li>
+<li>The same two rules apply to the host's own public addresses (<code>deploy/prod/host-ips.sh</code> lists
+them and <code>up.sh</code> and <code>ci-up.sh</code> pass them in as <code>HOST_PUBLIC_IPS</code>), with one exception: tcp/443,
+the public https site. The host listens on ssh, postgres, redis and more at its public address,
+and a job's packets to it used to be delivered, so every one of those answered.</li>
+</ul>
+<p>Every container the runner starts also gets a network of its own, so one job cannot connect to
+another job's listeners or read its secrets, and the <code>NET_RAW</code> capability is dropped, so a job
+cannot open a raw socket to sniff or spoof. Both are checked by a real Docker test
+(<code>jobs_cannot_reach_each_other_and_have_no_raw_sockets</code>) and by an e2e step that runs two jobs at
+the same time.</p>
+<p>Jobs reach the server over its public name, which is not a private address, so checkout,
+artifacts and logs are unaffected. Jobs cannot remove the rules: <code>container.options</code> has no
+<code>--privileged</code>, <code>--network</code> or <code>--cap-add</code>. The rules are checked again every 30 seconds. The e2e
+run has a workflow step that tries every bridge gateway and public address the host has and fails if one answers.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="ci.html"><small>Previous</small>CI internals</a><a class="next" href="foundation.html"><small>Next</small>Foundation</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/runner.md" rel="noopener">docs/runner.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#haven-runner">haven-runner</a></li><li class="l3"><a href="#in-the-compose-stack">In the compose stack</a></li><li class="l3"><a href="#what-happens-to-a-job">What happens to a job</a></li><li class="l3"><a href="#built-in-actions">Built-in actions</a></li><li class="l3"><a href="#other-actions">Other actions</a></li><li class="l3"><a href="#services">Services</a></li><li class="l3"><a href="#the-job-token">The job token</a></li><li class="l3"><a href="#logs">Logs</a></li><li class="l2"><a href="#contract-choices-the-ci-stream-should-match">Contract choices the ci stream should match</a></li><li class="l2"><a href="#expression-engine">Expression engine</a></li><li class="l2"><a href="#tests">Tests</a></li><li class="l2"><a href="#haven">haven</a></li><li class="l2"><a href="#what-a-job-can-reach">What a job can reach</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

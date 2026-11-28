@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The git stream: ch-git, ch-ssh, ch-registry | Codehaven</title>
+<meta name="description" content="What was built, how it fits together, and what is left.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html" aria-current="page">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html" aria-current="page">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#one-service-three-traits">One service, three traits</a></li><li class="l2"><a href="#changes-to-foundation-files-small-all-additive">Changes to foundation files (small, all additive)</a></li><li class="l2"><a href="#on-disk">On disk</a></li><li class="l2"><a href="#the-push-pipeline">The push pipeline</a></li><li class="l2"><a href="#tiers-forks-and-the-rebuild-before-widening">Tiers, forks and the rebuild before widening</a></li><li class="l2"><a href="#notes-for-the-other-streams">Notes for the other streams</a></li><li class="l2"><a href="#rest">REST</a></li><li class="l2"><a href="#registry">Registry</a></li><li class="l2"><a href="#tests-and-where-they-run">Tests and where they run</a></li><li class="l2"><a href="#left-undone-and-why">Left undone, and why</a></li></ul></div></details>
+<article class="prose">
+<h1 id="the-git-stream-ch-git-ch-ssh-ch-registry">The git stream: ch-git, ch-ssh, ch-registry <a class="anchor" href="#the-git-stream-ch-git-ch-ssh-ch-registry" aria-label="Link to this section">#</a></h1>
+<p>What was built, how it fits together, and what is left. <a href="architecture.html"><code>ARCHITECTURE.md</code></a> sections 5.1, 6 and
+10 are the design; this file is the working notes for whoever integrates or extends it.</p>
+<blockquote>
+<p>Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at <a href="getting-started.html">Getting started</a>.</p>
+</blockquote>
+<h2 id="one-service-three-traits">One service, three traits <a class="anchor" href="#one-service-three-traits" aria-label="Link to this section">#</a></h2>
+<p><code>ch_git::GitCore</code> implements <code>Repos</code>, <code>GitService</code> and <code>GitTransport</code>. <code>ch_git::build</code> puts it in
+<code>AppState</code> as those three traits and also in <code>AppState.ext</code>, so ch-git's own REST handlers, its
+hook server and its housekeeping worker get the concrete type back with
+<code>state.ext.get::&lt;GitCore&gt;()</code>. ch-ssh and ch-registry never see it: ch-ssh starts git through
+<code>GitTransport::open</code>, ch-registry uses only the database, the blob store and <code>Authz</code>.</p>
+<p><code>build</code> needs the real <code>Authz</code> in <code>b.authz</code> (identity builds first). It writes the hook scripts, so
+it must run in the server's data directory; <code>codehaven admin</code> does the same, which is harmless.</p>
+<h2 id="changes-to-foundation-files-small-all-additive">Changes to foundation files (small, all additive) <a class="anchor" href="#changes-to-foundation-files-small-all-additive" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">File</th><th scope="col">Change</th></tr></thead><tbody><tr><td><code>ch-core/services.rs</code></td><td><code>GitTransport</code> trait with <code>GitCaller</code>, <code>GitWire</code>, <code>GitMode</code>, <code>GitSession</code>. <code>GitService::blame</code> and <code>update_ref</code>, <code>Repos::update_settings</code> and <code>list_accessible</code>, all with default bodies so another stream's fake keeps compiling</td></tr><tr><td><code>ch-core/model.rs</code></td><td><code>Blame</code>, <code>BlameRange</code>, <code>RepoSettingsUpdate</code>; <code>Signature</code> is now <code>PartialEq, Eq</code></td></tr><tr><td><code>ch-core/state.rs</code></td><td><code>Extensions</code> and the <code>ext</code> field on <code>AppState</code> and <code>AppStateBuilder</code>; the <code>git_transport</code> service</td></tr><tr><td><code>ch-core/not_built.rs</code></td><td><code>NotBuilt</code> implements <code>GitTransport</code> and fails closed</td></tr><tr><td><code>codehaven/reqinfo.rs</code></td><td>The request middleware also inserts a plain <code>ClientInfo</code>, because domain crates cannot name <code>RequestMeta</code></td></tr><tr><td><code>codehaven/main.rs</code></td><td><code>codehaven hook</code> calls <code>ch_git::hooks::client::run</code></td></tr><tr><td><code>Cargo.toml</code></td><td><code>russh</code> (ring backend, no aws-lc), <code>rand10</code> (the rand that russh uses), <code>async-compression</code>, <code>moka</code>, <code>regex</code></td></tr><tr><td><code>deploy/dev/remote.sh</code></td><td>Works when run from inside a stream's own worktree</td></tr></tbody></table></div>
+<h2 id="on-disk">On disk <a class="anchor" href="#on-disk" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-text">data/git/&lt;shard&gt;/&lt;repo_id&gt;.git     bare repositories
+data/git/_hooks/                   pre-receive and post-receive, rewritten at every start
+data/git/_run/hook-&lt;pid&gt;-&lt;id&gt;.sock the hook socket (0600), swept when stale
+data/git/_home/                    an empty HOME for git
+data/git/_trash/                   deleted repositories, removed by housekeeping
+data/blobs/_uploads/&lt;uuid&gt;         registry uploads in progress
+data/secrets/ssh_host_ed25519      the SSH host key (0600, made on first start)</code></pre>
+<p>All of it is under the volumes the compose file already mounts.</p>
+<h2 id="the-push-pipeline">The push pipeline <a class="anchor" href="#the-push-pipeline" aria-label="Link to this section">#</a></h2>
+<p>Every ref change goes through two functions in <code>pipeline.rs</code>: <code>authorize</code> (permission, archived,
+namespace, branch protection) and <code>record</code> (one transaction: repository row, <code>Push</code>, <code>RefCreated</code>
+and <code>RefDeleted</code> events). A <code>git push</code> reaches them through the hooks; a merge, a web edit or an
+API ref change reaches them through <code>GitCore::apply_ref_change</code>, which wraps a compare-and-swap
+<code>git update-ref</code>. Same rules, same events, whoever asked.</p>
+<ul>
+<li>The server puts <code>CODEHAVEN_PUSH_ID</code>, <code>CODEHAVEN_REPO_ID</code> and <code>CODEHAVEN_SOCKET</code> in the
+environment of <code>receive-pack</code>. The hook sends the ref updates over the socket. A hook that is
+run by hand, or with a guessed id, is refused. Pushing straight into the bare directory is
+refused for the same reason (<code>core.hooksPath</code> is set at creation and passed with <code>-c</code>).</li>
+<li>Only <code>refs/heads/*</code> and <code>refs/tags/*</code> can be pushed. <code>refs/pull/*</code> is written only by the server
+(<code>Actor::System</code> with <code>Origin::System</code>; a deploy key carries <code>System</code> but <code>Origin::Push</code>).</li>
+<li>Branch protection (<code>protect.rs</code>): a protected branch refuses direct pushes, force pushes and
+deletion. A pull request merge (<code>Origin::PullRequestMerge</code>) may land; creating a branch under a
+pattern is allowed so a pull request can be opened. The default branch can never be deleted.</li>
+<li><code>Push</code> is emitted for every ref that ends up pointing somewhere. Deleting a ref emits only
+<code>RefDeleted</code>, so consumers of <code>Push</code> never see an all-zero <code>after</code>.</li>
+<li>The first branch pushed to an empty repository becomes the default branch when the configured
+one was not pushed (<code>main</code>, then <code>master</code>, then the first by name).</li>
+</ul>
+<h2 id="tiers-forks-and-the-rebuild-before-widening">Tiers, forks and the rebuild before widening <a class="anchor" href="#tiers-forks-and-the-rebuild-before-widening" aria-label="Link to this section">#</a></h2>
+<p>A repository's tier is <code>repositories.access_tier</code>: <code>private</code> (only people granted access),
+<code>internal</code> (also every signed-in, active account) or <code>public</code> (also anyone on the internet,
+while the site admin allows public repositories). The legacy <code>visibility</code> column is kept in
+step by a trigger, so older binaries still see the right value.</p>
+<p>Git serves any object in a repository's store to anyone who may clone it, deleted history
+included. So before any widening of the tier the store is rebuilt from its refs alone: a
+fresh bare repository fetches every ref, passes <code>git fsck --connectivity-only</code>, must list the
+same refs as the old one, and only then replaces it. The old store is parked, unreachable,
+for 7 days under <code>data/git/_prepublish</code> and swept away after; a startup check puts back a
+store whose swap was interrupted.</p>
+<p>Only the account owner, an owner of the owning organization, or a site admin with two-factor
+in a browser session can make a repository public, on <code>/{owner}/{repo}/settings/visibility</code>,
+after typing the repository's name and ticking that the history was checked for secrets.</p>
+<p>Forks: a new bare repository fetches every branch and tag of its source, so the fork copies
+its objects and borrows nothing through <code>alternates</code>. A fork starts private and can never be
+more visible than its source.</p>
+<p>Deleting a repository that has forks keeps them. In the middle of a chain, its direct forks
+go to its own parent. When the root of a fork network is deleted, its oldest surviving direct
+fork becomes the new root (no parent), the other direct forks hang under it, and every fork in
+the network follows it. Nothing becomes more visible: a fork that would be wider than its new
+parent is narrowed to the parent's tier, and the fork lock and the rule that hides a private
+fork from anyone who cannot see a private ancestor read the new chain from then on. Each
+re-parenting is audited (<code>repo.fork_reparented</code>, with the tier before and after).</p>
+<p>A private repository's delete also changes who can see its private forks, so it is held to one
+rule: <strong>a delete never opens a fork to someone it was closed to.</strong> The lineage rule hid a fork from
+people who could not see the repository being deleted, and with it gone that barrier would
+vanish. So before the delete, the collaborator grants of those people are withdrawn from every
+private fork below it, and so are a team's grants on a fork when one of its members is such a
+person (<code>repo.fork_grants_withdrawn</code> in the audit log says how many). A grant held back by the
+repository being deleted is lost, not remembered. Someone who could see the deleted repository
+but cannot see the fork that becomes the new root is narrowed: the fork now hangs under it. An
+organization's fork below is different: members get their access from the organization's base
+permission, which cannot be held back one person at a time, so if some member cannot see the
+repository being deleted and the base permission is not <code>none</code>, the delete is refused and says
+which organization. Site admins and owners are never held back. Open pull requests into the
+deleted repository go with it, and each one is written to the audit log first
+(<code>pull.closed_repo_deleted</code>: number, title, author and the fork it came from).</p>
+<h2 id="notes-for-the-other-streams">Notes for the other streams <a class="anchor" href="#notes-for-the-other-streams" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>collab.</strong> <code>GitService::merge</code> returns <code>Merged</code>, <code>Conflict { paths }</code> or <code>BaseMoved</code>.
+<code>test_merge</code> returns <code>Clean</code>, <code>Conflict</code> or <code>Unknown</code>; it never returns <code>Behind</code> or <code>Blocked</code>,
+which depend on protection rules collab owns. <code>diff</code> and <code>compare</code> are three-dot (from the
+merge base); for a commit and its parent that is the commit's own change. A pull request from a
+fork needs no work from collab: <code>merge</code>, <code>test_merge</code> and <code>create_ref</code> fetch the head commit
+from the fork network when the base repository lacks it. <code>create_ref</code> with <code>Actor::System</code> is
+how <code>refs/pull/&lt;n&gt;/head</code> and <code>/merge</code> are written.</li>
+<li><strong>web.</strong> <code>GitService</code> reads take no actor: check access first with <code>Repos::get</code> or
+<code>Repos::get_by_name</code>, which answer <code>NotFound</code> for what the caller cannot read. Writes check it
+again. Settings go through <code>Repos::update_settings</code>.</li>
+<li><strong>identity.</strong> <code>Authz::require</code> is called for every operation. <code>Actor::System</code> skips it. Deploy
+keys are not accounts: ch-ssh passes <code>GitCaller::Deploy</code> and ch-git checks the repository and
+<code>read_only</code> itself.</li>
+<li><strong>ci.</strong> <code>Actor::Job</code> may read its own repository over smart HTTP and nothing else.</li>
+</ul>
+<h2 id="rest">REST <a class="anchor" href="#rest" aria-label="Link to this section">#</a></h2>
+<p><code>ch_git::api_routes()</code> registers the repository endpoints in ARCHITECTURE.md section 11: repos,
+topics, forks, transfer, collaborators, branches and protection, tags, commits, compare,
+contents (read, create, update, delete, raw media type), readme, archives and the git data
+refs, trees and blobs. Two path names need agreeing with ch-ci when the streams merge: this crate
+registers <code>/repos/{owner}/{repo}/commits/{ref}</code>; ch-ci registers <code>/commits/{ref}/status</code>.</p>
+<h2 id="registry">Registry <a class="anchor" href="#registry" aria-label="Link to this section">#</a></h2>
+<p><code>ch_registry::registry_routes()</code> is OCI Distribution 1.1 at <code>/v2/</code>: version check, token
+exchange, blob uploads (chunked, monolithic, mounted), manifests and indexes, tags with paging,
+referrers, deletes and garbage collection. Images are <code>owner/image</code>.</p>
+<p>Checked against a real <code>docker login</code>, <code>docker push</code> and <code>docker pull</code>, and against the OCI conformance suite, by
+<code>deploy/tests/registry-conformance.sh</code> on a throwaway stack. The tests in <code>crates/ch-registry/tests/registry.rs</code> make the
+same calls by hand.</p>
+<h2 id="tests-and-where-they-run">Tests and where they run <a class="anchor" href="#tests-and-where-they-run" aria-label="Link to this section">#</a></h2>
+<p><code>make STREAM=git test P=ch-git</code> (also <code>ch-ssh</code>, <code>ch-registry</code>). The integration tests use a real
+Postgres, real bare repositories, the real <code>git</code> and <code>ssh</code> clients and the <code>ch-hook</code> binary
+(<code>src/bin/ch-hook.rs</code>, the same client <code>codehaven hook</code> runs). Identity does not exist in this
+branch, so <code>tests/common/mod.rs</code> has stand-ins for <code>Authn</code> and <code>Authz</code> that follow section 7.2.
+The test runtime is single-threaded, so client processes are started with <code>tokio::process</code> and
+never block.</p>
+<h2 id="left-undone-and-why">Left undone, and why <a class="anchor" href="#left-undone-and-why" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Import from a URL.</strong> Built since this was written: <code>/new/import</code> fetches an <code>https</code> address that cannot be pointed at a
+private address (<code>imports.allow_private</code> turns that check off), up to 2 GB, branches and tags only.</li>
+<li><strong><code>gix</code> for reads.</strong> Dropped for now: git's own plumbing does every read and no behaviour depends on
+the choice. See ARCHITECTURE.md 6.1.</li>
+<li><strong>Mergeability recompute.</strong> It reads pull request rows, so it belongs to collab; <code>test_merge</code>
+is the building block.</li>
+<li><strong>Docker schema 1.</strong> Dropped: no client has sent it since 2017. Range requests on blob downloads
+(<code>crates/ch-registry/src/range.rs</code>) and the catalog endpoint (<code>catalog.rs</code>) are built.</li>
+<li><strong>Queries are <code>sqlx::query</code> with <code>FromRow</code>, not <code>query!</code>.</strong> The citext columns and the joins make
+offline metadata awkward, and every query is exercised by the tests. Moving them to <code>query!</code>
+later is mechanical, and nothing needs it: dropped.</li>
+</ul>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="faq.html"><small>Previous</small>Frequently asked questions</a><a class="next" href="web.html"><small>Next</small>The web UI</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/git.md" rel="noopener">docs/git.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#one-service-three-traits">One service, three traits</a></li><li class="l2"><a href="#changes-to-foundation-files-small-all-additive">Changes to foundation files (small, all additive)</a></li><li class="l2"><a href="#on-disk">On disk</a></li><li class="l2"><a href="#the-push-pipeline">The push pipeline</a></li><li class="l2"><a href="#tiers-forks-and-the-rebuild-before-widening">Tiers, forks and the rebuild before widening</a></li><li class="l2"><a href="#notes-for-the-other-streams">Notes for the other streams</a></li><li class="l2"><a href="#rest">REST</a></li><li class="l2"><a href="#registry">Registry</a></li><li class="l2"><a href="#tests-and-where-they-run">Tests and where they run</a></li><li class="l2"><a href="#left-undone-and-why">Left undone, and why</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

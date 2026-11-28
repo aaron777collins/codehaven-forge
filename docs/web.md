@@ -4,6 +4,8 @@ Server rendered pages: Askama templates, a little htmx, no framework, no build s
 `ch-web` calls the service traits in `AppState` and shapes the answers into plain view structs.
 It never touches the database and never calls another domain crate.
 
+> Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at [Getting started](getting-started.md).
+
 ## Layout
 
 ```
@@ -176,8 +178,9 @@ required reviewer.
 
 ## Not built
 
-- "Import a repository".
-- Notification emails. Mail sends reset links and invites only.
+Nothing from this list is missing now. "Import a repository" is at `/new/import` (an `https` address, up to 2 GB, branches and
+tags only), and notification emails exist: with mail set up, a person can turn them on at Settings, Notifications, and the
+mail queue sends a title and a link for each notification, never the text of a comment.
 
 ## Pull requests, forks, search and mail
 

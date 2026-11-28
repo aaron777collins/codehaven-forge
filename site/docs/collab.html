@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collaboration (ch-collab) | Codehaven</title>
+<meta name="description" content="Issues, labels, milestones, pull requests, reviews, the merge gate, auto-merge, releases and search.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html" aria-current="page">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html" aria-current="page">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#shape">Shape</a></li><li class="l2"><a href="#rules-worth-knowing">Rules worth knowing</a></li><li class="l2"><a href="#what-it-expects-from-other-streams">What it expects from other streams</a></li><li class="l2"><a href="#rest">REST</a></li><li class="l2"><a href="#consumers">Consumers</a></li><li class="l2"><a href="#differences-from-the-plan">Differences from the plan</a></li><li class="l2"><a href="#not-done">Not done</a></li><li class="l2"><a href="#issue-forms-and-the-merge-queue-ch-dxk">Issue forms and the merge queue (ch-dxk)</a></li><li class="l2"><a href="#testing">Testing</a></li><li class="l2"><a href="#copy-consent-for-a-pull-request-from-a-less-visible-fork-ch-4pn14">Copy consent for a pull request from a less visible fork (ch-4pn.14)</a></li><li class="l2"><a href="#deleting-moving-and-ordering-issues-ch-u6j">Deleting, moving and ordering issues (ch-u6j)</a></li><li class="l2"><a href="#releases-for-release-actions-ch-ctk10-ch-ctk11">Releases for release actions (ch-ctk.10, ch-ctk.11)</a></li></ul></div></details>
+<article class="prose">
+<h1 id="collaboration-ch-collab">Collaboration (<code>ch-collab</code>) <a class="anchor" href="#collaboration-ch-collab" aria-label="Link to this section">#</a></h1>
+<p>Issues, labels, milestones, pull requests, reviews, the merge gate, auto-merge, releases and search.
+It reaches git and identity only through the traits in <code>ch_core::services</code>.</p>
+<blockquote>
+<p>Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at <a href="getting-started.html">Getting started</a>.</p>
+</blockquote>
+<h2 id="shape">Shape <a class="anchor" href="#shape" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code>Core (core.rs)              shared lookups, hydration of rows into views, timeline, cross references
+  issues.rs, comments.rs    issues, comments, reactions, timeline, subscriptions, templates
+  labels.rs                 labels, milestones, the starting labels
+  filter.rs, query.rs       the search language ("is:open label:bug author:@me sort:updated-desc")
+  pulls.rs                  open, update, close, reopen, draft, files, commits, mergeability
+  merge.rs, gate.rs         the gate (pure), merging, update branch, auto-merge
+  protect.rs                branch protection patterns and how several protections combine
+  reviews.rs                reviews, pending reviews, inline comments, threads, requests, CODEOWNERS
+  codeowners.rs, suggest.rs CODEOWNERS parsing and matching, suggestion blocks (both pure)
+  releases.rs               releases, assets, generated notes
+  search.rs                 repositories, issues and pull requests, users, code
+  sync.rs                   the `pr-sync` and `collab-defaults` consumers
+  services.rs               the five `ch_core::services` traits over Core
+  rest/                     `/api/v3` endpoints and the DTO mapping</code></pre>
+<p><code>Core</code> holds a <code>Deps</code> (database, audit, events, blobs, and the <code>Authz</code>, <code>GitService</code>, <code>Repos</code> and <code>Checks</code>
+services). Every public method takes the <code>Actor</code>, checks permission first, changes rows in one transaction
+together with the audit record and the domain event, and returns a view with names, labels and counts filled
+in (<code>ch_core::collab</code>).</p>
+<p>The traits in <code>ch_core::services</code> were extended (all new methods default to "not built", so a fake written
+before this stream keeps compiling). The web stream should call the <code>*view*</code> methods, which take one round trip
+each, rather than the older ones that return bare ids.</p>
+<h2 id="rules-worth-knowing">Rules worth knowing <a class="anchor" href="#rules-worth-knowing" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>Opening an issue or pull request, commenting, reacting and reviewing need read access. Labels, assignees,
+milestones, locking and pinning need triage. Merging, releases and applying a suggestion need write.
+A token without the <code>repo</code> scope is read-only even for the things a reader may do with a password.</li>
+<li>Nothing bypasses the gate, not even a site admin. Approvals count only from people with write access, the
+author's own approval never counts, and a change request stays until the reviewer reviews again or a
+maintainer dismisses it.</li>
+<li>If CI cannot be asked, required checks count as not passed. If protections cannot be read, the merge fails.</li>
+<li>Auto-merge merges in the name of whoever turned it on, and stops if they lose write access.</li>
+<li>A private repository's issue titles never appear in another repository's timeline for someone who cannot
+read the first one.</li>
+<li>Search never copies the permission model into SQL. It over-fetches candidates and keeps what <code>Authz</code> allows.</li>
+<li>Issue numbers and pull request numbers share one sequence per repository. Milestones have their own.</li>
+</ul>
+<h2 id="what-it-expects-from-other-streams">What it expects from other streams <a class="anchor" href="#what-it-expects-from-other-streams" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">From</th><th scope="col">What</th></tr></thead><tbody><tr><td>git</td><td><code>GitService::compare</code> (three dot, with commits and the diff), <code>test_merge</code>, <code>merge</code> with a compare-and-swap on <code>expected_base_sha</code>, <code>create_ref</code> and <code>delete_ref</code> with full ref names, <code>blob</code>, <code>tree</code>, <code>grep</code>, <code>commit_file_change</code>. For a fork pull request, <code>compare</code> on the fork must see the base's objects (a fork copies its source's objects, so it holds them), and <code>create_ref</code> on the base repository for <code>refs/pull/&lt;n&gt;/head</code> needs the fork's head object, which only exists if git fetches it. Collab ignores a failure there.</td></tr><tr><td>git</td><td><code>Repos::protections</code> readable by <code>Actor::System</code>, <code>Repos::get</code> and <code>get_by_name</code> with read checks.</td></tr><tr><td>identity</td><td><code>Authz::repo_permission</code> (the only permission check collab makes), <code>Accounts::get_by_username</code> and <code>get_user</code>.</td></tr><tr><td>notify</td><td>the new <code>DomainEvent::ReviewRequested</code> for the "review requested" reason. <code>PrClosed</code> with <code>merged: true</code> is followed by <code>PrMerged</code> for a merge.</td></tr><tr><td>ci</td><td><code>Checks::required_satisfied</code>. CI is built after collab, so <code>workers()</code> binds the real <code>Checks</code> at startup (<code>deps::bind_checks</code>).</td></tr><tr><td>web</td><td><code>rest::releases::file_response</code> streams an asset for <code>/{owner}/{repo}/releases/download/{tag}/{name}</code> after <code>Releases::open_asset</code>.</td></tr></tbody></table></div>
+<h2 id="rest">REST <a class="anchor" href="#rest" aria-label="Link to this section">#</a></h2>
+<p>Everything is under <code>/api/v3</code> and private to signed-in callers (the gate in <code>codehaven</code> enforces that, and
+<code>anonymous_surface.rs</code> walks these routes too). A repository the caller cannot read is a 404.
+Lists take <code>page</code> and <code>per_page</code> and answer with a <code>Link</code> header, offering <code>next</code> whenever the page came back full.
+The release and release-asset lists are paged from memory, so their <code>Link</code> says exactly whether there is a next page and which is the last.</p>
+<pre tabindex="0"><code>GET  /issues, /user/issues                              ?filter=assigned|created|mentioned|review_requested
+GET POST   /repos/{owner}/{repo}/issues                 ?state labels assignee creator mentioned milestone sort direction q
+GET PATCH  /repos/{owner}/{repo}/issues/{n}
+PUT DELETE .../issues/{n}/lock, .../issues/{n}/pin
+GET POST   .../issues/{n}/comments    GET PATCH DELETE .../issues/comments/{id}
+GET POST PUT DELETE .../issues/{n}/labels      DELETE .../issues/{n}/labels/{name}
+POST DELETE .../issues/{n}/assignees
+GET .../issues/{n}/events, .../issues/{n}/timeline
+GET POST DELETE .../issues/{n}/reactions, .../issues/comments/{id}/reactions, .../pulls/comments/{id}/reactions
+GET PUT DELETE .../issues/{n}/subscription
+GET POST .../labels     GET PATCH DELETE .../labels/{name}
+GET POST .../milestones GET PATCH DELETE .../milestones/{n}
+GET .../assignees       GET .../assignees/{user}        GET .../issue-templates
+
+GET POST   .../pulls                                    ?state head base sort direction q
+GET PATCH  .../pulls/{n}
+GET .../pulls/{n}/files, .../pulls/{n}/commits
+GET PUT    .../pulls/{n}/merge                          PUT .../pulls/{n}/update-branch
+GET .../pulls/{n}/merge-gate                            (extension: every reason a merge is blocked)
+PUT DELETE .../pulls/{n}/auto-merge                     POST .../pulls/{n}/ready_for_review, .../convert_to_draft
+GET POST   .../pulls/{n}/reviews    GET DELETE .../reviews/{id}    POST .../reviews/{id}/events
+PUT .../reviews/{id}/dismissals     GET .../reviews/{id}/comments
+GET POST   .../pulls/{n}/comments   GET PATCH DELETE .../pulls/comments/{id}
+POST .../pulls/comments/{id}/apply-suggestion           (extension)
+GET .../pulls/{n}/threads           PUT DELETE .../pulls/{n}/threads/{id}/resolve   (extension)
+GET POST DELETE .../pulls/{n}/requested_reviewers
+
+GET POST .../releases   GET .../releases/latest   GET .../releases/tags/{tag...}   POST .../releases/generate-notes
+GET PATCH DELETE .../releases/{id}                      GET POST .../releases/{id}/assets   (raw body, ?name= &amp;label=)
+GET PATCH DELETE .../releases/assets/{id}               (Accept: application/octet-stream downloads the file; PATCH renames and labels)
+
+GET /search/repositories, /search/issues, /search/users, /search/code   (code needs `repo:owner/name`)</code></pre>
+<h2 id="consumers">Consumers <a class="anchor" href="#consumers" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><code>pr-sync</code>: on <code>Push</code> it moves open pull requests with that head branch (head sha, counts, mergeability,
+the pull ref, review comment positions: lines that moved are renumbered, lines that were rewritten become
+outdated and keep their original hunk, and CODEOWNERS are asked again), recognises a branch that landed on
+its base by a plain push as merged, and applies <code>Fixes #n</code> from pushed commits on the default branch. On
+<code>CheckRunUpdated</code>, <code>StatusCreated</code> and <code>ReviewSubmitted</code> it tries auto-merge. A handler that keeps failing is
+retried five times and then skipped, so one bad event cannot hold up the rest.</li>
+<li><code>collab-defaults</code>: <code>RepoCreated</code> gives the repository nine starting labels.</li>
+</ul>
+<h2 id="differences-from-the-plan">Differences from the plan <a class="anchor" href="#differences-from-the-plan" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>Queries use <code>sqlx::query_as</code> with typed rows, not <code>sqlx::query!</code>. About two hundred of them, all covered by the
+integration tests against Postgres, and none touches <code>.sqlx/</code>.</li>
+<li>There is no <code>search-index</code> consumer. The search columns are generated by Postgres.</li>
+<li>One migration, <code>0110_collab_pull_stats.sql</code>, adds the counts the pull request list shows and who turned on
+auto-merge. The high number keeps it clear of the other streams' migrations.</li>
+<li>Audit actions added: <code>pull.merged</code>, <code>pull.auto_merge_changed</code>, <code>review.dismissed</code>, <code>comment.deleted</code>,
+<code>issue.lock_changed</code>, <code>label.deleted</code>, <code>release.published</code>, <code>release.deleted</code>.</li>
+</ul>
+<h2 id="not-done">Not done <a class="anchor" href="#not-done" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>Cross-repository code search (the plan keeps it for <code>tantivy</code> later). Code search is per repository.</li>
+<li>Webhook payloads for the new events (the notify stream owns them).</li>
+<li>Nothing from the earlier list of transferring or deleting an issue, or reordering pinned issues: all three are built (see
+"Deleting, moving and ordering issues" below).</li>
+<li>Repository-wide lists of issue comments and review comments (<code>/issues/comments</code>, <code>/pulls/comments</code>).</li>
+</ul>
+<h2 id="issue-forms-and-the-merge-queue-ch-dxk">Issue forms and the merge queue (ch-dxk) <a class="anchor" href="#issue-forms-and-the-merge-queue-ch-dxk" aria-label="Link to this section">#</a></h2>
+<p><strong>Issue forms.</strong> <code>.github/ISSUE_TEMPLATE/*.yml</code> (or <code>.codehaven/ISSUE_TEMPLATE</code>) is read as a YAML issue
+form beside the Markdown templates: <code>name</code>, <code>description</code>, <code>title</code>, <code>labels</code> and a <code>body</code> of <code>markdown</code>,
+<code>input</code>, <code>textarea</code>, <code>dropdown</code> and <code>checkboxes</code> fields with <code>attributes</code> (<code>label</code>, <code>description</code>,
+<code>placeholder</code>, <code>value</code>, <code>options</code>, <code>multiple</code>, <code>render</code>) and <code>validations.required</code>. The new issue page
+lists the templates and draws a form as plain HTML on the server, so the content security policy is
+unchanged. What is submitted is values only: the server reads the form again from the repository, checks
+each value against its field (an option that is not listed, a required answer that is empty, a second
+line in a one-line input) and builds the issue body from them: a <code>### Label</code> section per field in the
+form's order, <code>_No response_</code> for an empty optional answer, and an answer with <code>render:</code> in a fenced
+block that its own text cannot close. A form that cannot be read (bad YAML, a duplicate id, no field
+that is not markdown, more than 40 fields, a file over 64 KB) is left out of the list. A form's
+labels are applied only when the person can triage, as on the plain new issue page. <code>assignees</code> in a
+form is ignored. <code>config.yml</code> is not read.</p>
+<p><strong>Merge queue.</strong> A repository admin turns it on in Settings, General. While it is on, a pull request
+merges only by being added to the queue: the Merge button, the REST merge and auto-merge all refuse. The queue
+works on one pull request per base branch at a time, oldest first. If the branch does not contain the base's
+current tip (the base moved after the branch was last checked), the base is merged into the pull request's branch (the "update branch" a person can do, written as the person who
+queued it), so that checks run on the merged result; those checks start as they do for any push, and for
+a pull request from a fork they still wait for a writer's approval of that exact commit, which the queue never
+gives. Once it is up to date, the ordinary merge gate decides (required checks, reviews, resolved threads,
+code owners) and a clear gate merges it as the person who queued it, by the method they chose. A
+pull request leaves the queue, with the reason on its timeline (<code>merge_queue_removed</code>), when a required
+check failed, it conflicts, someone pushed commits the queue did not make, the person who queued it lost
+write access, it closed, it waited more than 24 hours, or a person removed it. Turning the queue off
+empties it. At most 50 wait per base branch. The queue advances on events and once a minute.</p>
+<h2 id="testing">Testing <a class="anchor" href="#testing" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">make STREAM=collab test P=ch-collab      # 228 tests against a real Postgres, no real git</code></pre>
+<p><code>tests/common/mod.rs</code> has the fakes: <code>FakeGit</code> (refs, compares, merges and file changes in memory),
+<code>TestAuthz</code>, <code>FakeRepos</code>, <code>FakeAccounts</code> and <code>FakeChecks</code>. <code>World</code> sets up alice (owner), bob (write), carol
+(read), dave (triage) and eve (stranger) on a private repository. Real git behind these traits is exercised by
+the end-to-end run once the git stream is merged.</p>
+<h2 id="copy-consent-for-a-pull-request-from-a-less-visible-fork-ch-4pn14">Copy consent for a pull request from a less visible fork (ch-4pn.14) <a class="anchor" href="#copy-consent-for-a-pull-request-from-a-less-visible-fork-ch-4pn14" aria-label="Link to this section">#</a></h2>
+<p>Opening a pull request from a fork copies the head's commits into the base, where everyone who
+can read the base sees them. When the base is public and the head repository is not, the person
+opening it must say so on purpose, or the request is refused with a <code>publish_head</code> field error
+that says what it would publish. Web: a checkbox that appears with that error. REST: the
+Codehaven field <code>publish_head: true</code> on <code>POST /repos/{owner}/{repo}/pulls</code>. CLI:
+<code>haven pr create --publish-head</code>. The tier the head was published to (the base's, as strangers
+see it) is kept in <code>pull_requests.head_publish_tier</code>. A later head of that pull request is
+copied into the base only while the base is no wider than that tier: a base that becomes public
+after the pull request was opened keeps the head it had, and the author opens a new pull
+request with the confirm to publish more.</p>
+<p>When a base is made public, the pull requests that came from a fork that is not public and
+were never confirmed are withdrawn: no pull ref, no copied commits, no test merge, and the merge
+gate says the author has not agreed to publish. Their "Files changed" and "Commits" lists, in
+the API and on the pages, are empty for anyone who cannot read the fork (signed out included),
+and such a person cannot comment on their lines. Line comments made before the base was widened
+stay in the database, but their diff hunk and file path (code from the fork) go out blank, in the
+thread and comment lists, a single comment and the repository-wide list, for anyone who cannot
+read the fork. The words of the comment stay. Whoever can read the fork still sees the
+changes and the full comments. The git layer repeats the rule under the write ticket, so a refresh or merge that was
+checked just before the base went public still copies nothing: a repository that is not public
+gives no commits to one that is, unless an open pull request from it was confirmed.</p>
+<h2 id="deleting-moving-and-ordering-issues-ch-u6j">Deleting, moving and ordering issues (ch-u6j) <a class="anchor" href="#deleting-moving-and-ordering-issues-ch-u6j" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Delete</strong> an issue: repository admins only, audited (<code>issue.deleted</code>). Removes the issue,
+its comments, reactions and timeline; the number is not used again. Pull requests cannot be
+deleted. REST: <code>DELETE /repos/{owner}/{repo}/codehaven/issues/{number}</code>. Web: Manage, Delete.</li>
+<li><strong>Transfer</strong> an issue: write access on both repositories, and the target must be the same
+tier or narrower, never wider (a private issue never lands in a public repository). The issue
+keeps its author, text, state, comments and reactions and gets the next number of the target;
+labels, milestone, assignees and other people's subscriptions stay behind. Audited
+(<code>issue.transferred</code>). REST: <code>POST .../codehaven/issues/{number}/transfer</code> with
+<code>{"repository": "owner/name"}</code>. Web: Manage, Transfer. A repository the person cannot see is
+"no such repository".</li>
+<li><strong>Pinned order</strong>: pinned issues carry a <code>pin_position</code> (at most three pinned). REST:
+<code>GET .../codehaven/issues/pinned</code> and <code>PUT .../codehaven/issues/pinned/order</code> with
+<code>{"numbers": [3, 1, 2]}</code> naming every pinned issue once (triage access). Web: pinned issues
+sit first on the open issue list, with Reorder pinned for people with triage access.</li>
+<li>The repository-wide comment lists are <code>GET /repos/{owner}/{repo}/issues/comments</code> and
+<code>/pulls/comments</code>, as GitHub's.</li>
+</ul>
+<p>All of these need a signed-in person; signed out they answer like a repository that is not there.</p>
+<h2 id="releases-for-release-actions-ch-ctk10-ch-ctk11">Releases for release actions (ch-ctk.10, ch-ctk.11) <a class="anchor" href="#releases-for-release-actions-ch-ctk10-ch-ctk11" aria-label="Link to this section">#</a></h2>
+<p>What <code>softprops/action-gh-release</code>, <code>ncipollo/release-action</code> and the <code>gh</code> CLI's REST calls need, over
+<code>/api/v3/repos/{owner}/{repo}/releases</code>:</p>
+<ul>
+<li><strong>A job's own token</strong> creates, uploads, replaces and publishes when its workflow says <code>contents: write</code>
+(the release is the <code>codehaven-actions</code> bot's, and starts no workflow). A read-only job is refused.
+A job's token may also fetch the <code>browser_download_url</code> of a file of its own repository.</li>
+<li><strong>Uploads</strong> use the release's <code>upload_url</code> (the same server) and are not cut off by the request clock: the sender
+may be silent for <code>http.upload_idle_secs</code> (60) between two chunks and no longer. A file is at most 2 GiB. A second
+file of the same name is a 422 <code>already_exists</code>; delete the old one (or rename it with <code>PATCH .../assets/{id}</code>,
+<code>{name, label}</code>) first, which is what the actions do to replace a file.</li>
+<li><strong><code>digest</code></strong> on every asset (<code>sha256:</code> and 64 hex characters, in the API, the page and the <code>release</code> event);
+<code>HEAD</code> and a single <code>Range</code> on downloads (206, 416 past the end, an unusable header is ignored, only a read of
+bytes counts as a download); an <code>ETag</code> that is the digest.</li>
+<li><strong><code>make_latest</code></strong> (<code>"true"</code>, <code>"false"</code>, <code>"legacy"</code>, as a string): the latest release is the newest mark among
+published releases that are not prereleases and did not ask to be left out (<code>false</code>); publishing marks a release,
+<code>legacy</code> marks only a release whose version is the highest so far. <code>discussion_category_name</code> is a 422 that names
+the field. Migration 0146 backfills the marks from the publish dates.</li>
+<li><strong>Generated notes</strong> list the pull requests whose merge commit is between the previous tag and the target (not those
+merged "since a date"), grouped by label. A <code>.github/release.yml</code> (or <code>.codehaven/release.yml</code>) on the default branch
+names the sections (<code>changelog.categories</code>, labels, <code>*</code>) and what to leave out (<code>exclude.labels</code>,
+<code>exclude.authors</code>); a file that cannot be read means the built-in grouping, never an error.</li>
+<li><strong>The web</strong> can edit (<code>/{owner}/{repo}/releases/{id}/edit</code>), publish a draft, upload files (a multipart form that
+streams into storage, the CSRF token checked from the query before the body is read) and delete a file; every
+file shows its SHA-256. <code>/{owner}/{repo}/releases/latest</code> and <code>.../releases/latest/download/{name}</code> redirect to the
+latest release and its file, for a README to link to; signed out they answer only for a public repository, and
+look like a page that is not there for any other.</li>
+</ul>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="web.html"><small>Previous</small>The web UI</a><a class="next" href="ci.html"><small>Next</small>CI internals</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/collab.md" rel="noopener">docs/collab.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#shape">Shape</a></li><li class="l2"><a href="#rules-worth-knowing">Rules worth knowing</a></li><li class="l2"><a href="#what-it-expects-from-other-streams">What it expects from other streams</a></li><li class="l2"><a href="#rest">REST</a></li><li class="l2"><a href="#consumers">Consumers</a></li><li class="l2"><a href="#differences-from-the-plan">Differences from the plan</a></li><li class="l2"><a href="#not-done">Not done</a></li><li class="l2"><a href="#issue-forms-and-the-merge-queue-ch-dxk">Issue forms and the merge queue (ch-dxk)</a></li><li class="l2"><a href="#testing">Testing</a></li><li class="l2"><a href="#copy-consent-for-a-pull-request-from-a-less-visible-fork-ch-4pn14">Copy consent for a pull request from a less visible fork (ch-4pn.14)</a></li><li class="l2"><a href="#deleting-moving-and-ordering-issues-ch-u6j">Deleting, moving and ordering issues (ch-u6j)</a></li><li class="l2"><a href="#releases-for-release-actions-ch-ctk10-ch-ctk11">Releases for release actions (ch-ctk.10, ch-ctk.11)</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

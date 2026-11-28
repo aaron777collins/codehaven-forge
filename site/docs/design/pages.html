@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codehaven Pages | Codehaven</title>
+<meta name="description" content="Static sites published from a repository, like GitHub Pages.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../../index.html"><img src="../../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../../docs/index.html" aria-current="page">Docs</a><a href="../../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="../index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="../getting-started.html">Getting started</a></li><li><a href="../configuration.html">Configuration</a></li><li><a href="../integration.html">Going public and first run</a></li><li><a href="../operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="../accounts.html">Accounts and sign-in</a></li><li><a href="../repositories.html">Repositories</a></li><li><a href="../pull-requests.html">Issues and pull requests</a></li><li><a href="../using-ci.html">Using CI</a></li><li><a href="../packages.html">Container registry and packages</a></li><li><a href="../pages.html">Pages</a></li><li><a href="../workspace.html">The browser workspace</a></li><li><a href="../terminal.html">The workspace terminal</a></li><li><a href="../connector.html">The Claude connector</a></li><li><a href="../admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="../troubleshooting.html">Troubleshooting</a></li><li><a href="../faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="../git.html">Git, SSH and the registry</a></li><li><a href="../web.html">The web UI</a></li><li><a href="../collab.html">Collaboration</a></li><li><a href="../ci.html">CI internals</a></li><li><a href="../runner.html">The runner and the CLI</a></li><li><a href="../foundation.html">Foundation</a></li><li><a href="../identity.html">Identity</a></li><li><a href="../state.html">State of the project</a></li><li><a href="../architecture.html">Architecture</a></li><li><a href="../roadmap.html">Roadmap</a></li><li><a href="pages.html" aria-current="page">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="../index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="../getting-started.html">Getting started</a></li><li><a href="../configuration.html">Configuration</a></li><li><a href="../integration.html">Going public and first run</a></li><li><a href="../operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="../accounts.html">Accounts and sign-in</a></li><li><a href="../repositories.html">Repositories</a></li><li><a href="../pull-requests.html">Issues and pull requests</a></li><li><a href="../using-ci.html">Using CI</a></li><li><a href="../packages.html">Container registry and packages</a></li><li><a href="../pages.html">Pages</a></li><li><a href="../workspace.html">The browser workspace</a></li><li><a href="../terminal.html">The workspace terminal</a></li><li><a href="../connector.html">The Claude connector</a></li><li><a href="../admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="../troubleshooting.html">Troubleshooting</a></li><li><a href="../faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="../git.html">Git, SSH and the registry</a></li><li><a href="../web.html">The web UI</a></li><li><a href="../collab.html">Collaboration</a></li><li><a href="../ci.html">CI internals</a></li><li><a href="../runner.html">The runner and the CLI</a></li><li><a href="../foundation.html">Foundation</a></li><li><a href="../identity.html">Identity</a></li><li><a href="../state.html">State of the project</a></li><li><a href="../architecture.html">Architecture</a></li><li><a href="../roadmap.html">Roadmap</a></li><li><a href="pages.html" aria-current="page">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#0-the-short-version">0. The short version</a></li><li class="l2"><a href="#1-settings">1. Settings</a></li><li class="l2"><a href="#2-routes">2. Routes</a></li><li class="l3"><a href="#on-the-pages-host-pagesexamplecom">On the pages host (<code>pages.example.com</code>)</a></li><li class="l3"><a href="#on-a-subdomain-pagesexamplecom-full-mode-only">On a subdomain (<code>&lt;owner&gt;.pages.example.com</code>), full mode only</a></li><li class="l3"><a href="#in-the-app-codeexamplecom">In the app (<code>code.example.com</code>)</a></li><li class="l2"><a href="#3-path-handling">3. Path handling</a></li><li class="l2"><a href="#4-isolation-path-form">4. Isolation (path form)</a></li><li class="l3"><a href="#headers">Headers</a></li><li class="l3"><a href="#cookies">Cookies</a></li><li class="l3"><a href="#the-storage-bridge-option-b">The storage bridge (option B)</a></li><li class="l3"><a href="#what-is-left-compared-with-github-pages">What is left compared with GitHub Pages</a></li><li class="l2"><a href="#5-who-can-see-a-site">5. Who can see a site</a></li><li class="l3"><a href="#signed-out">Signed out</a></li><li class="l3"><a href="#signed-in-the-per-site-token">Signed in: the per-site token</a></li><li class="l2"><a href="#6-publishing">6. Publishing</a></li><li class="l2"><a href="#7-limits">7. Limits</a></li><li class="l2"><a href="#8-failure-pages">8. Failure pages</a></li><li class="l2"><a href="#9-full-mode">9. Full mode</a></li><li class="l2"><a href="#10-deploying-it">10. Deploying it</a></li></ul></div></details>
+<article class="prose">
+<h1 id="codehaven-pages">Codehaven Pages <a class="anchor" href="#codehaven-pages" aria-label="Link to this section">#</a></h1>
+<p>Static sites published from a repository, like GitHub Pages. Epic ch-125. The addresses here
+use <code>pages.example.com</code> for the pages host and <code>code.example.com</code> for the app.</p>
+<h2 id="0-the-short-version">0. The short version <a class="anchor" href="#0-the-short-version" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>A repository admin turns Pages on and picks a branch and a folder (<code>/</code> or <code>/docs</code>). Every
+push to that branch publishes a new copy of the folder. The last good copy keeps serving
+when a publish fails, and an older copy can be put back.</li>
+<li>Sites live at <code>https://pages.example.com/&lt;owner&gt;/&lt;project&gt;/</code>. They never share the app's
+origin. Each response carries a CSP sandbox without <code>allow-same-origin</code>, so a page runs in
+an opaque origin: no cookies, no real storage, no credentialed reads of the app or of
+sibling sites. Cookies are stripped both ways.</li>
+<li><code>localStorage</code> works per project through a bridge: a Codehaven page on the pages host
+holds the real storage and hands each project its own part.</li>
+<li>Who can see a site follows the repository: public is anyone, internal is any signed-in
+account, private is people with access. The admin may narrow a site, never widen it.
+Signed-in viewing uses a short-lived token made for one site and one person. It never
+carries the app session.</li>
+<li>Full mode, off by default: an instance admin switch serves every site at
+<code>https://&lt;owner&gt;.pages.example.com/&lt;project&gt;/</code> with no sandbox, like GitHub Pages. It needs
+a wildcard certificate for <code>*.pages.example.com</code>.</li>
+</ul>
+<h2 id="1-settings">1. Settings <a class="anchor" href="#1-settings" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Setting</th><th scope="col">Where</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>pages.host</code></td><td>config, <code>CODEHAVEN_PAGES_HOST</code></td><td>none</td><td>The pages host name, for example <code>pages.example.com</code>. Unset turns Pages off: no tab, no routes, nothing served</td></tr><tr><td><code>pages.max_files</code></td><td>config</td><td>2000</td><td>Files in one published copy</td></tr><tr><td><code>pages.max_bytes</code></td><td>config</td><td>50 MiB</td><td>Bytes in one published copy</td></tr><tr><td><code>pages.reply_stall_secs</code></td><td>config</td><td>60</td><td>A reply that sends nothing for this long is cut and gives its place back</td></tr><tr><td><code>pages.reply_deadline_secs</code></td><td>config</td><td>600</td><td>No reply takes longer than this</td></tr><tr><td><code>pages.replies_per_address</code></td><td>config</td><td>32</td><td>Replies one client address may have open at once</td></tr><tr><td>full mode</td><td>site admin, <code>/admin/pages</code></td><td>off</td><td>Subdomain sites with no sandbox</td></tr></tbody></table></div>
+<p>The pages host must differ from the app's host and must not be a parent of it. The server
+refuses to start otherwise.</p>
+<h2 id="2-routes">2. Routes <a class="anchor" href="#2-routes" aria-label="Link to this section">#</a></h2>
+<h3 id="on-the-pages-host-pagesexamplecom">On the pages host (<code>pages.example.com</code>) <a class="anchor" href="#on-the-pages-host-pagesexamplecom" aria-label="Link to this section">#</a></h3>
+<p>The server picks the pages router by the <code>Host</code> header before any app layer runs, so no app
+route, cookie, CSRF token or session lookup is reachable on the pages host.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Request</th><th scope="col">Answer</th></tr></thead><tbody><tr><td><code>/&lt;owner&gt;/&lt;project&gt;/&lt;path&gt;</code>, <code>Sec-Fetch-Dest: document</code></td><td>The shell: a Codehaven page that frames the content (section 4). No database lookup</td></tr><tr><td><code>/&lt;owner&gt;/&lt;project&gt;/&lt;path&gt;</code>, any other destination</td><td>The content, sandboxed</td></tr><tr><td><code>/-/t/&lt;token&gt;/&lt;owner&gt;/&lt;project&gt;/&lt;path&gt;</code></td><td>The same two, for a signed-in viewer (section 5)</td></tr><tr><td><code>/&lt;owner&gt;/&lt;project&gt;</code></td><td>301 to <code>/&lt;owner&gt;/&lt;project&gt;/</code></td></tr><tr><td><code>/robots.txt</code></td><td><code>Disallow: /</code></td></tr><tr><td>anything else</td><td>404</td></tr></tbody></table></div>
+<p>Only <code>GET</code> and <code>HEAD</code>. Anything else is 405.</p>
+<h3 id="on-a-subdomain-pagesexamplecom-full-mode-only">On a subdomain (<code>&lt;owner&gt;.pages.example.com</code>), full mode only <a class="anchor" href="#on-a-subdomain-pagesexamplecom-full-mode-only" aria-label="Link to this section">#</a></h3>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Request</th><th scope="col">Answer</th></tr></thead><tbody><tr><td><code>/&lt;project&gt;/&lt;path&gt;</code></td><td>The content, no sandbox, no shell, no bridge</td></tr><tr><td><code>/-/t/&lt;token&gt;/&lt;project&gt;/&lt;path&gt;</code></td><td>The same, for a signed-in viewer</td></tr><tr><td><code>/&lt;project&gt;</code></td><td>301 to <code>/&lt;project&gt;/</code></td></tr><tr><td>anything else, or full mode off</td><td>404</td></tr></tbody></table></div>
+<p>With full mode on, a document request for the path form redirects to the subdomain form.</p>
+<h3 id="in-the-app-codeexamplecom">In the app (<code>code.example.com</code>) <a class="anchor" href="#in-the-app-codeexamplecom" aria-label="Link to this section">#</a></h3>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Route</th><th scope="col">Who</th><th scope="col">What</th></tr></thead><tbody><tr><td><code>GET /{owner}/{repo}/settings/pages</code></td><td>repo admin</td><td>settings, status, copies</td></tr><tr><td><code>POST /{owner}/{repo}/settings/pages</code></td><td>repo admin</td><td>turn on, or change branch, folder or audience</td></tr><tr><td><code>POST /{owner}/{repo}/settings/pages/deploy</code></td><td>repo admin</td><td>publish the branch head again</td></tr><tr><td><code>POST /{owner}/{repo}/settings/pages/rollback</code></td><td>repo admin</td><td>serve an older copy</td></tr><tr><td><code>POST /{owner}/{repo}/settings/pages/disable</code></td><td>repo admin</td><td>turn off and delete every copy</td></tr><tr><td><code>GET /{owner}/{repo}/pages/open?path=</code></td><td>signed in, may see the site</td><td>make a token, 303 to the site</td></tr><tr><td><code>GET</code>, <code>POST /admin/pages</code></td><td>site admin with two-factor</td><td>the full mode switch</td></tr></tbody></table></div>
+<p>All of these are ordinary signed-in routes. None is on the public route lists, so signed out
+they answer the standard redirect to <code>/login</code>, whatever the repository.</p>
+<h2 id="3-path-handling">3. Path handling <a class="anchor" href="#3-path-handling" aria-label="Link to this section">#</a></h2>
+<ol>
+<li>The raw path is at most 2048 bytes and is split on <code>/</code>. Each segment is percent-decoded and
+must be UTF-8. A decoded segment of <code>.</code> or <code>..</code>, or one holding <code>/</code>, <code>\</code> or a control
+character, is a 404. Empty segments (<code>//</code>) are a 404.</li>
+<li><code>&lt;owner&gt;</code> and <code>&lt;project&gt;</code> must pass the account and repository name rules before any
+lookup. The project name is looked up without <code>.git</code>.</li>
+<li>The rest names a file inside the published copy. An empty rest, or one ending in <code>/</code>,
+means <code>index.html</code> there.</li>
+<li>Lookup is exact and case sensitive, in the copy's file list in the database. Nothing is
+ever read from a file system path built from the request.</li>
+<li>Not found and no extension: try <code>&lt;rest&gt;.html</code>, then <code>&lt;rest&gt;/index.html</code>, which redirects to
+add the slash.</li>
+<li>Still not found: the copy's own <code>404.html</code> with status 404, or Codehaven's 404 page.</li>
+</ol>
+<p>Publishing reads the folder from git at one commit. Symbolic links, submodules and names that
+are not UTF-8 are left out, so a link can never point a request outside the copy.</p>
+<h2 id="4-isolation-path-form">4. Isolation (path form) <a class="anchor" href="#4-isolation-path-form" aria-label="Link to this section">#</a></h2>
+<h3 id="headers">Headers <a class="anchor" href="#headers" aria-label="Link to this section">#</a></h3>
+<p>Content:</p>
+<pre tabindex="0"><code>Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-modals
+  allow-downloads allow-pointer-lock allow-top-navigation-by-user-activation
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+Cache-Control: no-cache  (ETag on everything but HTML)
+X-Robots-Tag: noindex, nofollow</code></pre>
+<p>No <code>allow-same-origin</code>, no <code>allow-popups-to-escape-sandbox</code>, no <code>allow-top-navigation</code>
+without a click. Popups inherit the sandbox.</p>
+<p>The shell:</p>
+<pre tabindex="0"><code>Content-Security-Policy: default-src 'none'; script-src https://pages.example.com/-/shell.js;
+  style-src https://pages.example.com/-/shell.css; frame-src 'self'; base-uri 'none';
+  form-action 'none'; frame-ancestors 'none'
+X-Frame-Options: DENY, Referrer-Policy: no-referrer, Cache-Control: no-cache</code></pre>
+<h3 id="cookies">Cookies <a class="anchor" href="#cookies" aria-label="Link to this section">#</a></h3>
+<p>The pages router drops <code>Cookie</code>, <code>Authorization</code> and <code>Proxy-Authorization</code> from every request
+before a handler runs, and <code>Set-Cookie</code> from every response. The proxy does the same
+(<code>deploy/Caddyfile.example</code>). Nothing on the pages host ever sets a cookie.</p>
+<p>So a hostile page on the pages host, inside the single sign-on cookie's scope, cannot read a
+cookie or set one for the parent domain, and its requests to the app or a sibling app go out
+from an opaque origin, so no response is readable without CORS, which Codehaven never sends.</p>
+<p>Whether <code>SameSite=Lax</code> cookies go with those requests depends on the browser. Chrome and
+Firefox treat a request from an opaque origin as cross-site and keep them home. Safari
+(WebKit) looks only at the top-level page, which is on the pages host, a sibling of the app
+in the same site, so it sends them: the app's session and any single sign-on cookie of the
+parent domain go with every request such a page makes. The app therefore never lets the
+session cookie sign in a request that another site's page made. The gate reads
+<code>Sec-Fetch-Site</code>, and unless it is <code>same-origin</code> or <code>none</code>, only a top-level <code>GET</code> or <code>HEAD</code>
+navigation (<code>Sec-Fetch-Mode: navigate</code>, <code>Sec-Fetch-Dest: document</code>) keeps the session, which
+is all <code>SameSite=Lax</code> was meant to allow. A browser that sends no fetch metadata is judged by
+<code>Origin: null</code> on a <code>GET</code> or <code>HEAD</code>. Forms and other writes already fail the origin and CSRF
+checks. Other apps under the same parent domain need the same care: in Safari, a page on the
+pages host can send them blind requests that carry the single sign-on cookie.</p>
+<h3 id="the-storage-bridge-option-b">The storage bridge (option B) <a class="anchor" href="#the-storage-bridge-option-b" aria-label="Link to this section">#</a></h3>
+<p>A sandboxed page has no <code>localStorage</code>. The bridge gives it one, per project:</p>
+<ol>
+<li>A document request gets the shell. The shell owns the real <code>localStorage</code> of the pages host
+and keeps one entry per project, <code>chp:s:&lt;owner&gt;/&lt;project&gt;</code> (lowercase), decided from its
+own address and never from the child.</li>
+<li>For each load the shell makes a fresh iframe, with a new random secret, and sets the frame's
+<code>name</code> to <code>{chp, secret, that project's data}</code> before it is attached. The frame's first
+document is the empty initial one, so the only document that can see the name is the one
+our server returns for that project's address.</li>
+<li>The server puts a small script first in every HTML file it serves as content (after a
+doctype and leading comments). It reads <code>window.name</code>, clears it before any page script
+runs, and replaces <code>localStorage</code> with an in-memory store filled from it. <code>sessionStorage</code>
+and <code>document.cookie</code> become in-memory stores for the page too, so code that touches them
+does not throw.</li>
+<li>Writes go to the shell by <code>postMessage</code> with the secret. The shell checks
+<code>event.source</code> is its frame and the secret is the current one, enforces 1 MB per project,
+and saves. A document that navigated into the frame later, or a page on another site,
+never has the secret.</li>
+<li>Clicks on links inside the project go to the shell, which makes a fresh frame for the new
+page, so each page starts with the current data. Links that leave the project open at the
+top. A page that arrives without the secret (a script set <code>location</code>) asks the shell to
+load it again properly; the shell does so only for addresses inside its own project, once.</li>
+<li>The page title and address (including <code>pushState</code>) are reported to the shell, which shows
+them. Back and forward work through the shell's history.</li>
+</ol>
+<p>The security review attacks this: a hostile project framing, navigating into, or posting to
+another project's shell, and reading <code>window.name</code> at every step.</p>
+<h3 id="what-is-left-compared-with-github-pages">What is left compared with GitHub Pages <a class="anchor" href="#what-is-left-compared-with-github-pages" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Storage is a snapshot per page load. Two tabs of one site do not see each other's writes
+until reload, and there is no <code>storage</code> event.</li>
+<li>No IndexedDB, service workers, real cookies or Cache API.</li>
+<li>Popups opened by a page stay sandboxed, so another site opened in a new tab from a page may
+not work.</li>
+<li>A page cannot be framed by another page of any site (the parent is an opaque origin).</li>
+<li><code>Range</code> requests are not supported.</li>
+<li>Search engines are asked not to index, like the rest of Codehaven.</li>
+<li>No custom domains, no workflow-built sites, no REST API yet.</li>
+</ul>
+<p>Full mode removes the first four.</p>
+<h2 id="5-who-can-see-a-site">5. Who can see a site <a class="anchor" href="#5-who-can-see-a-site" aria-label="Link to this section">#</a></h2>
+<p>The site's tier is the lowest of: the tier the copy was published at, the repository's tier
+now, and the audience the admin picked.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Tier</th><th scope="col">Who</th></tr></thead><tbody><tr><td>public</td><td>anyone, with the instance's public switch on</td></tr><tr><td>internal</td><td>any signed-in, active account</td></tr><tr><td>private</td><td>people with a grant on the repository</td></tr></tbody></table></div>
+<h3 id="signed-out">Signed out <a class="anchor" href="#signed-out" aria-label="Link to this section">#</a></h3>
+<p>Content of a site that is not public right now, and of an address with no site, is one
+identical page: "Sign in to see this site", status 404. Private, internal, missing, disabled
+and not-yet-published all look the same. The page asks the shell to go to the app's
+<code>/pages/open</code> route, which signed out is the standard <code>/login</code> redirect.</p>
+<h3 id="signed-in-the-per-site-token">Signed in: the per-site token <a class="anchor" href="#signed-in-the-per-site-token" aria-label="Link to this section">#</a></h3>
+<p><code>GET /{owner}/{repo}/pages/open?path=</code> checks the viewer may see the site at its tier now
+(missing and not allowed are the app's ordinary 404), then makes a token and answers 303 to
+<code>https://pages.example.com/-/t/&lt;token&gt;/&lt;owner&gt;/&lt;project&gt;&lt;path&gt;</code>.</p>
+<ul>
+<li>The token is <code>v1.&lt;repo id&gt;.&lt;user id&gt;.&lt;expiry&gt;</code> and an HMAC-SHA256 of it, keyed from the
+master key with its own label. It lasts one hour. It names one site and one person and
+carries nothing of the session.</li>
+<li>Every request with a token checks the signature, the expiry, that it names this site, and
+then the person's access again, live. A suspended account or a revoked grant stops at once.</li>
+<li>The shell keeps the token in the tab's <code>sessionStorage</code> and shows the plain address, so a
+copied link carries no token. Relative links keep the token in content requests. When a
+token runs out, the sign-in page sends the viewer through <code>/pages/open</code> again, which is
+instant while signed in; a second try within a minute stops with a message instead.</li>
+<li>In a private or internal site, image, style and script addresses must be relative. Links
+between pages may be absolute.</li>
+</ul>
+<h2 id="6-publishing">6. Publishing <a class="anchor" href="#6-publishing" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>Turn on: the admin picks a branch (<code>refs/heads</code> only, never <code>refs/pull</code>), a folder (<code>/</code> or
+<code>/docs</code>), and who can see it (up to the repository's tier). A copy of the branch head is
+queued.</li>
+<li>Each push or branch creation on that branch queues a copy of the new head. A worker builds
+one copy at a time: it reads the folder at that commit, refuses it over the limits, stores
+each file in the blob store and records the list. The newest ready copy becomes live.</li>
+<li>A failed copy says why on the settings page (too many files, too big, folder missing,
+empty) and the live copy stays.</li>
+<li>The five newest ready copies are kept. "Serve this copy" puts an older one back. Turning
+Pages off deletes the site and every copy. Deleting the repository does too.</li>
+<li>Every change is audited: <code>pages.enabled</code>, <code>pages.changed</code>, <code>pages.deploy</code>,
+<code>pages.rollback</code>, <code>pages.disabled</code>, <code>pages.full_mode_changed</code>.</li>
+</ul>
+<h2 id="7-limits">7. Limits <a class="anchor" href="#7-limits" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">What</th><th scope="col">Limit</th></tr></thead><tbody><tr><td>files in a copy</td><td>2000</td></tr><tr><td>bytes in a copy</td><td>50 MiB</td></tr><tr><td>copies kept</td><td>5 ready, plus the live one</td></tr><tr><td>request path</td><td>2048 bytes</td></tr><tr><td>storage per project (bridge)</td><td>1 MB</td></tr><tr><td>token lifetime</td><td>1 hour</td></tr><tr><td>content requests being looked up at once</td><td>64, then 503 with <code>Retry-After</code></td></tr><tr><td>content replies still being sent</td><td>512, then 503 with <code>Retry-After</code></td></tr><tr><td>content replies open from one client address</td><td>32; past that a request waits up to 1 second for one, then 503 with <code>Retry-After</code></td></tr><tr><td>a reply that sends nothing</td><td>cut after 60 seconds</td></tr><tr><td>one reply, start to end</td><td>cut after 10 minutes</td></tr></tbody></table></div>
+<p>No server-side code runs for a site. Files are served as stored with a type from the file
+extension, and an unknown extension is <code>application/octet-stream</code>. Text says
+<code>charset=utf-8</code> only when the file is valid UTF-8, which is checked once when the copy is
+made.</p>
+<p>Every file is streamed from the blob store. A reply never holds a whole file in memory: at
+most one piece of it, and for HTML on the path form the first 64 KiB, read to place the
+bridge. A reply keeps its place in the 512 until its body is sent or the client goes away,
+so clients that open replies and never read them cannot grow the server's memory.</p>
+<p>Those places cannot all be held by a few clients either. A reply that sends nothing for 60
+seconds, or is still going after 10 minutes, gives its place back at once and ends in an
+error, so the client never gets a file that only looks complete. The clock runs on its own,
+not when the client reads, because a client that never reads is exactly the one to catch.
+One client address (the trusted address the app uses, with IPv6 grouped by /64) may have 32
+replies open at once, and a reply counts against its address until its connection lets it
+go, so one address cannot pile up connections that never read. A request past the 32 waits
+up to a second for one of them to finish, holding nothing else, so a page that asks for many
+small files at once still gets them all. The server runs with 65536 open files
+(<code>deploy/compose.yml</code>), since each open reply holds a socket and a file.</p>
+<h2 id="8-failure-pages">8. Failure pages <a class="anchor" href="#8-failure-pages" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Case</th><th scope="col">Status</th><th scope="col">Page</th></tr></thead><tbody><tr><td>no site, not visible, signed out, token expired</td><td>404</td><td>Sign in to see this site</td></tr><tr><td>file missing in a visible site</td><td>404</td><td>the site's <code>404.html</code>, or "Page not found"</td></tr><tr><td>bad path</td><td>404</td><td>Page not found</td></tr><tr><td>method other than GET or HEAD</td><td>405</td><td>plain text</td></tr><tr><td>too busy</td><td>503</td><td>plain text, <code>Retry-After: 5</code></td></tr><tr><td><code>/pages/open</code> not allowed or missing</td><td>404</td><td>the app's ordinary not found</td></tr></tbody></table></div>
+<p>Codehaven's own pages on the pages host carry the bridge too, so they clear a frame's name.</p>
+<h2 id="9-full-mode">9. Full mode <a class="anchor" href="#9-full-mode" aria-label="Link to this section">#</a></h2>
+<p>One instance setting, off by default, site admin with two-factor only, audited. Turning it on
+shows: "Every account on this instance can then publish pages that run with full browser
+features on a subdomain of the pages host. They can set cookies for the parent domain and
+read their own storage. Only turn this on if you trust every account."</p>
+<ul>
+<li>Sites serve at <code>https://&lt;owner&gt;.pages.example.com/&lt;project&gt;/</code> with no CSP sandbox, no shell
+and no bridge: native storage, cookies, IndexedDB and service workers. Storage is shared
+within one owner, as on GitHub.</li>
+<li>Access, tokens, cookie stripping, limits and the never-the-app-origin rule are unchanged.</li>
+<li>Owner names are already valid DNS labels (letters, digits and single hyphens, at most 39).
+A host whose first label is not one is a 404.</li>
+<li>Certificates: a wildcard for <code>*.pages.example.com</code> (a DNS challenge in the proxy). A
+wildcard keeps owner names out of public certificate logs.</li>
+</ul>
+<p>Codehaven's own defences against a hostile same-site page: its session and CSRF cookies are
+<code>__Host-</code> cookies, so a sibling cannot overwrite them; every write checks <code>Origin</code> against the
+app's own origin; and it never reads a cookie set for the parent domain.</p>
+<h2 id="10-deploying-it">10. Deploying it <a class="anchor" href="#10-deploying-it" aria-label="Link to this section">#</a></h2>
+<ol>
+<li>Point the pages host at the server (DNS) and add a proxy site for it that strips cookies
+and identity headers and sends everything to Codehaven (<code>deploy/Caddyfile.example</code>).</li>
+<li>Set <code>CODEHAVEN_PAGES_HOST</code>.</li>
+<li>For full mode, add the wildcard name with a certificate, then turn the switch on at
+<code>/admin/pages</code>.</li>
+</ol>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../roadmap.html"><small>Previous</small>Roadmap</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/design/pages.md" rel="noopener">docs/design/pages.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#0-the-short-version">0. The short version</a></li><li class="l2"><a href="#1-settings">1. Settings</a></li><li class="l2"><a href="#2-routes">2. Routes</a></li><li class="l3"><a href="#on-the-pages-host-pagesexamplecom">On the pages host (<code>pages.example.com</code>)</a></li><li class="l3"><a href="#on-a-subdomain-pagesexamplecom-full-mode-only">On a subdomain (<code>&lt;owner&gt;.pages.example.com</code>), full mode only</a></li><li class="l3"><a href="#in-the-app-codeexamplecom">In the app (<code>code.example.com</code>)</a></li><li class="l2"><a href="#3-path-handling">3. Path handling</a></li><li class="l2"><a href="#4-isolation-path-form">4. Isolation (path form)</a></li><li class="l3"><a href="#headers">Headers</a></li><li class="l3"><a href="#cookies">Cookies</a></li><li class="l3"><a href="#the-storage-bridge-option-b">The storage bridge (option B)</a></li><li class="l3"><a href="#what-is-left-compared-with-github-pages">What is left compared with GitHub Pages</a></li><li class="l2"><a href="#5-who-can-see-a-site">5. Who can see a site</a></li><li class="l3"><a href="#signed-out">Signed out</a></li><li class="l3"><a href="#signed-in-the-per-site-token">Signed in: the per-site token</a></li><li class="l2"><a href="#6-publishing">6. Publishing</a></li><li class="l2"><a href="#7-limits">7. Limits</a></li><li class="l2"><a href="#8-failure-pages">8. Failure pages</a></li><li class="l2"><a href="#9-full-mode">9. Full mode</a></li><li class="l2"><a href="#10-deploying-it">10. Deploying it</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

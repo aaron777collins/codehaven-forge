@@ -17,7 +17,7 @@ echo $TOKEN | docker login {{ docker_host }} -u {{ username }} --password-stdin<
 {% else %}
   <section class="card pad stack">
     <h3>Install</h3>
-    <pre class="wrap"><code>dotnet nuget add source {{ host }}/nuget/{{ p.owner }}/v3/index.json --name codehaven --username {{ username }} --password $TOKEN --store-password-in-clear-text
+    <pre class="wrap"><code>dotnet nuget add source {{ host }}/nuget/{{ p.owner }}/index.json --name codehaven --username {{ username }} --password $TOKEN --store-password-in-clear-text
 dotnet add package {{ p.name }}</code></pre>
     <p class="hint">Use an access token from Settings, Tokens as the password.</p>
   </section>

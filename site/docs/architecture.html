@@ -1,0 +1,1170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codehaven architecture | Codehaven</title>
+<meta name="description" content="Codehaven is a self-hosted code forge written in Rust: git hosting over HTTP and SSH, issues, pull requests with review, CI with registered runners, releases and a container registry.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html" aria-current="page">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html" aria-current="page">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#1-decisions-at-a-glance">1. Decisions at a glance</a></li><li class="l2"><a href="#2-deployment">2. Deployment</a></li><li class="l3"><a href="#21-layout">2.1 Layout</a></li><li class="l3"><a href="#22-compose-projects">2.2 Compose projects</a></li><li class="l3"><a href="#23-reaching-it">2.3 Reaching it</a></li><li class="l3"><a href="#24-exposure-and-the-reverse-proxy">2.4 Exposure and the reverse proxy</a></li><li class="l3"><a href="#25-runner-isolation">2.5 Runner isolation</a></li><li class="l2"><a href="#3-workspace-and-crates">3. Workspace and crates</a></li><li class="l3"><a href="#31-layout">3.1 Layout</a></li><li class="l3"><a href="#32-the-dependency-rule">3.2 The dependency rule</a></li><li class="l3"><a href="#33-mount-points">3.3 Mount points</a></li><li class="l2"><a href="#4-contracts-in-ch-core">4. Contracts in ch-core</a></li><li class="l3"><a href="#41-identity-of-the-caller">4.1 Identity of the caller</a></li><li class="l3"><a href="#41a-the-public-route-list">4.1a The public route list</a></li><li class="l3"><a href="#42-errors">4.2 Errors</a></li><li class="l3"><a href="#43-service-traits">4.3 Service traits</a></li><li class="l3"><a href="#44-domain-events">4.4 Domain events</a></li><li class="l3"><a href="#45-text-references">4.5 Text references</a></li><li class="l2"><a href="#5-storage">5. Storage</a></li><li class="l3"><a href="#51-git-on-disk">5.1 Git on disk</a></li><li class="l3"><a href="#52-blobs">5.2 Blobs</a></li><li class="l3"><a href="#53-postgres-schema">5.3 Postgres schema</a></li><li class="l3"><a href="#54-secrets-at-rest">5.4 Secrets at rest</a></li><li class="l2"><a href="#6-git">6. Git</a></li><li class="l3"><a href="#61-reads-and-writes">6.1 Reads and writes</a></li><li class="l3"><a href="#62-smart-http">6.2 Smart HTTP</a></li><li class="l3"><a href="#63-ssh">6.3 SSH</a></li><li class="l3"><a href="#64-hooks-and-the-push-pipeline">6.4 Hooks and the push pipeline</a></li><li class="l3"><a href="#65-merging">6.5 Merging</a></li><li class="l3"><a href="#66-diffs-and-blame">6.6 Diffs and blame</a></li><li class="l3"><a href="#67-web-edits">6.7 Web edits</a></li><li class="l3"><a href="#68-other">6.8 Other</a></li><li class="l2"><a href="#7-accounts-auth-and-permissions">7. Accounts, auth and permissions</a></li><li class="l3"><a href="#71-ways-in">7.1 Ways in</a></li><li class="l3"><a href="#72-permission-model">7.2 Permission model</a></li><li class="l3"><a href="#73-what-a-signed-out-visitor-can-reach">7.3 What a signed-out visitor can reach</a></li><li class="l3"><a href="#74-invites">7.4 Invites</a></li><li class="l3"><a href="#75-the-first-admin">7.5 The first admin</a></li><li class="l3"><a href="#76-hardening">7.6 Hardening</a></li><li class="l3"><a href="#77-audit-log">7.7 Audit log</a></li><li class="l2"><a href="#8-collaboration">8. Collaboration</a></li><li class="l3"><a href="#81-issues">8.1 Issues</a></li><li class="l3"><a href="#82-pull-requests">8.2 Pull requests</a></li><li class="l3"><a href="#83-the-merge-gate">8.3 The merge gate</a></li><li class="l3"><a href="#84-notifications">8.4 Notifications</a></li><li class="l3"><a href="#85-webhooks">8.5 Webhooks</a></li><li class="l3"><a href="#86-releases">8.6 Releases</a></li><li class="l3"><a href="#87-search">8.7 Search</a></li><li class="l2"><a href="#9-ci">9. CI</a></li><li class="l3"><a href="#91-workflow-files">9.1 Workflow files</a></li><li class="l3"><a href="#92-ch-workflow-pure">9.2 ch-workflow (pure)</a></li><li class="l3"><a href="#93-server-side-ch-ci">9.3 Server side (ch-ci)</a></li><li class="l3"><a href="#94-runner-protocol-apirunnerv1">9.4 Runner protocol (<code>/api/runner/v1</code>)</a></li><li class="l3"><a href="#95-runner-haven-runner">9.5 Runner (haven-runner)</a></li><li class="l3"><a href="#96-secrets-and-variables">9.6 Secrets and variables</a></li><li class="l3"><a href="#97-logs">9.7 Logs</a></li><li class="l3"><a href="#98-checks-and-statuses">9.8 Checks and statuses</a></li><li class="l2"><a href="#10-container-registry">10. Container registry</a></li><li class="l2"><a href="#11-rest-api">11. REST API</a></li><li class="l2"><a href="#12-web-ui">12. Web UI</a></li><li class="l3"><a href="#121-why-askama-and-htmx-not-leptos">12.1 Why Askama and htmx, not Leptos</a></li><li class="l3"><a href="#122-shape-of-ch-web">12.2 Shape of ch-web</a></li><li class="l3"><a href="#123-look-and-feel">12.3 Look and feel</a></li><li class="l3"><a href="#124-phone-friendly">12.4 Phone friendly</a></li><li class="l3"><a href="#125-accessibility">12.5 Accessibility</a></li><li class="l3"><a href="#126-pages">12.6 Pages</a></li><li class="l2"><a href="#13-cli-haven">13. CLI (haven)</a></li><li class="l2"><a href="#14-server-binary-config-and-operations">14. Server binary, config and operations</a></li><li class="l2"><a href="#15-build-and-test-workflow">15. Build and test workflow</a></li><li class="l3"><a href="#151-builder-image">15.1 Builder image</a></li><li class="l3"><a href="#152-caches">15.2 Caches</a></li><li class="l3"><a href="#153-running-a-build">15.3 Running a build</a></li><li class="l3"><a href="#153a-docker-tests">15.3a Docker tests</a></li><li class="l3"><a href="#154-the-end-to-end-run">15.4 The end-to-end run</a></li><li class="l3"><a href="#155-cleanup">15.5 Cleanup</a></li><li class="l3"><a href="#156-release-images-and-tags">15.6 Release images and tags</a></li><li class="l3"><a href="#157-the-portability-check">15.7 The portability check</a></li><li class="l2"><a href="#16-quality-gates">16. Quality gates</a></li><li class="l2"><a href="#17-not-in-v1">17. Not in v1</a></li></ul></div></details>
+<article class="prose">
+<h1 id="codehaven-architecture">Codehaven architecture <a class="anchor" href="#codehaven-architecture" aria-label="Link to this section">#</a></h1>
+<p>Codehaven is a self-hosted code forge written in Rust: git hosting over HTTP and
+SSH, issues, pull requests with review, CI with registered runners, releases and
+a container registry. One server binary, one runner binary, one CLI, Postgres,
+and bare git repositories on disk.</p>
+<p>This file records the design decisions. <a href="roadmap.html"><code>ROADMAP.md</code></a> says who builds what and in
+which order. When the two disagree, fix whichever is wrong in the same commit.</p>
+<h2 id="1-decisions-at-a-glance">1. Decisions at a glance <a class="anchor" href="#1-decisions-at-a-glance" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Area</th><th scope="col">Decision</th><th scope="col">Why</th></tr></thead><tbody><tr><td>Language</td><td>Rust everywhere: server, runner, CLI, tests, tooling (<code>xtask</code>)</td><td>One toolchain, one type system across server and runner</td></tr><tr><td>Edition and toolchain</td><td>Edition 2024. <code>rust-toolchain.toml</code> pins the stable release current at bootstrap, exactly</td><td>Every stream and the builder image compile with the same compiler</td></tr><tr><td>HTTP</td><td><code>axum</code> 0.8 on <code>tokio</code>, <code>tower-http</code> for compression, tracing, timeouts, CSP headers</td><td>Most used async stack, first-class streaming bodies for git and logs</td></tr><tr><td>Database</td><td>Postgres 17, <code>sqlx</code> 0.8 with compile-time checked queries and committed <code>.sqlx/</code> offline data</td><td>Schema drift becomes a compile error in every stream</td></tr><tr><td>Git reads</td><td><code>gix</code> (gitoxide) for refs, trees, blobs, commit walks</td><td>Fast, in-process, no fork per page view</td></tr><tr><td>Git writes and protocol</td><td>The <code>git</code> binary (2.47 from Debian trixie): <code>upload-pack</code>, <code>receive-pack</code>, <code>merge-tree</code>, <code>commit-tree</code>, <code>update-ref</code>, <code>blame</code>, <code>diff</code>, <code>archive</code></td><td>git's own algorithms are the reference. Rewriting pack negotiation or merge is a bug farm</td></tr><tr><td>SSH</td><td><code>russh</code> server inside the server binary</td><td>No system sshd, no <code>authorized_keys</code> file games</td></tr><tr><td>Web UI</td><td>Server-rendered <code>askama</code> templates, <code>htmx</code> 2, a small vanilla <code>app.js</code></td><td>Section 12 has the reasoning</td></tr><tr><td>Highlighting</td><td><code>syntect</code> plus <code>two-face</code> syntaxes, class-based output, our own CSS themes</td><td>Light and dark switch in CSS with no re-render</td></tr><tr><td>Markdown</td><td><code>comrak</code> (GFM) then <code>ammonia</code> sanitizer</td><td>GFM tables, task lists, footnotes, autolinks. Sanitized always</td></tr><tr><td>Runner</td><td>Separate binary <code>haven-runner</code>, registers with a token, long-polls for jobs, runs steps in Docker through <code>bollard</code></td><td>Isolated from the server, can run on any host</td></tr><tr><td>CLI</td><td><code>haven</code>, a REST v3 client</td><td>Day to day work from the terminal</td></tr><tr><td>API</td><td>REST at <code>/api/v3</code>, shaped like GitHub's v3 for the common endpoints</td><td>Tools that accept a GitHub Enterprise base URL can point at Codehaven</td></tr><tr><td>Background work</td><td>Postgres outbox for domain events plus a Postgres job queue (<code>FOR UPDATE SKIP LOCKED</code>)</td><td>No Redis, no broker. One less service to run</td></tr><tr><td>Config</td><td><code>codehaven.toml</code> plus <code>CODEHAVEN__SECTION__KEY</code> env overrides, loaded with <code>figment</code></td><td>Secrets come from files, never from the TOML</td></tr><tr><td>Exposure</td><td>Behind any reverse proxy chosen by <code>CODEHAVEN_PROXY</code>, no SSO needed, git over SSH published where <code>CODEHAVEN_SSH_BIND</code> says</td><td>People need to reach it, and the app secures itself. Section 2.4</td></tr><tr><td>Access</td><td>Invite-only. No open sign-up, ever. Signed-out visitors reach the sign-in page, the invite page, static files and public repositories, and nothing else; nothing signed out can write</td><td>Only a public repository's content is readable without an invited account. Section 7.3</td></tr><tr><td>First admin</td><td>Created by <code>codehaven admin create-user --admin</code> on the host. There is no web setup page</td><td>Nobody on the internet can claim a fresh instance. Section 7.5</td></tr></tbody></table></div>
+<h2 id="2-deployment">2. Deployment <a class="anchor" href="#2-deployment" aria-label="Link to this section">#</a></h2>
+<h3 id="21-layout">2.1 Layout <a class="anchor" href="#21-layout" aria-label="Link to this section">#</a></h3>
+<p>One install root holds everything, <code>/srv/codehaven</code> in the examples below,
+written as <code>&lt;install root&gt;</code>. No deploy script has a host, domain, path or
+project name built in: every one comes from the env file (<code>.env</code>, copied from
+<code>.env.example</code>) or the command line, and a setting that is missing stops with
+its name instead of falling back to a guess.</p>
+<pre tabindex="0"><code>&lt;install root&gt;/
+  src/                     main checkout (git clone of codehaven, branch main)
+  streams/&lt;stream&gt;/        per-stream copies synced from the working machine for builds and tests
+  data/                    CODEHAVEN_DATA_DIR
+    postgres/              Postgres data directory
+    git/                   bare repositories, sharded by repository id
+    blobs/                 content-addressed blobs: artifacts, caches, release assets, registry layers
+    logs/                  CI job logs, one file per job
+    secrets/               master.key (0600), generated on first start
+    dind/                  Docker data root of the runner's own Docker daemon
+  secrets/                 CODEHAVEN_SECRETS_DIR: database credentials, made by setup.sh
+  backups/                 CODEHAVEN_BACKUP_DIR, outside the checkout
+  run/                     build slot lock files
+  codehaven.env            instance settings (no secrets inline)</code></pre>
+<p><code>deploy/prod/setup.sh</code> (run once, as root) checks the host, creates the
+directories, makes the server's uid 10001 own the ones it writes to, and
+generates the database credentials into <code>CODEHAVEN_SECRETS_DIR</code>. Build caches
+(cargo registry, sccache, per-stream target dirs) are Docker named volumes
+prefixed <code>codehaven-</code>, so they sit under Docker's own data root and are removed
+by name. <code>deploy/dev/diskcheck.sh</code> runs before every build and stops it when a
+watched disk (<code>CODEHAVEN_DISK_PATHS</code>) is at <code>CODEHAVEN_DISK_LIMIT</code> percent or
+more, 85 by default.</p>
+<h3 id="22-compose-projects">2.2 Compose projects <a class="anchor" href="#22-compose-projects" aria-label="Link to this section">#</a></h3>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Project</th><th scope="col">File</th><th scope="col">Services</th><th scope="col">Purpose</th></tr></thead><tbody><tr><td><code>CODEHAVEN_PROJECT</code> (<code>codehaven</code> by default)</td><td><code>deploy/compose.yml</code></td><td><code>postgres</code>, <code>server</code>, and behind the <code>ci</code> profile <code>dind</code>, <code>work-init</code>, <code>runner</code></td><td>The running instance. CI starts when the runner exists: <code>--profile ci</code></td></tr><tr><td><code>codehaven-dev</code></td><td><code>deploy/compose.dev.yml</code></td><td><code>pg-test</code> (tmpfs), <code>builder</code> (run on demand)</td><td>Builds and tests for every stream</td></tr><tr><td>a throwaway project per run</td><td><code>deploy/compose.e2e.yml</code></td><td>a fresh copy of the instance plus the <code>e2e</code> harness container</td><td>The end-to-end test, torn down after each run</td></tr></tbody></table></div>
+<p>Never run <code>docker compose</code> on <code>deploy/compose.yml</code> by hand:
+<code>deploy/compose.sh</code> loads the env file, works out the host's public addresses,
+adds the compose file for the proxy mode (section 2.4) and passes the project
+name.</p>
+<p>Networks inside the instance project:</p>
+<ul>
+<li><code>backend</code>: <code>postgres</code> and <code>server</code>. Nothing else, and no route out.</li>
+<li><code>runners</code>: <code>server</code>, <code>dind</code>, <code>runner</code>. Job containers are started by <code>dind</code>
+and route out through it, so they can reach the server's API and the
+internet but not Postgres.</li>
+<li>The proxy network, only in a proxy mode: an external network you already run
+(<code>network</code> mode) or an <code>edge</code> network the compose file creates (<code>caddy</code>
+mode). <code>server</code> only, under its alias. This is how the reverse proxy reaches
+Codehaven, with no host port involved. Postgres, <code>dind</code> and the runner are
+never on it.</li>
+</ul>
+<p>Published host ports, where <code>CODEHAVEN_HTTP_BIND</code> and <code>CODEHAVEN_SSH_BIND</code> say,
+loopback by default:</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Bind</th><th scope="col">Service</th><th scope="col">Use</th></tr></thead><tbody><tr><td><code>127.0.0.1:3200</code></td><td>server HTTP</td><td>operator API calls with a token through <code>ssh -L</code>, health checks from the host</td></tr><tr><td><code>127.0.0.1:2222</code></td><td>server SSH</td><td>git over SSH through a tunnel</td></tr></tbody></table></div>
+<p>The <code>caddy</code> proxy mode also publishes 80 and 443. The dev project publishes no
+ports at all, and the e2e harness runs inside the e2e network.</p>
+<h3 id="23-reaching-it">2.3 Reaching it <a class="anchor" href="#23-reaching-it" aria-label="Link to this section">#</a></h3>
+<p><code>server.external_url</code> is <code>CODEHAVEN_EXTERNAL_URL</code>, the address people open (in
+the examples here <code>https://code.example.com</code>), so every link and clone URL the
+UI shows is the public one. <code>ssh.external</code> is <code>CODEHAVEN_SSH_EXTERNAL</code>, and
+when it is a loopback address the UI labels the clone URL "SSH (needs a tunnel
+to the server)".</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Who</th><th scope="col">How</th></tr></thead><tbody><tr><td>Anyone with an account</td><td><code>https://code.example.com</code> in a browser</td></tr><tr><td>git over HTTPS</td><td><code>git clone https://code.example.com/alice/demo.git</code> with a personal access token (or a password if the account has no two-factor). A public repository clones with no credentials</td></tr><tr><td>git over SSH</td><td><code>git clone ssh://git@127.0.0.1:2222/alice/demo.git</code>, against <code>CODEHAVEN_SSH_BIND</code>. When that is loopback it takes a tunnel first: <code>ssh -L 2222:127.0.0.1:2222 &lt;the host&gt;</code>. Only people with a login on the host can do this</td></tr><tr><td>Docker registry</td><td><code>docker login code.example.com</code> with a username and a token</td></tr><tr><td>Operator</td><td><code>ssh -L 3200:127.0.0.1:3200 &lt;the host&gt;</code> for API and git calls that skip the proxy. Browser forms only accept the public origin (section 7.6), so sign in through it</td></tr></tbody></table></div>
+<h3 id="24-exposure-and-the-reverse-proxy">2.4 Exposure and the reverse proxy <a class="anchor" href="#24-exposure-and-the-reverse-proxy" aria-label="Link to this section">#</a></h3>
+<p>Codehaven is built to sit behind a reverse proxy, and it needs no SSO gate in
+front of it: a forge behind one cannot serve git clients (they cannot answer a
+two-factor prompt) or people who have no account on the SSO. Codehaven protects
+itself instead: invite-only, no anonymous read outside public repositories
+(section 7.3), rate limits and
+lockout (section 7.6). How the server is reached is one setting,
+<code>CODEHAVEN_PROXY</code>, in three modes, and <code>deploy/compose.sh</code> adds the compose
+file for the one in the env file:</p>
+<ul>
+<li><strong><code>none</code></strong>: no proxy. The ports <code>CODEHAVEN_HTTP_BIND</code> and
+<code>CODEHAVEN_SSH_BIND</code> publish are all there is. Fine for a trial on one
+machine.</li>
+<li><strong><code>network</code></strong>: a proxy you already run, on a docker network that already
+exists (<code>CODEHAVEN_PROXY_NETWORK</code>). The server joins that network under the
+alias <code>CODEHAVEN_PROXY_ALIAS</code> and your proxy sends to <code>&lt;alias&gt;:3200</code>.
+Codehaven creates nothing on that network and changes nothing about your
+proxy: the site that points at the alias is yours to add.</li>
+<li><strong><code>caddy</code></strong>: a Caddy that comes with Codehaven (<code>deploy/compose.caddy.yml</code>
+and <code>deploy/Caddyfile.example</code>). It publishes 80 and 443 on the host, so the
+name in <code>CODEHAVEN_SITE_HOST</code> must already point at this machine, and it gets
+and renews the TLS certificate on its own. It sends everything to the server
+with <code>flush_interval -1</code>, so live CI logs and git packs stream.</li>
+</ul>
+<p><strong>Trusted proxies.</strong> <code>http.trusted_proxies</code> (<code>CODEHAVEN_TRUSTED_PROXIES</code>, a
+JSON list, <code>[]</code> when nothing sits in front) names the network or networks the
+proxy reaches the server from, for example <code>["10.20.16.0/24"]</code> for the subnet
+the <code>caddy</code> mode creates. Codehaven trusts exactly two things from a peer
+inside one of those networks: <code>X-Forwarded-For</code>, the client address used by
+rate limits and the audit log, and <code>X-Forwarded-Proto</code>. From any other peer
+both headers are ignored and the socket address is used.</p>
+<p><strong>The Remote-* rule.</strong> Codehaven never trusts an identity header: it ignores
+<code>Remote-User</code> and every other identity header wherever the request comes from
+(section 7.1). The proxy should still delete <code>Remote-User</code>, <code>Remote-Groups</code>,
+<code>Remote-Email</code> and <code>Remote-Name</code> from what a client sends, which is what
+<code>Caddyfile.example</code> does, so a client can never spoof an identity to anything
+else behind the same proxy either.</p>
+<p>Being on the proxy network means the other services on it can reach the server
+directly. That is acceptable because Codehaven treats every request the same
+way wherever it comes from: no session or token, nothing beyond the public
+routes and public repositories (section 7.3).</p>
+<p><strong>Pages host.</strong> With <code>pages.host</code> set (<code>CODEHAVEN_PAGES_HOST</code>), the server answers every request
+whose <code>Host</code> is that name, or one label under it, from the Pages router, before the gate, the
+guard or any app layer runs. No app route, cookie or session is reachable there. See
+<a href="design/pages.html"><code>docs/design/pages.md</code></a>.</p>
+<h3 id="25-runner-isolation">2.5 Runner isolation <a class="anchor" href="#25-runner-isolation" aria-label="Link to this section">#</a></h3>
+<p>The runner never gets the host's Docker socket: other services on the host may
+run on that daemon, and a job with the host socket is root on the host. Instead:</p>
+<ul>
+<li><code>dind</code> is <code>docker:&lt;pinned&gt;-dind</code>, privileged, with its own data root at
+<code>data/dind</code> under <code>CODEHAVEN_DATA_DIR</code> and TLS on the <code>runners</code> network.</li>
+<li><code>runner</code> talks to it with <code>DOCKER_HOST=tcp://dind:2376</code> and the client certs
+from a shared volume.</li>
+<li>A shared volume <code>runner-work</code> is mounted at <code>/work</code> in both <code>runner</code> and
+<code>dind</code>. The runner writes checkouts to <code>/work/&lt;job&gt;</code> and job containers bind
+<code>/work/&lt;job&gt;</code> at the same path. Built-in actions run inside the runner
+process, not in the job container.</li>
+<li>Each job container gets <code>--cpus 4 --memory 8g --pids-limit 4096</code>. Runner
+concurrency defaults to 2.</li>
+<li>The runner prunes images unused for 7 days inside <code>dind</code> (never the images its labels map
+to, which may exist only there) and refuses new jobs when a guarded file system passes 85
+percent. It guards <code>/work</code> and, through a read-only mount of the dind data root at
+<code>/dind-data</code>, the disk the images live on. A one-shot <code>work-init</code> service makes the shared
+volume writable by the runner's uid 10001.</li>
+<li>Every container the runner starts gets a bridge network of its own, removed with it (and
+swept after a crash), so two jobs never share a wire, and <code>NET_RAW</code> is dropped, so a job
+cannot sniff or spoof. <code>dockerd</code> also runs with <code>--icc=false</code>. A job reaches the internet
+and nothing else on the host: <code>deploy/dind/guard.sh</code> drops its traffic to the host's
+private ranges and to the host's own public addresses, except tcp/443 (the public https
+site, which the reverse proxy serves to anyone). <a href="runner.html"><code>docs/runner.md</code></a>, "What a job can reach".</li>
+<li>Job containers are never privileged. <code>container.options</code> accepts only
+<code>--cpus</code>, <code>--memory</code>, <code>--env</code>, <code>--workdir</code>, <code>--user</code> and <code>--shm-size</code>, each
+capped by the runner's limits. <code>--privileged</code>, volumes, devices, added
+capabilities and host networking fail validation with the line number.</li>
+<li>Every invited account can push, so workflows run
+only for repos owned by an account (or org) that a site admin has marked
+<code>can_run_ci</code>. Off by default. <a href="roadmap.html"><code>ROADMAP.md</code></a> section 7.3.</li>
+</ul>
+<h2 id="3-workspace-and-crates">3. Workspace and crates <a class="anchor" href="#3-workspace-and-crates" aria-label="Link to this section">#</a></h2>
+<h3 id="31-layout">3.1 Layout <a class="anchor" href="#31-layout" aria-label="Link to this section">#</a></h3>
+<pre tabindex="0"><code>codehaven/
+  Cargo.toml              workspace, [workspace.dependencies] with every version pinned
+  rust-toolchain.toml
+  .sqlx/                  offline query metadata, one file per query
+  crates/
+    ch-core/              ids, errors, config, Actor, Permission, service traits, DomainEvent, text refs
+    ch-db/                pool, migrations/, transactions, outbox, job queue
+    ch-api-types/         REST v3 DTOs, webhook payloads, runner protocol DTOs
+    ch-testkit/           Postgres test harness, temp git repos, fixture builders
+    codehaven/            server binary: config, wiring, admin and hook subcommands
+    ch-git/               repo metadata, on-disk storage, git reads and writes, smart HTTP, hooks, protections, repo API
+    ch-ssh/               SSH server for git
+    ch-registry/          OCI distribution registry
+    ch-auth/              accounts, sessions, OIDC, TOTP, PATs, SSH keys, orgs, teams, authz, user and org API
+    ch-notify/            notifications, webhooks, email
+    ch-collab/            issues, labels, milestones, pull requests, reviews, merge gate, releases, search
+    ch-workflow/          workflow YAML model, validation, expressions, matrix expansion (pure, no IO)
+    ch-ci/                triggers, scheduler, job queue, runner API, logs, artifacts, cache, secrets, checks, statuses
+    ch-render/            markdown, highlighting, ANSI to HTML, avatars
+    ch-web/               HTML pages, askama templates, htmx partials, SSE, static/
+    ch-pages/             Pages: the pages host router, the storage bridge, per-site tokens, the publisher
+    haven-runner/         runner binary
+    haven-cli/            `haven` CLI binary
+  deploy/                 compose files, Dockerfiles, dev scripts, example config
+  tests/e2e/              `ch-e2e` end-to-end harness
+  xtask/                  cargo xtask: fmt, lint, sqlx-prepare, release, e2e</code></pre>
+<h3 id="32-the-dependency-rule">3.2 The dependency rule <a class="anchor" href="#32-the-dependency-rule" aria-label="Link to this section">#</a></h3>
+<p>This is what makes parallel streams possible:</p>
+<ol>
+<li>Domain crates (<code>ch-git</code>, <code>ch-ssh</code>, <code>ch-registry</code>, <code>ch-auth</code>, <code>ch-notify</code>,
+<code>ch-collab</code>, <code>ch-ci</code>, <code>ch-web</code>) depend only on <code>ch-core</code>, <code>ch-db</code>,
+<code>ch-api-types</code>, and the pure libraries <code>ch-workflow</code> and <code>ch-render</code>.</li>
+<li>Domain crates never depend on each other. When <code>ch-collab</code> needs a merge, it
+calls <code>ch_core::services::GitService</code>, a trait. <code>ch-git</code> implements it.</li>
+<li>Only the <code>codehaven</code> binary depends on every crate. It builds the concrete
+services and puts them into <code>AppState</code> as <code>Arc&lt;dyn Trait&gt;</code>.</li>
+</ol>
+<p>So <code>cargo nextest run -p ch-collab</code> compiles without <code>ch-git</code>, and a stream can
+finish its crate against fakes before the crates it calls exist.</p>
+<p><code>haven-runner</code> depends on <code>ch-api-types</code> and <code>ch-workflow</code> only. <code>haven-cli</code>
+depends on <code>ch-api-types</code> only.</p>
+<h3 id="33-mount-points">3.3 Mount points <a class="anchor" href="#33-mount-points" aria-label="Link to this section">#</a></h3>
+<p>The foundation stream creates every crate as a skeleton on day one, each with:</p>
+<pre tabindex="0"><code class="language-rust">pub fn api_routes() -&gt; axum::Router&lt;AppState&gt;;   // mounted under /api/v3
+pub fn workers(state: &amp;AppState) -&gt; Vec&lt;ch_core::Worker&gt;; // background loops
+pub fn build(b: &amp;AppStateBuilder) -&gt; ch_core::Result&lt;XServices&gt;; // XServices: ch_core::Install</code></pre>
+<p>Crates with a different mount add one more function: <code>ch_git::http_routes()</code> (smart HTTP, at the
+root), <code>ch_ci::runner_routes()</code> (under <code>/api/runner/v1</code>), <code>ch_registry::registry_routes()</code> (at
+<code>/v2</code>) and <code>ch_web::web_routes()</code> (at the root). A crate that builds several services returns a
+struct holding them (<code>AuthServices</code>, <code>GitServices</code>, ...) whose <code>install</code> moves them into the
+<code>AppStateBuilder</code>. Unbuilt services are <code>ch_core::not_built::NotBuilt</code>, which refuses everything,
+so an unfinished crate can never grant access.</p>
+<p><code>crates/codehaven/src/wiring.rs</code> calls all of them from the start, in dependency order (auth,
+notify, git, collab, ci), so wiring is written once and streams only fill in bodies.</p>
+<h2 id="4-contracts-in-ch-core">4. Contracts in ch-core <a class="anchor" href="#4-contracts-in-ch-core" aria-label="Link to this section">#</a></h2>
+<p>The foundation stream writes these first. A change after M0 is a pull request
+reviewed by the integrator and announced to every stream.</p>
+<h3 id="41-identity-of-the-caller">4.1 Identity of the caller <a class="anchor" href="#41-identity-of-the-caller" aria-label="Link to this section">#</a></h3>
+<pre tabindex="0"><code class="language-rust">pub enum Actor {
+    Anonymous,
+    User   { id: UserId, is_admin: bool, has_2fa: bool, via: AuthVia }, // Session, Basic, Ssh
+    Token  { user_id: UserId, token_id: TokenId, scopes: Scopes },  // personal access token
+    Job    { job_id: JobId, repo_id: RepoId, perms: JobPerms },      // CI job token
+    Runner { runner_id: RunnerId },
+    System,                                                          // hooks, schedulers, migrations
+}
+
+#[derive(PartialOrd, Ord)]
+pub enum Permission { None, View, Read, Triage, Write, Maintain, Admin }</code></pre>
+<p><code>View</code> is reading that comes from the repository's tier, not from a grant: it is what a
+signed-out visitor gets on a public repository. It sits below <code>Read</code>, is never stored and
+never parsed, so any check written for <code>Read</code> refuses it. <code>Anonymous</code> is the signed-out
+caller: the gate (section 7.3) lets it read public repositories and nothing else. The gate also limits
+which credential opens which kind of route (<code>ch_core::access::actor_accepted</code>): a browser
+session opens pages and the API, Basic and personal access tokens open the API, git and the
+registry, a job token opens the runner API, git and the API, and a runner credential opens the
+runner API only. A credential that is valid but not accepted for a route is treated as no
+credential, so a token opens no web page and a session opens no git endpoint. No service
+method grants <code>Anonymous</code> a write: <code>Authz</code> returns <code>Permission::View</code> for <code>Anonymous</code> on a
+public repository while public repositories are allowed, and <code>Permission::None</code> everywhere
+else.</p>
+<h3 id="41a-the-public-route-list">4.1a The public route list <a class="anchor" href="#41a-the-public-route-list" aria-label="Link to this section">#</a></h3>
+<p><code>ch_core::access::PUBLIC_ROUTES</code> is the list of routes a signed-out request may
+reach other than the public-repository reads below. It is a static table of
+method and path pattern, owned by
+foundation, and every change to it is reviewed by Claude. The gate layer in the
+<code>codehaven</code> binary wraps the whole router and rejects any other request from
+<code>Anonymous</code> before a handler runs. Section 7.3 has the list.</p>
+<p><code>ch_core::access::PUBLIC_REPO_ROUTES</code> lists what a signed-out visitor may read
+on public repositories. The gate admits such a request only when the switch is
+on and the repository or owner it names is public now; a layer inside the router
+checks the router chose the same route; <code>Authz</code> must still say <code>View</code>. Anything
+else gets the ordinary rejection.</p>
+<h3 id="42-errors">4.2 Errors <a class="anchor" href="#42-errors" aria-label="Link to this section">#</a></h3>
+<p><code>ch_core::Error</code> has <code>NotFound</code>, <code>Unauthorized</code>, <code>Forbidden</code>, <code>Validation(Vec&lt;FieldError&gt;)</code>,
+<code>Conflict</code>, <code>RateLimited</code>, <code>Unavailable</code>, <code>Internal(anyhow::Error)</code>. One
+<code>IntoResponse</code> impl maps them to HTTP and to the GitHub-style JSON body
+<code>{ "message": ..., "errors": [{ "resource", "field", "code" }], "documentation_url": ... }</code>.
+A private repository the caller cannot read is <code>NotFound</code>, never <code>Forbidden</code>, so
+its existence does not leak.</p>
+<h3 id="43-service-traits">4.3 Service traits <a class="anchor" href="#43-service-traits" aria-label="Link to this section">#</a></h3>
+<p>All are <code>#[async_trait]</code>, object safe, and take <code>&amp;Actor</code> where permission matters.
+The list below is the contract. Each implementing stream may add methods by
+pull request against <code>ch-core</code>.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Trait</th><th scope="col">Implemented in</th><th scope="col">Main methods</th></tr></thead><tbody><tr><td><code>Authn</code></td><td>ch-auth</td><td><code>from_session(cookie)</code>, <code>from_basic(user, secret, client_ip)</code>, <code>from_bearer(token, client_ip)</code>, <code>from_ssh_key(fingerprint)</code></td></tr><tr><td><code>Invites</code></td><td>ch-auth</td><td><code>create</code>, <code>list</code>, <code>revoke</code>, <code>peek(token)</code>, <code>accept(token, NewAccount)</code></td></tr><tr><td><code>Audit</code></td><td>ch-db</td><td><code>record(tx, AuditEvent)</code>, <code>query(filter)</code>. Every stream records through it</td></tr><tr><td><code>Authz</code></td><td>ch-auth</td><td><code>repo_permission(actor, repo)</code>, <code>org_role(actor, org)</code>, <code>require(actor, repo, Permission)</code></td></tr><tr><td><code>Accounts</code></td><td>ch-auth</td><td>users, emails, orgs, teams, memberships, SSH keys, tokens</td></tr><tr><td><code>Repos</code></td><td>ch-git</td><td><code>create</code>, <code>get_by_name</code>, <code>rename</code>, <code>transfer</code>, <code>fork</code>, <code>settings</code>, <code>collaborators</code>, <code>protections</code></td></tr><tr><td><code>GitService</code></td><td>ch-git</td><td><code>refs</code>, <code>resolve</code>, <code>tree</code>, <code>blob</code>, <code>log</code>, <code>commit</code>, <code>compare</code>, <code>diff</code>, <code>blame</code>, <code>grep</code>, <code>archive</code>, <code>commit_file_change</code>, <code>create_ref</code>, <code>delete_ref</code>, <code>test_merge</code>, <code>merge(MergeRequest) -&gt; MergeOutcome</code></td></tr><tr><td><code>Issues</code>, <code>Pulls</code>, <code>Reviews</code>, <code>Releases</code>, <code>Search</code></td><td>ch-collab</td><td>the obvious CRUD, timeline, <code>merge_gate(pr) -&gt; GateReport</code></td></tr><tr><td><code>Notifications</code>, <code>Webhooks</code></td><td>ch-notify</td><td><code>inbox</code>, <code>mark_read</code>, <code>subscribe</code>; hook CRUD, <code>deliveries</code>, <code>redeliver</code></td></tr><tr><td><code>Checks</code></td><td>ch-ci</td><td><code>for_sha(repo, sha)</code>, <code>combined(repo, sha)</code>, <code>create_status(..)</code>, <code>required_satisfied(repo, sha, contexts)</code></td></tr><tr><td><code>Sessions</code></td><td>ch-auth</td><td><code>sign_in</code>, <code>complete_two_factor</code>, <code>sign_out</code>, <code>sessions</code>, <code>revoke_session</code>, <code>security_log</code>, two-factor setup, <code>peek_link</code> and <code>redeem_link</code>, <code>change_password</code>, <code>update_profile</code></td></tr><tr><td><code>Directory</code></td><td>ch-auth</td><td><code>list_users</code>, <code>orgs_of</code>, <code>org_members</code>, <code>teams</code>, <code>team_members</code>, <code>create_org</code>, <code>site_stats</code></td></tr><tr><td><code>Tracker</code></td><td>ch-collab</td><td>labels, milestones, <code>set_milestone</code>, <code>set_assignees</code>, <code>review_comments</code>, <code>create_release</code>, <code>delete_release</code></td></tr><tr><td><code>Pipelines</code></td><td>ch-ci</td><td><code>workflows</code>, <code>jobs</code> (with steps), <code>runners</code>, <code>revoke_runner</code>, secrets, variables, <code>artifacts</code></td></tr></tbody></table></div>
+<p>The last four came from the web stream (<code>ch_core::web_contract</code>): they back pages that the first list had no
+method for. <code>Repos::update</code> and <code>GitService::blame</code> came with them.
+| <code>Ci</code> | ch-ci | <code>runs</code>, <code>jobs</code>, <code>log_range</code>, <code>log_stream</code>, <code>dispatch</code>, <code>cancel</code>, <code>rerun</code>, <code>artifacts</code>, <code>secrets</code> |
+| <code>BlobStore</code> | ch-db (filesystem) | <code>put_stream</code>, <code>get_stream</code>, <code>delete</code>, keyed by sha256 |
+| <code>EventBus</code> | ch-db | <code>emit(tx, DomainEvent)</code>, <code>consume(consumer_name, handler)</code> |</p>
+<h3 id="44-domain-events">4.4 Domain events <a class="anchor" href="#44-domain-events" aria-label="Link to this section">#</a></h3>
+<p><code>DomainEvent</code> is a single serde enum stored in the outbox table: <code>Push</code>,
+<code>RefCreated</code>, <code>RefDeleted</code>, <code>RepoCreated</code>, <code>RepoDeleted</code>, <code>IssueOpened</code>,
+<code>IssueClosed</code>, <code>IssueReopened</code>, <code>IssueEdited</code>, <code>IssueLabeled</code>, <code>IssueAssigned</code>,
+<code>CommentCreated</code>, <code>PrOpened</code>, <code>PrSynchronized</code>, <code>PrClosed</code>, <code>PrMerged</code>,
+<code>ReviewRequested</code>, <code>ReviewSubmitted</code>, <code>ReviewCommentCreated</code>, <code>ReleasePublished</code>, <code>WorkflowRunUpdated</code>,
+<code>WorkflowJobUpdated</code>, <code>CheckRunUpdated</code>, <code>StatusCreated</code>, <code>MemberAdded</code>, <code>PackagePublished</code>.</p>
+<p>Producers emit inside the same transaction as the change. Consumers each keep a
+cursor in <code>event_cursors</code> and process in id order, so a crash never loses an
+event and never double-sends one without a retry record.</p>
+<p>Consumers:</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Consumer</th><th scope="col">Crate</th><th scope="col">Reacts to</th></tr></thead><tbody><tr><td><code>pr-sync</code></td><td>ch-collab</td><td><code>Push</code>: updates PR head shas and review comment positions, marks PRs merged when the head lands in base outside the UI, closes issues referenced by <code>Fixes #n</code> on the default branch. <code>CheckRunUpdated</code>, <code>StatusCreated</code> and <code>ReviewSubmitted</code>: tries auto-merge</td></tr><tr><td><code>ci-triggers</code></td><td>ch-ci</td><td><code>Push</code>, <code>PrOpened</code>, <code>PrSynchronized</code>, <code>PrClosed</code>, <code>RefCreated</code></td></tr><tr><td><code>notifications</code></td><td>ch-notify</td><td>issue, PR, comment, review, mention and CI events</td></tr><tr><td><code>webhooks</code></td><td>ch-notify</td><td>everything that maps to a webhook event</td></tr><tr><td><code>collab-defaults</code></td><td>ch-collab</td><td><code>RepoCreated</code>: gives the new repository its starting labels</td></tr></tbody></table></div>
+<p>There is no <code>search-index</code> consumer. The search columns on <code>issues</code> and <code>repositories</code> are generated by Postgres, so
+there is nothing for a consumer to keep in step. Cross-repository code search with <code>tantivy</code> would add one later.</p>
+<h3 id="45-text-references">4.5 Text references <a class="anchor" href="#45-text-references" aria-label="Link to this section">#</a></h3>
+<p><code>ch_core::text::refs(&amp;str) -&gt; Refs</code> extracts <code>@user</code>, <code>@org/team</code>, <code>#12</code>,
+<code>owner/repo#12</code>, full and short commit shas, and closing keywords
+(<code>fixes</code>, <code>closes</code>, <code>resolves</code> and their forms). It is pure and lives in
+foundation so <code>ch-collab</code>, <code>ch-notify</code> and <code>ch-render</code> agree on what a mention is.</p>
+<h2 id="5-storage">5. Storage <a class="anchor" href="#5-storage" aria-label="Link to this section">#</a></h2>
+<h3 id="51-git-on-disk">5.1 Git on disk <a class="anchor" href="#51-git-on-disk" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Path: <code>data/git/&lt;shard&gt;/&lt;repo_id&gt;.git</code> with <code>shard = format!("{:02x}", repo_id % 256)</code>.
+Names live only in Postgres, so rename and transfer are a row update plus a
+redirect row.</li>
+<li>Created with <code>git init --bare --initial-branch=&lt;default&gt;</code>. <code>core.hooksPath</code>
+points to the server's shared hooks directory, so hooks cannot be edited per repo.</li>
+<li>Forks: a new bare repo that fetches every ref from its source, so it copies
+its objects and borrows nothing through <code>alternates</code>. A fork starts private
+and can never be more visible than its source. Deleting a repository that
+still has forks is refused.</li>
+<li>Pull request refs in the base repo: <code>refs/pull/&lt;n&gt;/head</code> and <code>refs/pull/&lt;n&gt;/merge</code>.</li>
+<li>Housekeeping job: <code>git gc --auto</code> after pushes, <code>git gc</code> weekly per active repo.</li>
+</ul>
+<h3 id="52-blobs">5.2 Blobs <a class="anchor" href="#52-blobs" aria-label="Link to this section">#</a></h3>
+<p><code>BlobStore</code> stores files at <code>data/blobs/sha256/&lt;aa&gt;/&lt;bb&gt;/&lt;hash&gt;</code> and writes
+through a temp file and rename. Reference counts live in Postgres. A daily job
+deletes unreferenced blobs older than 24 hours. An S3 implementation can come
+later behind the same trait.</p>
+<h3 id="53-postgres-schema">5.3 Postgres schema <a class="anchor" href="#53-postgres-schema" aria-label="Link to this section">#</a></h3>
+<p>The foundation stream owns <code>crates/ch-db/migrations/</code> and writes the whole v1
+schema in M0, so no stream waits on a table. After M0, a schema change is a
+small pull request to foundation with the migration and the <code>.sqlx</code> update.</p>
+<p>All ids are <code>BIGINT GENERATED ALWAYS AS IDENTITY</code> (the API exposes integers like
+GitHub's). Names that people type are <code>citext</code>. Times are <code>timestamptz</code>.
+Extensions: <code>citext</code>, <code>pg_trgm</code>.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Group</th><th scope="col">Tables</th></tr></thead><tbody><tr><td>Accounts</td><td><code>users</code> (<code>kind</code> user, org or bot; username, display name, password hash, is_admin, suspended_at, totp secret encrypted, invited_by, can_run_ci), <code>user_emails</code>, <code>sessions</code> (hash, user, created, last seen, absolute expiry, ip, user agent), <code>oidc_identities</code>, <code>personal_access_tokens</code> (hash, prefix, scopes, expiry, last used), <code>ssh_keys</code> (fingerprint unique), <code>totp_recovery_codes</code>, <code>user_settings</code> (theme, notification prefs)</td></tr><tr><td>Access</td><td><code>invites</code> (token hash, created_by, optional email, grants_admin, grants_ci, optional org and team to join, expires_at, used_at, used_by, revoked_at), <code>one_time_links</code> (hash, user, purpose <code>set_password</code> or <code>reset_password</code>, expires_at, used_at), <code>login_failures</code> (account or ip key, count, window start, locked_until)</td></tr><tr><td>Orgs</td><td><code>org_members</code> (role owner or member), <code>teams</code>, <code>team_members</code>, <code>team_repos</code> (permission)</td></tr><tr><td>Repos</td><td><code>repositories</code> (owner, name, <code>access_tier</code>, with the legacy <code>visibility</code> column kept in step by a trigger for older binaries, default_branch, fork parent, archived, empty, flags, next_number), <code>repo_redirects</code>, <code>repo_collaborators</code>, <code>branch_protections</code>, <code>stars</code>, <code>watches</code>, <code>deploy_keys</code></td></tr><tr><td>Issues</td><td><code>issues</code> (also the row for each PR, <code>is_pull</code>), <code>labels</code>, <code>issue_labels</code>, <code>milestones</code>, <code>issue_assignees</code>, <code>issue_comments</code>, <code>reactions</code>, <code>timeline_events</code>, <code>issue_subscriptions</code></td></tr><tr><td>Pull requests</td><td><code>pull_requests</code> (head repo and ref, head sha, base ref, merge base, mergeable state, merge commit, merged by, draft), <code>review_requests</code>, <code>reviews</code>, <code>review_threads</code>, <code>review_comments</code> (path, side, line, start_line, original_line, commit, diff_hunk, outdated)</td></tr><tr><td>Delivery</td><td><code>notifications</code>, <code>webhooks</code> (scope repo or org, url, secret encrypted, events, active), <code>webhook_deliveries</code></td></tr><tr><td>Events and jobs</td><td><code>outbox_events</code>, <code>event_cursors</code>, <code>background_jobs</code></td></tr><tr><td>Releases</td><td><code>releases</code>, <code>release_assets</code></td></tr><tr><td>CI</td><td><code>workflows</code>, <code>workflow_runs</code>, <code>workflow_jobs</code>, <code>workflow_steps</code>, <code>runners</code>, <code>runner_registration_tokens</code>, <code>secrets</code>, <code>variables</code>, <code>artifacts</code>, <code>caches</code>, <code>check_runs</code>, <code>commit_statuses</code>, <code>schedules</code></td></tr><tr><td>Registry</td><td><code>packages</code>, <code>oci_blobs</code>, <code>oci_manifests</code>, <code>oci_tags</code>, <code>oci_uploads</code></td></tr><tr><td>Ops</td><td><code>audit_events</code> (at, actor, client ip, user agent, action, target type and id, outcome, details jsonb), <code>blobs</code> (refcounts)</td></tr></tbody></table></div>
+<p>Search uses a generated <code>tsvector</code> on <code>issues(title, body)</code> and
+<code>repositories(name, description, topics)</code>, with GIN indexes, plus <code>pg_trgm</code>
+indexes on usernames and repo names for the quick finder.</p>
+<h3 id="54-secrets-at-rest">5.4 Secrets at rest <a class="anchor" href="#54-secrets-at-rest" aria-label="Link to this section">#</a></h3>
+<p><code>data/secrets/master.key</code> is 32 random bytes, created at first start with mode
+0600. CI secrets, webhook secrets, TOTP secrets and OIDC client state are sealed
+with AES-256-GCM (<code>aes-gcm</code>), with a random nonce per value and the row id as
+associated data. Tokens, invite tokens, one-time links and session ids are
+stored only as SHA-256 hashes. Passwords use Argon2id (<code>argon2</code>, 64 MiB memory,
+3 passes, 1 lane, 16 byte salt), and the parameters are stored in the PHC string
+so they can be raised later with a rehash at the next sign-in.</p>
+<h2 id="6-git">6. Git <a class="anchor" href="#6-git" aria-label="Link to this section">#</a></h2>
+<h3 id="61-reads-and-writes">6.1 Reads and writes <a class="anchor" href="#61-reads-and-writes" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Read paths (list refs, resolve a revision, list a tree, read a blob, walk
+history with path filtering, read commit metadata, blame, grep, archive) run the git
+plumbing through the same wrapper. The design called for <code>gix</code> on the hot paths; the
+first version uses plumbing because it is git's own behaviour, needs no second
+implementation to keep in step, and is fast enough at this scale. Each read is one
+function in <code>ch-git/src/read.rs</code>, so replacing one with <code>gix</code> changes no caller.</li>
+<li>Everything that writes, and everything where git's own algorithm is the
+standard, shells out to <code>git</code> through one wrapper, <code>GitCommand</code>, which sets a
+clean environment (<code>GIT_CONFIG_NOSYSTEM=1</code>, <code>HOME</code> to an empty dir,
+<code>GIT_TERMINAL_PROMPT=0</code>), enforces a timeout, streams stdout, and never passes
+user input as an option (<code>--end-of-options</code> before revisions and paths).</li>
+<li>Results that are costly and immutable (highlighted blobs, diffs between two
+shas, blame at a sha) are cached in-process with <code>moka</code>, keyed by sha.</li>
+</ul>
+<h3 id="62-smart-http">6.2 Smart HTTP <a class="anchor" href="#62-smart-http" aria-label="Link to this section">#</a></h3>
+<pre tabindex="0"><code>GET  /{owner}/{repo}(.git)/info/refs?service=git-upload-pack|git-receive-pack
+POST /{owner}/{repo}(.git)/git-upload-pack
+POST /{owner}/{repo}(.git)/git-receive-pack</code></pre>
+<p>A public repository can be cloned and fetched over HTTPS with no credentials:
+<code>info/refs</code> with exactly <code>service=git-upload-pack</code>, and <code>git-upload-pack</code>.
+Everything else authenticates first. With no credentials it answers <code>401</code> with
+<code>WWW-Authenticate: Basic realm="Codehaven"</code>, the same response for private,
+internal and missing repositories, so names cannot be probed. Basic auth takes a personal access
+token as the password, or the account password if the account has no two-factor.
+Failures count toward the same rate limits and lockout as the sign-in form. Then
+it checks <code>Authz</code> and pipes the request body into
+<code>git &lt;service&gt; --stateless-rpc</code> and streams the response. It honours
+<code>Content-Encoding: gzip</code> and passes <code>Git-Protocol</code> through as <code>GIT_PROTOCOL</code>, so
+protocol v2 works. Bodies are never buffered whole. An account with TOTP turned
+on must use a token for git over HTTP, with an error message that says so.</p>
+<h3 id="63-ssh">6.3 SSH <a class="anchor" href="#63-ssh" aria-label="Link to this section">#</a></h3>
+<p><code>ch-ssh</code> runs a <code>russh</code> server on port 2222 with an ed25519 host key stored in
+<code>data/secrets/ssh_host_ed25519</code>. Public key auth only. The key fingerprint maps
+to a user (or a deploy key bound to one repo). Accepted exec commands:
+<code>git-upload-pack '&lt;path&gt;'</code>, <code>git-receive-pack '&lt;path&gt;'</code>, <code>git-upload-archive '&lt;path&gt;'</code>.
+Anything else, including a shell, gets a short message naming the user and
+closes. The process is the same <code>GitCommand</code> path as HTTP, so hooks and
+permissions behave identically.</p>
+<h3 id="64-hooks-and-the-push-pipeline">6.4 Hooks and the push pipeline <a class="anchor" href="#64-hooks-and-the-push-pipeline" aria-label="Link to this section">#</a></h3>
+<p>Every git subprocess that can update refs gets <code>CODEHAVEN_PUSH_ID</code> (random,
+registered in memory with the actor and repo), <code>CODEHAVEN_REPO_ID</code> and
+<code>CODEHAVEN_SOCKET</code>. The shared hooks are two-line shell scripts that exec
+<code>codehaven hook pre-receive</code> and <code>codehaven hook post-receive</code>. Those send the
+ref updates over a Unix socket to the server, which:</p>
+<ul>
+<li><code>pre-receive</code>: checks write permission per ref and branch protection (no
+direct pushes to protected branches unless allowed, no force pushes, no
+deletions) and returns a readable rejection that git prints to the user.</li>
+<li><code>post-receive</code>: in one transaction updates <code>pushed_at</code>, sets the default
+branch on the first push, clears <code>is_empty</code>, and emits <code>Push</code>, <code>RefCreated</code>,
+<code>RefDeleted</code>. Consumers do the rest.</li>
+</ul>
+<p>Refs changed from the UI or API (merges, web edits, branch creation) go through
+the same pipeline function, so protection checks and events are identical no
+matter where a change came from.</p>
+<h3 id="65-merging">6.5 Merging <a class="anchor" href="#65-merging" aria-label="Link to this section">#</a></h3>
+<p>All merges run in the bare repo with no working tree:</p>
+<ul>
+<li><strong>Merge commit</strong>: <code>git merge-tree --write-tree base head</code> gives a tree or a
+conflict list, then <code>git commit-tree -p base -p head</code>, then
+<code>git update-ref &lt;ref&gt; &lt;new&gt; &lt;expected-old&gt;</code>.</li>
+<li><strong>Squash</strong>: same tree, one parent, message built from the PR title, number and
+commit list. Author is the PR author, committer is the merger.</li>
+<li><strong>Rebase</strong>: for each commit in <code>base..head</code>, `git merge-tree --write-tree
+--merge-base=&lt;parent&gt; &lt;onto&gt; &lt;commit&gt;<code>, then </code>commit-tree` keeping the
+original author and message. Stops on the first conflict and reports it.</li>
+</ul>
+<p>The expected-old value on <code>update-ref</code> makes a concurrent push fail the merge
+cleanly instead of losing commits. Mergeability is recomputed in a background
+job whenever head or base moves, and stored as <code>clean</code>, <code>conflict</code>, <code>behind</code>,
+<code>blocked</code> or <code>unknown</code>.</p>
+<h3 id="66-diffs-and-blame">6.6 Diffs and blame <a class="anchor" href="#66-diffs-and-blame" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><code>git diff --no-color --find-renames -z --raw</code> and <code>--patch</code> between two shas,
+parsed into a structured `Diff { files: [FileDiff { status, old_path, new_path,
+binary, hunks: [Hunk { lines: [Line { kind, old_no, new_no, text }] }] }] }`.
+Files over 20,000 changed lines or 1 MB are collapsed with a "Load diff" link.</li>
+<li><code>git blame --porcelain</code> parsed into line ranges grouped by commit.</li>
+<li>Compare and PR diffs are three-dot (from the merge base), like people expect.</li>
+</ul>
+<h3 id="67-web-edits">6.7 Web edits <a class="anchor" href="#67-web-edits" aria-label="Link to this section">#</a></h3>
+<p><code>commit_file_change</code> writes blobs with <code>git hash-object -w --stdin</code>, builds the
+tree with a throwaway index (<code>GIT_INDEX_FILE</code>, <code>read-tree</code>, <code>update-index</code>,
+<code>write-tree</code>), then <code>commit-tree</code> and a compare-and-swap <code>update-ref</code>. It
+supports create, edit, rename and delete in one commit, and "commit to a new
+branch and open a pull request".</p>
+<h3 id="68-other">6.8 Other <a class="anchor" href="#68-other" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Archives: <code>git archive --format=zip|tar.gz</code> streamed for any ref.</li>
+<li>In-repo code search: <code>git grep -n -I --max-count=20</code> on the default branch
+with a 5 second timeout.</li>
+<li>Import: one-shot <code>git clone --mirror</code> from a URL into a new repo (M4).</li>
+</ul>
+<h2 id="7-accounts-auth-and-permissions">7. Accounts, auth and permissions <a class="anchor" href="#7-accounts-auth-and-permissions" aria-label="Link to this section">#</a></h2>
+<h3 id="71-ways-in">7.1 Ways in <a class="anchor" href="#71-ways-in" aria-label="Link to this section">#</a></h3>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Method</th><th scope="col">Used by</th><th scope="col">Notes</th></tr></thead><tbody><tr><td>Username and password</td><td>web, git HTTP (accounts without two-factor)</td><td>Argon2id. Rate limits and lockout in section 7.6</td></tr><tr><td>TOTP</td><td>web</td><td><code>totp-rs</code>, 10 recovery codes. Optional for everyone, required before a site admin can open the admin pages</td></tr><tr><td>Passkey (WebAuthn)</td><td>web</td><td>A second factor beside TOTP, with <code>webauthn-rs</code> (pure Rust, no new service). The relying party id is the host of <code>server.external_url</code> and the origin is that address, so it needs a domain name (an IP address turns passkeys off). Register, name, remove and sign in with either; recovery codes belong to the account and work for both. Taking away the last factor needs the password and a current factor (an app code or a recovery code). <code>ch_has_second_factor(user)</code> is the one definition of "has two-factor" (admin gate, Basic auth, connected apps)</td></tr><tr><td>OIDC</td><td>web</td><td>Designed, not built: the public route list reserves <code>/login/oidc/{provider}</code> but no router registers it and there is no configuration for a provider. Accounts today are local only. When built it can only sign in an account that already exists and has linked that identity, or finish an invite, and never creates an account on its own</td></tr><tr><td>Session cookie</td><td>web</td><td><code>__Host-ch_session</code>: 256-bit random id, stored hashed, <code>Secure</code>, <code>HttpOnly</code>, <code>SameSite=Lax</code>, <code>Path=/</code>. 7 days idle, 30 days absolute. Section 7.6</td></tr><tr><td>Personal access token</td><td>API, git HTTP, CLI, registry</td><td>Format <code>chp_</code> plus 40 base62 characters, so secret scanners can match it. Scopes below. Expiry required, 90 days by default, 1 year at most</td></tr><tr><td>SSH key</td><td>git SSH</td><td>ed25519, ECDSA, RSA of 3072 bits or more. Fingerprint SHA-256</td></tr><tr><td>Deploy key</td><td>git SSH</td><td>Bound to one repo, read-only unless marked write. The SSH server accepts them (the <code>deploy_keys</code> table), but no page or REST route creates one yet</td></tr><tr><td>Job token</td><td>CI jobs</td><td>Minted per job, valid until the job ends, scoped to its repo</td></tr><tr><td>Runner credential</td><td>runners</td><td>Issued at registration with an admin-issued token, stored hashed</td></tr></tbody></table></div>
+<p>There is no proxy header login. Codehaven ignores <code>Remote-User</code> and every other
+identity header, wherever the request comes from.</p>
+<p>Token scopes: <code>repo</code>, <code>repo:read</code>, <code>user</code>, <code>read:org</code>, <code>admin:org</code>,
+<code>write:packages</code>, <code>read:packages</code>, <code>workflow</code>, <code>admin:repo_hook</code>, <code>notifications</code>.
+Names follow GitHub's where they mean the same thing. No token scope grants site
+admin powers: inviting people, issuing runner tokens and managing users need a
+signed-in browser session with two-factor.</p>
+<h3 id="72-permission-model">7.2 Permission model <a class="anchor" href="#72-permission-model" aria-label="Link to this section">#</a></h3>
+<p><code>repo_permission(actor, repo)</code> is the maximum of:</p>
+<ul>
+<li>site admin: <code>Admin</code></li>
+<li>owner of a personal repo: <code>Admin</code></li>
+<li>org owner of the repo's org: <code>Admin</code></li>
+<li>direct collaborator permission</li>
+<li>each team permission for teams the user belongs to</li>
+<li>the org's base permission for members (default <code>Read</code>)</li>
+<li><code>Read</code> if the repo is internal or public and the actor is a signed-in user</li>
+<li><code>View</code> for <code>Anonymous</code> if the repo is public and public repositories are
+allowed; <code>None</code> otherwise</li>
+</ul>
+<p>then capped by the token's scopes (a <code>repo:read</code> token never writes) and by
+<code>archived</code> (writes fail with a clear message). Job tokens get <code>Read</code> on contents
+plus write on statuses, checks, artifacts and caches for their own repo. Fork
+pull request jobs get <code>Read</code> only and no secrets.</p>
+<p>What each level allows:</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Level</th><th scope="col">Adds</th></tr></thead><tbody><tr><td>Read</td><td>clone, browse, open issues and PRs, comment</td></tr><tr><td>Triage</td><td>labels, assignees, milestones, close and reopen issues</td></tr><tr><td>Write</td><td>push, merge PRs (subject to protection), edit files, manage releases, re-run workflows</td></tr><tr><td>Maintain</td><td>repo settings except danger zone, webhooks, protections</td></tr><tr><td>Admin</td><td>collaborators, teams, secrets, rename, transfer, delete</td></tr></tbody></table></div>
+<p>Site admin is separate from repo admin. Only site admins invite people, issue
+runner registration tokens, suspend accounts, and read the audit log.</p>
+<h3 id="73-what-a-signed-out-visitor-can-reach">7.3 What a signed-out visitor can reach <a class="anchor" href="#73-what-a-signed-out-visitor-can-reach" aria-label="Link to this section">#</a></h3>
+<p>The instance is invite-only as a whole. The gate layer (section 4.1a) lets a
+request with no valid session, token or runner credential reach only these
+routes:</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Route</th><th scope="col">Why</th></tr></thead><tbody><tr><td><code>GET /login</code>, <code>POST /login</code>, <code>GET/POST /login/two-factor</code></td><td>Signing in</td></tr><tr><td><code>POST /login/two-factor/passkey/begin</code>, <code>POST /login/two-factor/passkey</code></td><td>Second step with a passkey. Both need the half signed-in session the password step set, and count as wrong codes when they fail (ch-wf0)</td></tr><tr><td><code>GET /invite/{token}</code>, <code>POST /invite/{token}</code></td><td>Accepting an invite (section 7.4)</td></tr><tr><td><code>GET /password/{token}</code>, <code>POST /password/{token}</code></td><td>One-time set-password and reset links (section 7.5)</td></tr><tr><td><code>GET /login/oidc/{provider}</code>, <code>GET /login/oidc/{provider}/callback</code></td><td>Only when a provider is configured</td></tr><tr><td><code>GET /static/*</code>, <code>GET /favicon.svg</code></td><td>Styles, scripts, icons. Nothing user-generated</td></tr><tr><td><code>GET /robots.txt</code></td><td><code>Disallow: /</code></td></tr><tr><td><code>GET /healthz</code></td><td>Returns <code>ok</code> and nothing else</td></tr><tr><td><code>POST /api/runner/v1/register</code></td><td>Rejects anything without a valid admin-issued registration token</td></tr></tbody></table></div>
+<p>While the site admin allows public repositories, a signed-out visitor can also
+read one: its pages, the REST reads listed in
+<code>ch_core::access::PUBLIC_REPO_ROUTES</code>, raw files, archives, releases, and
+<code>git clone</code> and <code>git fetch</code> over HTTPS. Nothing signed out can write. SSH still
+needs a key. Actions history, CI checks, the container registry, people search,
+code search and org members stay closed. Private, internal and missing
+repositories give the same rejection as anything else below.</p>
+<p>Everything else, for a signed-out request:</p>
+<ul>
+<li>Web pages: <code>303</code> to <code>/login?next=&lt;path&gt;</code>, the same for paths that exist and
+paths that do not. <code>next</code> only accepts a local path.</li>
+<li><code>/api/v3/*</code> outside <code>PUBLIC_REPO_ROUTES</code>: <code>401</code> with `{"message": "Requires
+authentication"}<code>. No </code>/meta<code>, no </code>/version`, no rate limit numbers.</li>
+<li>git smart HTTP outside a public repository: <code>401</code> with a Basic challenge, the
+same for private, internal and missing repositories.</li>
+<li><code>/v2/</code> registry: <code>401</code> with a Bearer challenge. No anonymous pulls.</li>
+<li><code>/api/runner/v1/*</code> other than register: <code>401</code> unless a runner credential or
+job token is present.</li>
+<li><code>/readyz</code> and <code>/metrics</code>: served only on the internal listener (section 14),
+never through the proxy.</li>
+</ul>
+<p>The sign-in page shows the instance name and the sign-in form. It does not list
+users, repos or counts. With zero accounts it says "No accounts yet. The server
+administrator creates the first one." There is no sign-up link and no sign-up
+route.</p>
+<p>A test in <code>crates/codehaven/tests/anonymous_surface.rs</code> walks every route the
+router has registered, sends each one a signed-out request, and fails if
+anything outside the table above returns anything but the rejection for its
+kind. A new route is private the moment it is added, and stays private unless
+someone edits <code>PUBLIC_ROUTES</code> or <code>PUBLIC_REPO_ROUTES</code> on purpose.</p>
+<h3 id="74-invites">7.4 Invites <a class="anchor" href="#74-invites" aria-label="Link to this section">#</a></h3>
+<p>There is no open sign-up and no setting to turn one on. Every account except the
+first comes from an invite.</p>
+<ul>
+<li><strong>Who can invite.</strong> Site admins, from Site admin &gt; Invites or with
+<code>codehaven admin invite create</code> on the host. Org owners can invite people straight
+into their org only if a site admin turns on <code>invites.org_owners_can_invite</code>
+(off by default).</li>
+<li><strong>The link.</strong> <code>https://code.example.com/invite/chi_&lt;32 base62&gt;</code>, about
+190 bits of randomness. Only the SHA-256 hash is stored. The admin copies the
+link and sends it however they like. If SMTP is set up, Codehaven can email it.</li>
+<li><strong>Options.</strong> An email address the account must use (optional), whether it
+grants site admin (off by default, and only an admin with two-factor can set
+it), an org and team to join, and an expiry from 1 hour to 30 days, 7 days by
+default. A note to self, shown only in the admin list.</li>
+<li><strong>Single use.</strong> Accepting runs one transaction: `UPDATE invites SET used_at =
+now(), used_by = $1 WHERE token_hash = $2 AND used_at IS NULL AND revoked_at
+IS NULL AND expires_at &gt; now() RETURNING ...`, then creates the user. Two
+people racing the same link get one account between them.</li>
+<li><strong>Bad links.</strong> Expired, used, revoked and made-up tokens all get the same page:
+"This invite link doesn't work any more. Ask the person who sent it for a new
+one." The page is rate limited per IP like the sign-in form.</li>
+<li><strong>The accept page.</strong> Shows who sent the invite, then asks for a username,
+email (locked if the invite named one) and a password of at least 12
+characters that scores 3 or more on the zxcvbn guessability estimate (which embeds
+ranked lists of common passwords, names and keyboard patterns and recognises
+dates, repeats and substitutions) and does not contain the username or the
+email name. After
+that it offers two-factor setup, which can be skipped.</li>
+<li><strong>Admin list.</strong> Pending, used (by whom, when) and expired invites, with revoke.
+Every create, revoke and accept is in the audit log.</li>
+</ul>
+<h3 id="75-the-first-admin">7.5 The first admin <a class="anchor" href="#75-the-first-admin" aria-label="Link to this section">#</a></h3>
+<p>A new instance has no accounts and no way to make one from the web. The first
+admin is made on the host by someone who already has root there:</p>
+<pre tabindex="0"><code>sudo bash deploy/prod/first-admin.sh &lt;username&gt; &lt;email&gt;</code></pre>
+<p>The script refuses unless the instance has no accounts at all, then runs
+<code>codehaven admin create-user --admin --can-run-ci</code> in the server container.
+The command creates the account with no password and prints a one-time link,
+<code>https://code.example.com/password/&lt;token&gt;</code>, valid for 1 hour. Opening it
+sets the password, then goes straight to two-factor setup, which an admin needs
+before the admin pages open. The password never passes through a shell, its
+history or the process list. <code>--password-stdin</code> exists for the e2e harness.</p>
+<p>The same pattern covers recovery: <code>codehaven admin reset-password &lt;user&gt;</code> prints
+a fresh one-time link, signs that account out everywhere and revokes its access tokens, and
+<code>codehaven admin unlock &lt;user&gt;</code> clears a lockout. A self-service reset by email
+exists only when SMTP is configured, and its form says the same thing whether or
+not the address has an account.</p>
+<h3 id="76-hardening">7.6 Hardening <a class="anchor" href="#76-hardening" aria-label="Link to this section">#</a></h3>
+<p><strong>Passwords.</strong> Argon2id as in section 5.4. At most 4 hashes run at once (a
+<code>tokio::sync::Semaphore</code>), so a flood of sign-in attempts cannot eat the CPU.
+When the username does not exist, the server still verifies against a fixed
+dummy hash, so timing does not reveal which usernames exist. The error is always
+"That username and password don't match."</p>
+<p><strong>Rate limits</strong>, keyed by the real client IP (section 2.4) with <code>tower_governor</code>:</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">What</th><th scope="col">Limit</th></tr></thead><tbody><tr><td>Sign-in, two-factor, invite and password-link pages, per IP</td><td>10 a minute, burst 5</td></tr><tr><td>Failed Basic or token auth on API, git and registry, per IP</td><td>30 a minute</td></tr><tr><td>All authenticated API calls, per token or session</td><td>5,000 an hour, with <code>X-RateLimit-*</code> headers</td></tr><tr><td>Anything signed out, per IP</td><td>120 a minute</td></tr></tbody></table></div>
+<p><strong>Lockout.</strong> 10 failed passwords for one account from one address (an IPv6 /64 counts
+as one) within 15 minutes lock password sign-in for that account from that address for
+15 minutes, never for the account as a whole, so a stranger who knows a username cannot
+lock the owner out (ch-rx2). Wrong two-factor codes also count across all addresses.
+The lock doubles on each repeat, up to
+24 hours. Valid tokens and SSH keys keep working during a lockout, so an
+attacker guessing at a user's password cannot cut off that user's git access. The
+account owner sees the lockout and its source IPs at the next sign-in. Every
+lockout is audited, and <code>admin unlock</code> clears it. An attempt is counted before
+the password hash runs, under a row lock, so a burst of simultaneous guesses shares the
+same budget of 10 as guesses made one at a time (the address is reserved first, so a
+locked address cannot keep using up an account's budget).</p>
+<p><strong>Sessions.</strong> A new session id on every sign-in and on every change of privilege
+(two-factor on or off, password change, admin granted). A password change signs
+out every other session. Settings &gt; Sessions lists each session with its IP,
+browser and last use, with a sign-out button for each. Suspending an account
+ends its sessions and disables its tokens at once.</p>
+<p><strong>CSRF.</strong> Every form and htmx request carries a per-session token, in a hidden
+field or the <code>X-CSRF-Token</code> header set once on <code>&lt;body hx-headers&gt;</code>. The sign-in
+and invite forms, which have no session yet, use a signed double-submit cookie
+<code>__Host-ch_csrf</code>. As a second check, every unsafe request with a cookie must
+have an <code>Origin</code> (or <code>Referer</code>) equal to <code>server.external_url</code>. Requests with a
+token in <code>Authorization</code> skip CSRF because cookies are not used.</p>
+<p><strong>Security headers</strong>, set by Codehaven itself on every response so the e2e test
+can check them:</p>
+<pre tabindex="0"><code>Strict-Transport-Security: max-age=31536000
+Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self';
+  img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self';
+  frame-ancestors 'none'; base-uri 'none'
+X-Frame-Options: DENY
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+Permissions-Policy: camera=(), microphone=(), geolocation=()
+X-Robots-Tag: noindex, nofollow</code></pre>
+<p><code>img-src 'self'</code> means images in markdown that point elsewhere render as links,
+so reading an issue never leaks the reader's IP to a third party. Raw files keep
+their stricter <code>sandbox</code> policy (section 12.6). HSTS is sent only when
+<code>external_url</code> is <code>https</code>.</p>
+<p><strong>Runners.</strong> A runner registers only with a token a site admin issued in Site
+admin &gt; Runners or with <code>codehaven admin runner-token</code>. The token is single use
+and lasts 1 hour. Each runner then has its own credential, stored hashed, which
+an admin can revoke. Job tokens die when the job ends.</p>
+<p><strong>Other edges.</strong> Webhooks refuse private and loopback targets (section 8.5).
+Uploads have size limits per kind (release asset 2 GB, artifact 1 GB, avatar
+1 MB). Error pages never include stack traces or SQL. <code>/healthz</code> says <code>ok</code> and
+nothing more.</p>
+<h3 id="77-audit-log">7.7 Audit log <a class="anchor" href="#77-audit-log" aria-label="Link to this section">#</a></h3>
+<p><code>audit_events</code> records, with time, actor, client IP and user agent:</p>
+<ul>
+<li>sign-in success and failure, two-factor failure, lockout and unlock, sign-out</li>
+<li>password set, changed or reset, two-factor turned on or off, recovery code used</li>
+<li>invite created, revoked and accepted, user created, suspended or made admin</li>
+<li>session revoked, token created or deleted, SSH key added or removed</li>
+<li>runner token issued, runner registered or removed</li>
+<li>secret created, changed or deleted (the name, never the value)</li>
+<li>repo visibility changed, transferred or deleted, branch protection changed</li>
+</ul>
+<p>Writes go through <code>Audit::record</code> in the same transaction as the change.
+Site admin &gt; Audit log shows them with filters by user, action and IP, and the
+user's own Settings &gt; Security shows their sign-in history. Kept for 1 year.</p>
+<h2 id="8-collaboration">8. Collaboration <a class="anchor" href="#8-collaboration" aria-label="Link to this section">#</a></h2>
+<h3 id="81-issues">8.1 Issues <a class="anchor" href="#81-issues" aria-label="Link to this section">#</a></h3>
+<p>Issues and PRs share one number sequence per repo (<code>repositories.next_number</code>,
+taken with <code>UPDATE ... RETURNING</code>). Features: markdown body, labels with colors,
+milestones with due dates and progress, multiple assignees, reactions, lock,
+pin, close with reason (completed or not planned), cross references in the
+timeline, <code>@mentions</code>, task list progress, templates from
+<code>.codehaven/ISSUE_TEMPLATE/*.md</code> (and <code>.github/</code>), and saved filters with a small
+query language (<code>is:open label:bug assignee:@me sort:updated-desc</code>).</p>
+<h3 id="82-pull-requests">8.2 Pull requests <a class="anchor" href="#82-pull-requests" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Create from a branch or a fork branch, draft or ready, with templates.</li>
+<li>Tabs: conversation, commits, checks, files changed.</li>
+<li>Files view: unified or split diff, per-file collapse, "viewed" checkboxes,
+whitespace toggle, jump list.</li>
+<li>Review: start a review, add inline comments on one line or a range on either
+side, suggest a change (a fenced <code>suggestion</code> block that renders as a diff and
+can be applied as a commit), then submit as comment, approve or request
+changes. Threads can be resolved. Comments on lines that later change are
+marked outdated and kept with their original diff hunk.</li>
+<li>Review requests to users or teams. <code>CODEOWNERS</code> (in <code>.codehaven/</code>, <code>.github/</code>
+or root) requests owners automatically and can be required by protection.</li>
+<li>Merge box: merge, squash or rebase (each can be turned off per repo), delete
+branch after merge, auto-merge when the gate passes.</li>
+</ul>
+<h3 id="83-the-merge-gate">8.3 The merge gate <a class="anchor" href="#83-the-merge-gate" aria-label="Link to this section">#</a></h3>
+<p><code>merge_gate(pr)</code> returns every reason a merge is blocked, so the UI shows a
+checklist instead of a single "no":</p>
+<ul>
+<li>mergeable state is <code>clean</code></li>
+<li>required approvals met, counting only the latest review per reviewer, and
+dropping approvals older than the head commit when "dismiss stale" is on</li>
+<li>no outstanding "changes requested"</li>
+<li>required checks pass on the head sha (<code>Checks::required_satisfied</code>)</li>
+<li>branch up to date with base when "strict" is on</li>
+<li>code owner approval when required</li>
+<li>all review threads resolved when required</li>
+</ul>
+<h3 id="84-notifications">8.4 Notifications <a class="anchor" href="#84-notifications" aria-label="Link to this section">#</a></h3>
+<p>Reasons: author, assigned, mentioned, team mentioned, review requested,
+commented, state change, subscribed, CI finished (only for runs you triggered).
+Inbox with filters, mark read, mark done, unsubscribe from a thread, watch
+levels per repo (all activity, participating only, ignore). The unread badge
+refreshes with <code>hx-trigger="every 60s"</code>. Email through SMTP (<code>lettre</code>) is off
+until <code>mail.smtp</code> is configured.</p>
+<h3 id="85-webhooks">8.5 Webhooks <a class="anchor" href="#85-webhooks" aria-label="Link to this section">#</a></h3>
+<p>Repo and org hooks. Events: <code>ping</code>, <code>push</code>, <code>create</code>, <code>delete</code>, <code>issues</code>,
+<code>issue_comment</code>, <code>pull_request</code>, <code>pull_request_review</code>,
+<code>pull_request_review_comment</code>, <code>release</code>, <code>workflow_run</code>, <code>workflow_job</code>,
+<code>check_run</code>, <code>status</code>, <code>member</code>, <code>package</code>. Payloads use GitHub's field names for
+the fields common tools read. Each delivery is signed with HMAC-SHA256 in
+<code>X-Hub-Signature-256</code> (the header name tools already verify) and carries
+<code>X-Codehaven-Event</code> plus <code>X-GitHub-Event</code> and a delivery GUID. Retries at 1 min,
+5 min, 30 min, 2 h, 6 h. The settings page lists recent deliveries with request,
+response and a redeliver button. Outbound requests refuse private and loopback
+addresses unless <code>webhooks.allow_private</code> is set. They also refuse the host's own
+public addresses (<code>webhooks.blocked_ips</code>, filled from <code>deploy/prod/host-ips.sh --json</code>
+by <code>up.sh</code>), because services the firewall hides from the internet still answer there.</p>
+<h3 id="86-releases">8.6 Releases <a class="anchor" href="#86-releases" aria-label="Link to this section">#</a></h3>
+<p>A release is a tag plus notes and assets. "Generate notes" lists PRs merged since
+the previous tag, grouped by label. Assets go to the blob store. Source zip and
+tarball links are streamed from <code>git archive</code>. Publishing emits
+<code>ReleasePublished</code>, which can trigger workflows (<code>on: release</code>).</p>
+<h3 id="87-search">8.7 Search <a class="anchor" href="#87-search" aria-label="Link to this section">#</a></h3>
+<p>One search box, scoped to the current repo when inside one. Tabs for repos,
+issues, pull requests, users and code. Issues and repos use Postgres full-text
+search ranked by <code>ts_rank</code> then recency. Code search is <code>git grep</code> on the repo's
+default branch. Cross-repo code search with <code>tantivy</code> is a later item.</p>
+<h2 id="9-ci">9. CI <a class="anchor" href="#9-ci" aria-label="Link to this section">#</a></h2>
+<h3 id="91-workflow-files">9.1 Workflow files <a class="anchor" href="#91-workflow-files" aria-label="Link to this section">#</a></h3>
+<p>Read from <code>.codehaven/workflows/*.yml|yaml</code> and, unless the repo turns it off,
+<code>.github/workflows/*.yml|yaml</code>. If a file name exists in both, the
+<code>.codehaven</code> one wins. The file is read from the commit being built: the pushed
+sha, the PR head, the default branch for <code>schedule</code>, the chosen ref for manual
+runs.</p>
+<p>Supported syntax, a deliberate subset of GitHub Actions:</p>
+<pre tabindex="0"><code class="language-yaml">name: ci
+on:
+  push:          { branches: [main, 'release/**'], tags: ['v*'], paths: ['src/**'], paths-ignore: [...] }
+  pull_request:  { types: [opened, synchronize, reopened], branches: [main] }
+  workflow_dispatch:
+    inputs: { level: { type: choice, options: [quick, full], default: quick } }
+  schedule:      [{ cron: '0 3 * * *' }]
+  release:       { types: [published] }
+env: { RUST_LOG: info }
+defaults: { run: { shell: bash, working-directory: . } }
+concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: { image: rust:1-trixie, env: {}, options: '' }
+    strategy:
+      matrix: { os: [a, b], include: [...], exclude: [...] }
+      fail-fast: true
+      max-parallel: 2
+    needs: [lint]
+    if: github.event_name != 'schedule'
+    timeout-minutes: 60
+    continue-on-error: false
+    env: { ... }
+    outputs: { ver: ${{ steps.v.outputs.ver }} }
+    steps:
+      - uses: actions/checkout@v4          # mapped to the built-in checkout
+      - id: v
+        run: echo "ver=1.2" &gt;&gt; "$GITHUB_OUTPUT"
+      - uses: docker://alpine:3.20
+        with: { args: echo hi }
+      - uses: actions/upload-artifact@v4
+        with: { name: report, path: target/report }</code></pre>
+<p>Since C8, other actions are fetched and run: JavaScript and composite actions from GitHub
+(<code>owner/repo@ref</code>), from this instance (<code>haven_owner/repo@ref</code>) or from the workspace
+(<code>./path</code>), under the site's Actions policy, and <code>services:</code> start beside the job
+(<a href="runner.html"><code>docs/runner.md</code></a>). Still not supported, each with a clear validation error that names
+the line: reusable workflows (<code>workflow_call</code>), <code>environment:</code> approvals,
+<code>pull_request_target</code> (it would run a fork's code with the base repository's secrets),
+YAML anchors and aliases, a matrix axis written as an expression (the whole matrix may be
+one, see below). Docker container actions fail when the job runs, with what to use
+instead: they need a Docker daemon, which jobs do not have.</p>
+<p><code>strategy.matrix</code> may be <code>${{ fromJSON(needs.setup.outputs.m) }}</code>. Such a job is planned
+as one placeholder and expanded into its cells when the jobs it needs have finished.</p>
+<h3 id="92-ch-workflow-pure">9.2 ch-workflow (pure) <a class="anchor" href="#92-ch-workflow-pure" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Parses YAML with <code>serde_yaml_ng</code> into typed structs with source spans, so
+errors read "line 14: <code>runs-on</code> is required".</li>
+<li>Validates and reports all errors at once. The workflows page shows them for
+every file on the default branch.</li>
+<li>Expression engine for <code>${{ }}</code>: literals, property access, index, <code>!</code>, <code>&amp;&amp;</code>,
+<code>||</code>, <code>==</code>, <code>!=</code>, <code>&lt;</code>, <code>&gt;</code>, and functions <code>contains</code>, <code>startsWith</code>,
+<code>endsWith</code>, <code>format</code>, <code>join</code>, <code>toJSON</code>, <code>fromJSON</code>, <code>success</code>, <code>failure</code>,
+<code>always</code>, <code>cancelled</code>, <code>hashFiles</code> (evaluated by the runner). Contexts:
+<code>github</code> (also exposed as <code>codehaven</code>), <code>env</code>, <code>vars</code>, <code>secrets</code>, <code>inputs</code>,
+<code>matrix</code>, <code>strategy</code>, <code>needs</code>, <code>steps</code>, <code>job</code>, <code>runner</code>.</li>
+<li>Matrix expansion with include and exclude, capped at 256 jobs per run.</li>
+<li>Trigger matching with glob filters (<code>globset</code>).</li>
+</ul>
+<p>The crate has no IO and no async. The server and the runner both use it, so a
+step's <code>if:</code> means the same thing in both. Until this crate has an engine, <code>haven-runner</code>
+carries its own copy (<a href="runner.html"><code>docs/runner.md</code></a>, "Expression engine"), to be replaced by an adapter.</p>
+<h3 id="93-server-side-ch-ci">9.3 Server side (ch-ci) <a class="anchor" href="#93-server-side-ch-ci" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><code>ci-triggers</code> consumes events, reads workflow files at the right sha, matches
+triggers and creates <code>workflow_runs</code> and one <code>workflow_jobs</code> row per job and
+matrix cell, plus a queued check run for each.</li>
+<li><code>schedule</code> worker: <code>croner</code> parses cron, <code>schedules.next_run_at</code> is
+recomputed after each fire, at most one fire per schedule per minute, all
+schedules in UTC. Schedules only come from the default branch.</li>
+<li>Manual runs: a "Run workflow" form built from <code>workflow_dispatch.inputs</code>, and
+<code>POST /api/v3/repos/{o}/{r}/actions/workflows/{id}/dispatches</code>.</li>
+<li>Dependencies: a job moves from <code>waiting</code> to <code>queued</code> when every <code>needs</code> job
+has finished and its <code>if:</code> (default <code>success()</code>) is true, otherwise it is
+<code>skipped</code>. Outputs flow into the <code>needs</code> context.</li>
+<li>Fork pull requests from first-time contributors wait for a maintainer to press
+"Approve and run".</li>
+<li>Concurrency groups cancel or queue per <code>concurrency</code>.</li>
+<li>Re-run all jobs or failed jobs. Cancel a run.</li>
+</ul>
+<h3 id="94-runner-protocol-apirunnerv1">9.4 Runner protocol (<code>/api/runner/v1</code>) <a class="anchor" href="#94-runner-protocol-apirunnerv1" aria-label="Link to this section">#</a></h3>
+<p>All JSON, over HTTP inside the compose network, HTTPS when the runner is
+remote. Types live in <code>ch-api-types::runner</code>.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Call</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>POST /register</code> with a registration token</td><td>Returns runner id and credential. The token is single use and expires in 1 hour</td></tr><tr><td><code>POST /jobs/request</code></td><td>Long poll up to 30 s. The server picks the oldest queued job whose <code>runs-on</code> labels are a subset of the runner's labels, with <code>FOR UPDATE SKIP LOCKED</code>, sets a 2 minute lease, and returns the job payload</td></tr><tr><td><code>POST /jobs/{id}/heartbeat</code></td><td>Every 30 s. Extends the lease. The response carries <code>cancel: true</code> when the run was cancelled</td></tr><tr><td><code>POST /jobs/{id}/logs</code></td><td>Batches of <code>{ step, seq, lines }</code>. <code>seq</code> makes retries idempotent: a batch the server already has is acknowledged and dropped, a batch from the future is refused with <code>409</code> and <code>{ next_seq }</code></td></tr><tr><td><code>POST /jobs/{id}/steps/{n}</code></td><td>Step started or finished with conclusion and outputs</td></tr><tr><td><code>POST /jobs/{id}/complete</code></td><td>Conclusion, job outputs</td></tr><tr><td><code>PUT /jobs/{id}/artifacts/{name}?retention_days=N</code></td><td>Streams a zip into the blob store. Job token, not for fork pull request jobs. A second upload of the same name replaces the first</td></tr><tr><td><code>GET /jobs/{id}/artifacts</code>, <code>GET /jobs/{id}/artifacts/{name}</code></td><td>For <code>download-artifact</code> within the run. Job token. The list is an <code>ArtifactsResponse</code></td></tr><tr><td><code>POST /cache/lookup</code>, <code>PUT /cache/{key}</code>, <code>GET /cache/{id}</code></td><td>Cache restore and save</td></tr></tbody></table></div>
+<p>Authentication: <code>register</code> needs only the registration token in its body. Every other call
+sends <code>Authorization: Bearer &lt;runner credential&gt;</code>, except artifacts and cache, which send the
+job's own token from the payload. The runner follows the choices in <a href="runner.html"><code>docs/runner.md</code></a> (log <code>seq</code>
+is per job, <code>retention_days</code> rides on the artifact upload as a query parameter, cache saves carry
+<code>?version=</code>).</p>
+<p>The job payload contains the resolved job (runs-on, container image, env,
+matrix values, needs outputs), the steps with their expressions left
+unevaluated, the secrets the job may see, the job token, and the clone URL.</p>
+<p>If a lease expires, the job fails with "The runner stopped responding" and can
+be re-run.</p>
+<h3 id="95-runner-haven-runner">9.5 Runner (haven-runner) <a class="anchor" href="#95-runner-haven-runner" aria-label="Link to this section">#</a></h3>
+<pre tabindex="0"><code>haven-runner register --url http://server:3200 --token &lt;reg&gt; --name runner-1 --labels ubuntu-latest,linux,x64
+haven-runner run</code></pre>
+<p>The credential is saved to <code>.runner</code> with mode 0600. For each job the runner:</p>
+<ol>
+<li>Creates <code>/work/&lt;job&gt;</code> and runs the built-in checkout there (<code>git</code> with the
+job token, depth 1 by default, <code>fetch-depth</code> honoured).</li>
+<li>Pulls the job image. <code>runs-on</code> labels map to images in the runner config,
+for example <code>ubuntu-latest = codehaven-job:trixie</code> (our image: Debian trixie
+with git, curl, build-essential, ca-certificates, Node, Python and Rust through
+rustup with stable, clippy and rustfmt; no Docker CLI). A job's
+<code>container.image</code> overrides it.</li>
+<li>Starts one long-lived container per job with <code>/work/&lt;job&gt;</code> bound at the same
+path and runs each <code>run:</code> step with <code>docker exec</code>, using the step's shell
+(<code>bash -e -o pipefail</code> by default).</li>
+<li>Evaluates each step's <code>if:</code> and <code>${{ }}</code> with <code>ch-workflow</code>, sets <code>CI=true</code>
+and every <code>GITHUB_*</code> variable people's scripts expect, plus the matching
+<code>CODEHAVEN_*</code> names, and honours <code>$GITHUB_OUTPUT</code>, <code>$GITHUB_ENV</code>,
+<code>$GITHUB_PATH</code> and <code>$GITHUB_STEP_SUMMARY</code> files.</li>
+<li>Masks every secret value in log lines (each line of a multi-line secret too)
+before sending. <code>::add-mask::</code> works.</li>
+<li>Streams logs in batches every 500 ms or 64 KB.</li>
+<li>Removes the container and <code>/work/&lt;job&gt;</code> at the end, whatever happened.</li>
+</ol>
+<p>Beyond <code>register</code> and <code>run</code>, <code>haven-runner check</code> reports on the credential, the settings
+file, Docker, the work directory, disk and the server. Settings live in a TOML file
+(<code>deploy/runner.example.toml</code>).</p>
+<p>Built-in actions, matched by name with or without an owner prefix and version
+(<code>checkout</code>, <code>actions/checkout@v4</code>, <code>codehaven/checkout@v1</code> are the same):</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Action</th><th scope="col">Inputs</th></tr></thead><tbody><tr><td><code>checkout</code></td><td><code>ref</code>, <code>fetch-depth</code>, <code>path</code>, <code>submodules</code></td></tr><tr><td><code>cache</code></td><td><code>key</code>, <code>restore-keys</code>, <code>path</code> (save happens after the job if no hit)</td></tr><tr><td><code>upload-artifact</code></td><td><code>name</code>, <code>path</code> (globs), <code>retention-days</code>, <code>if-no-files-found</code></td></tr><tr><td><code>download-artifact</code></td><td><code>name</code>, <code>path</code></td></tr><tr><td><code>docker://image</code></td><td><code>args</code>, <code>entrypoint</code></td></tr></tbody></table></div>
+<h3 id="96-secrets-and-variables">9.6 Secrets and variables <a class="anchor" href="#96-secrets-and-variables" aria-label="Link to this section">#</a></h3>
+<p>Repo and org scope. Values are write-only in the UI and API. Names are
+upper-case letters, digits and underscores. Secrets are only sent to the runner
+for jobs that reference them, never to fork PR jobs. <code>vars</code> are plain settings.</p>
+<h3 id="97-logs">9.7 Logs <a class="anchor" href="#97-logs" aria-label="Link to this section">#</a></h3>
+<p>The server appends batches to <code>data/logs/&lt;run&gt;/&lt;job&gt;.log</code> with step markers,
+and records each step's byte range in <code>workflow_steps</code>. Live viewers subscribe
+through SSE at <code>GET /api/v3/repos/{o}/{r}/actions/jobs/{job}/logs/stream</code>, which a
+signed-in browser session may call. The page at <code>/{o}/{r}/actions/runs/{run}/jobs/{job}</code>
+opens it with <code>EventSource</code>. A <code>tokio::sync::broadcast</code> channel per job only says "more
+is available": the file is the truth. Each event's id is the byte offset reached, so a
+viewer that reconnects (<code>Last-Event-ID</code>, or <code>?from=</code>) resumes exactly. A viewer that
+connects late first gets the file contents, then the stream. <code>GET .../jobs/{job}/logs</code>
+returns the whole log as plain text. ANSI colors become <code>&lt;span&gt;</code> classes in
+<code>ch-render</code>. Logs are kept 90 days by default.</p>
+<h3 id="98-checks-and-statuses">9.8 Checks and statuses <a class="anchor" href="#98-checks-and-statuses" aria-label="Link to this section">#</a></h3>
+<p>Each job owns a check run named <code>&lt;workflow&gt; / &lt;job&gt;</code> (matrix values in brackets)
+on the run's head sha, updated as the job moves. External tools post commit
+statuses through <code>POST /api/v3/repos/{o}/{r}/statuses/{sha}</code>. The commit list,
+branch list, PR header and merge gate show both: a teal tick when all pass, a red
+cross on any failure, an amber dot while anything runs.</p>
+<h2 id="10-container-registry">10. Container registry <a class="anchor" href="#10-container-registry" aria-label="Link to this section">#</a></h2>
+<p>OCI Distribution Spec 1.1 at <code>/v2/</code> on the same host, because Docker clients
+require <code>/v2/</code> at the root. <code>docker login code.example.com</code> with a
+username and a token, answered with a Bearer challenge to <code>/v2/token</code>. Every
+push needs a token, and so does every pull except one: a signed-out client may pull an image
+linked to a public repository, while public repositories are allowed. Images are named
+<code>&lt;owner&gt;/&lt;name&gt;</code> and can be linked to a repo, inheriting its permissions.
+The token endpoint returns the credential the client just sent as Basic (an account name and
+a personal access token) as the Bearer token it will use from then on, so nothing new is minted
+and what a caller may do is decided on every request. A token needs the <code>read:packages</code> or
+<code>write:packages</code> scope. An image with no repository belongs to its owner (an organization's
+members pull, its owners push); one linked to a repository, which happens on first push when a
+repository of the same name exists and the pusher can write to it, follows that repository's
+permissions. Layers live in the blob store, deduplicated across images. Supports chunked and
+monolithic uploads, cross-repo mounts, tag listing, manifest deletes and a
+garbage collection job. A packages tab on profiles and repos lists images and
+tags. Conformance is checked with the OCI distribution conformance suite in a
+throwaway container. The reverse proxy terminates TLS, so Docker clients need
+no insecure registry setting.</p>
+<h2 id="11-rest-api">11. REST API <a class="anchor" href="#11-rest-api" aria-label="Link to this section">#</a></h2>
+<p>Base path <code>/api/v3</code>, the same as GitHub Enterprise Server, so tools with a
+configurable GHES URL work. The goal is the common endpoints with matching
+paths, methods, field names and status codes, not the whole surface.</p>
+<ul>
+<li>Auth: <code>Authorization: token &lt;t&gt;</code>, <code>Authorization: Bearer &lt;t&gt;</code>, or Basic.</li>
+<li>Pagination: <code>page</code> and <code>per_page</code> (max 100) with a <code>Link</code> header.</li>
+<li><code>X-RateLimit-Limit</code>, <code>X-RateLimit-Remaining</code>, <code>X-RateLimit-Reset</code> headers.</li>
+<li>Any <code>Accept</code> with JSON is fine. <code>X-GitHub-Api-Version</code> is accepted and ignored.</li>
+<li>Every resource has <code>url</code> and <code>html_url</code> pointing at this instance.</li>
+<li>An OpenAPI document is generated with <code>utoipa</code> at <code>/api/v3/openapi.json</code>.</li>
+</ul>
+<p>Endpoint groups for v1, with their owner crate:</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Group</th><th scope="col">Paths</th><th scope="col">Crate</th></tr></thead><tbody><tr><td>Meta</td><td><code>/</code>, <code>/meta</code>, <code>/rate_limit</code>, <code>/version</code></td><td>codehaven</td></tr><tr><td>Users</td><td><code>/user</code>, <code>/users/{u}</code>, <code>/user/keys</code>, <code>/user/emails</code>, <code>/user/repos</code>, <code>/user/orgs</code></td><td>ch-auth, ch-git</td></tr><tr><td>Orgs and teams</td><td><code>/orgs/{o}</code>, <code>/orgs/{o}/members</code>, <code>/orgs/{o}/teams</code>, <code>/orgs/{o}/repos</code></td><td>ch-auth, ch-git</td></tr><tr><td>Repos</td><td><code>/repos/{o}/{r}</code>, <code>/collaborators</code>, <code>/forks</code>, <code>/topics</code>, <code>/branches</code>, <code>/branches/{b}/protection</code>, <code>/tags</code>, <code>/commits</code>, <code>/commits/{sha}</code>, <code>/compare/{a}...{b}</code>, <code>/contents/{path}</code>, <code>/git/refs</code>, <code>/git/commits</code>, <code>/git/trees</code>, <code>/git/blobs</code>, <code>/readme</code>, <code>/zipball</code>, <code>/tarball</code></td><td>ch-git</td></tr><tr><td>Issues</td><td><code>/repos/{o}/{r}/issues</code>, <code>/issues/{n}</code>, <code>/comments</code>, <code>/labels</code>, <code>/milestones</code>, <code>/assignees</code>, <code>/events</code>, <code>/timeline</code>, <code>/reactions</code></td><td>ch-collab</td></tr><tr><td>Pulls</td><td><code>/repos/{o}/{r}/pulls</code>, <code>/pulls/{n}</code>, <code>/files</code>, <code>/commits</code>, <code>/merge</code>, <code>/reviews</code>, <code>/comments</code>, <code>/requested_reviewers</code></td><td>ch-collab</td></tr><tr><td>Search</td><td><code>/search/repositories</code>, <code>/search/issues</code>, <code>/search/users</code>, <code>/search/code</code></td><td>ch-collab</td></tr><tr><td>Releases</td><td><code>/repos/{o}/{r}/releases</code>, <code>/releases/latest</code>, <code>/releases/tags/{t}</code>, <code>/assets</code></td><td>ch-collab</td></tr><tr><td>Statuses and checks</td><td><code>/statuses/{sha}</code>, <code>/commits/{ref}/status</code>, <code>/commits/{ref}/statuses</code>, <code>/commits/{ref}/check-runs</code></td><td>ch-ci</td></tr><tr><td>Actions</td><td><code>/actions/workflows</code>, <code>/dispatches</code>, <code>/actions/runs</code>, <code>/runs/{id}/jobs</code>, <code>/jobs/{id}/logs</code>, <code>/runs/{id}/cancel</code>, <code>/rerun</code>, <code>/artifacts</code>, <code>/actions/secrets</code>, <code>/actions/variables</code>, <code>/actions/runners</code></td><td>ch-ci</td></tr><tr><td>Hooks and notifications</td><td><code>/repos/{o}/{r}/hooks</code>, <code>/orgs/{o}/hooks</code>, <code>/notifications</code>, <code>/repos/{o}/{r}/subscription</code></td><td>ch-notify</td></tr></tbody></table></div>
+<p>The <code>gh</code> CLI is not a target because it relies on GraphQL. Octokit's REST
+client with a custom <code>baseUrl</code>, curl scripts, Renovate's REST paths, and our own
+<code>haven</code> CLI are.</p>
+<h2 id="12-web-ui">12. Web UI <a class="anchor" href="#12-web-ui" aria-label="Link to this section">#</a></h2>
+<h3 id="121-why-askama-and-htmx-not-leptos">12.1 Why Askama and htmx, not Leptos <a class="anchor" href="#121-why-askama-and-htmx-not-leptos" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>The work is pages, not an app.</strong> A forge is mostly documents: file views,
+diffs, timelines, lists. Server rendering is the natural fit and pages load
+fast on a phone because there is no bundle to download and hydrate.</li>
+<li><strong>Templates are checked at compile time.</strong> Askama turns each template into Rust
+code. A missing field is a compile error in the stream that caused it.</li>
+<li><strong>No second build pipeline.</strong> Leptos needs a WASM target, <code>cargo-leptos</code>, and
+hydration that must match the server render exactly. That is another toolchain
+on the build host, longer builds, and a whole class of mismatch bugs.</li>
+<li><strong>It parallelises.</strong> <code>ch-web</code> only calls service traits. With demo fakes it can
+build every page before the backends exist. Leptos server functions would tie
+the UI crate to backend crates directly.</li>
+<li><strong>The interactive parts are small.</strong> Live logs are SSE, which htmx's SSE
+extension handles. Review comments, label pickers, reactions and the merge
+box are htmx partial swaps. Everything works without JavaScript except live
+updates, which fall back to a refresh link.</li>
+</ul>
+<p>Maud was the other server-side option. Askama wins because templates are plain
+HTML files that read like the page, which helps visual review.</p>
+<h3 id="122-shape-of-ch-web">12.2 Shape of ch-web <a class="anchor" href="#122-shape-of-ch-web" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>One handler per page, returning a template. Requests with <code>HX-Request</code> get
+the partial instead of the full page.</li>
+<li>Shared layout and components as Askama macros: header, repo sidebar, file tree,
+blob view, diff view, timeline item, comment editor, label pill, avatar,
+status icon, empty state, pagination, flash messages.</li>
+<li>Static assets in <code>crates/ch-web/static</code>, embedded with <code>rust-embed</code>, served
+with content hashes in the file names and a one-year cache.</li>
+<li>JavaScript budget: vendored <code>htmx.min.js</code> and its SSE extension, plus
+<code>app.js</code> under 15 KB for theme toggle, copy buttons, line selection and
+permalinks, keyboard shortcuts (<code>/</code> search, <code>t</code> file finder, <code>g i</code> issues,
+<code>g p</code> pull requests, <code>y</code> permalink), and the textarea's tab and list helpers.
+No CDN. No inline script, so the CSP is <code>script-src 'self'</code>.</li>
+<li>File editor: a monospace textarea with a Write and Preview tab. Preview is a
+server render. A richer editor can come later as progressive enhancement.</li>
+<li>A <code>demo</code> cargo feature serves every page from fake services with fixed data,
+for visual review and screenshots before the backends land.</li>
+</ul>
+<h3 id="123-look-and-feel">12.3 Look and feel <a class="anchor" href="#123-look-and-feel" aria-label="Link to this section">#</a></h3>
+<p>The layout is familiar to anyone who has used a forge. The look is our own:</p>
+<ul>
+<li><strong>Name and mark</strong>: "Codehaven", with an original SVG mark: a rounded arch
+(a harbour entrance) with a short beam of light across it. One colour, works at
+16 px. No resemblance to any existing forge logo.</li>
+<li><strong>Colour</strong>: harbour teal is the accent (<code>#0f766e</code> light, <code>#2dd4bf</code> dark).
+States: open is teal, merged is deep blue (<code>#1d4ed8</code>), closed is brick
+(<code>#b42318</code>), draft is slate. Backgrounds are warm off-white (<code>#fbfaf7</code>) in
+light and blue-black (<code>#0e1416</code>) in dark. All text meets WCAG AA contrast.</li>
+<li><strong>Type</strong>: the system UI font stack for text and <code>ui-monospace</code> for code. No web
+fonts, so nothing is fetched from outside the instance.</li>
+<li><strong>Icons</strong>: Lucide (ISC licence) as an inline SVG sprite.</li>
+<li><strong>Structure</strong>: inside a repo, sections (Code, Issues, Pull requests, Actions,
+Releases, Packages, Settings) sit in a left sidebar on wide screens, with the
+file tree beside the content. This is the main visual difference from the
+usual top tab bar.</li>
+<li><strong>Tokens</strong>: every colour, radius, space and shadow is a CSS custom property on
+<code>:root</code>, redefined for dark under <code>prefers-color-scheme: dark</code> and under
+<code>[data-theme=dark]</code>. The theme choice (system, light, dark) is a user setting,
+mirrored in a cookie so the sign-in page matches.</li>
+<li><strong>Syntax colours</strong>: syntect emits classes (<code>hl-keyword</code>, <code>hl-string</code> and so
+on). We write the two palettes ourselves from the tokens.</li>
+</ul>
+<h3 id="124-phone-friendly">12.4 Phone friendly <a class="anchor" href="#124-phone-friendly" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Breakpoints at 640 px and 1024 px. Tested at 390 x 844 and 1280 x 800.</li>
+<li>Below 1024 px the repo sidebar becomes a scrollable chip row under the repo
+name, the file tree moves behind a "Files" button, and diffs are unified only.</li>
+<li>Below 640 px tables become stacked cards and the header search becomes an icon.</li>
+<li>Tap targets at least 44 px. No horizontal page scroll. Code and diff blocks
+scroll inside themselves.</li>
+<li>Long lines in code views wrap on request (a toggle), not by default.</li>
+</ul>
+<h3 id="125-accessibility">12.5 Accessibility <a class="anchor" href="#125-accessibility" aria-label="Link to this section">#</a></h3>
+<p>Landmarks on every page, a skip link, visible focus rings, labelled form
+controls, status icons with text alternatives, and diff lines announced with
+"added" and "removed" rather than colour alone. <code>prefers-reduced-motion</code> turns
+off transitions.</p>
+<h3 id="126-pages">12.6 Pages <a class="anchor" href="#126-pages" aria-label="Link to this section">#</a></h3>
+<p>Home (dashboard with your repos, recent activity, assigned issues and review
+requests), explore (accounts only), sign in, two-factor, accept invite, set
+password, profile, org page and members, team pages, settings (profile, emails,
+password, two-factor, sessions, security log, SSH keys, tokens, notifications,
+appearance), new repo, import repo, repo home (README,
+about, branches, latest commit with status), tree, blob (highlighted, line
+anchors, raw, blame, history), blame, commits, commit, branches, tags, compare,
+edit and new file, issues list, issue, new issue, labels, milestones, pull
+requests list, PR (conversation, commits, checks, files), new PR, actions (runs
+list, run, job with live log, workflow list with validation errors, manual run
+form), releases, release, new release, packages, notifications inbox, search,
+repo settings (general, collaborators and teams, branches and protection,
+webhooks, secrets and variables, runners, danger zone), site admin (invites,
+users, repos, runners and runner tokens, audit log, queue, health and disk). Site
+admin pages need the admin to have two-factor turned on.</p>
+<p>Raw files are served from <code>/{o}/{r}/raw/{ref}/{path}</code> with
+<code>Content-Security-Policy: sandbox</code>, <code>X-Content-Type-Options: nosniff</code>, and
+<code>Content-Disposition: attachment</code> for HTML and SVG, so a file in a repo cannot
+run script on the instance's origin.</p>
+<h2 id="13-cli-haven">13. CLI (haven) <a class="anchor" href="#13-cli-haven" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code>haven auth login --host https://code.example.com   # paste a token; stored in the OS keyring (keyring crate)
+haven auth git-credential                           # git credential helper
+haven repo create|clone|view|fork|list
+haven issue list|view|create|close|comment
+haven pr create|list|view|checkout|diff|review|merge
+haven run list|view|watch|logs|rerun|cancel
+haven workflow list|run
+haven release create|list|upload
+haven api &lt;path&gt; [-X METHOD] [-f key=value]         # raw REST calls</code></pre>
+<p>Built on <code>clap</code>, <code>reqwest</code> with rustls, and the DTOs from <code>ch-api-types</code>, so the
+CLI breaks at compile time when the API contract changes.</p>
+<h2 id="14-server-binary-config-and-operations">14. Server binary, config and operations <a class="anchor" href="#14-server-binary-config-and-operations" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code>codehaven serve [--migrate]        # HTTP, SSH and workers in one process
+codehaven migrate
+codehaven admin create-user --username u --email e [--admin] [--password-stdin]   # prints a 1 hour set-password link
+codehaven admin invite create [--email e] [--admin] [--org o --team t] [--expires 7d]   # prints the invite link
+codehaven admin invite list|revoke &lt;id&gt;
+codehaven admin runner-token [--repo o/r]
+codehaven admin reset-password u   # prints a 1 hour link, signs the account out everywhere, revokes its tokens
+codehaven admin unlock u
+codehaven admin suspend u
+codehaven hook pre-receive|post-receive   # called by git, not people
+codehaven healthcheck              # used by the compose healthcheck, hits the internal listener
+codehaven doctor                   # git version, paths, permissions, disk, database, public route list</code></pre>
+<p>Every <code>admin</code> subcommand runs inside the server container, so only someone with
+root on the host can use it, and each one writes an audit event with the actor
+<code>System (cli)</code>.</p>
+<p>The server opens two listeners:</p>
+<ul>
+<li>
+<p><strong>Public</strong>, <code>0.0.0.0:3200</code> in the container: everything in sections 6 to 12,
+behind the gate. The reverse proxy reaches it by its alias on the proxy
+network, and the host has it where <code>CODEHAVEN_HTTP_BIND</code> says.</p>
+</li>
+<li>
+<p><strong>Internal</strong>, <code>127.0.0.1:9300</code> inside the container only: <code>/readyz</code> and
+<code>/metrics</code>. Nothing outside the container can reach it.</p>
+</li>
+<li>
+<p>One process runs HTTP, SSH and all workers. Single instance by design. The
+in-process log broadcast is the only part that assumes it, and moving it to
+Postgres <code>LISTEN/NOTIFY</code> is the path to more than one.</p>
+</li>
+<li>
+<p>Logs: <code>tracing</code> with JSON output. Every request has a request id.</p>
+</li>
+<li>
+<p><code>/healthz</code> (process up, public, says only <code>ok</code>) and <code>/readyz</code> (database
+reachable, data dir writable, internal listener only).</p>
+</li>
+<li>
+<p>Prometheus metrics at <code>/metrics</code> on the internal listener only.</p>
+</li>
+<li>
+<p>Security headers on every response, listed in section 7.6.</p>
+</li>
+<li>
+<p>Backups: <code>deploy/prod/backup.sh</code> (run as root on the host) writes one archive with a
+<code>pg_dump</code>, <code>data/git</code>, <code>data/blobs</code>, <code>data/logs</code>, the master key in <code>data/secrets</code>, the
+database credentials and the env file, plus <code>SHA256SUMS</code>. <code>deploy/prod/backup-timer.sh</code> runs it
+daily with retention and a disk guard; <code>deploy/prod/restore.sh</code> restores into an empty
+project. There is no <code>codehaven admin backup</code>: it would need the same root and Docker access.
+See docs/operations.md.</p>
+</li>
+</ul>
+<h2 id="15-build-and-test-workflow">15. Build and test workflow <a class="anchor" href="#15-build-and-test-workflow" aria-label="Link to this section">#</a></h2>
+<p>Edits happen anywhere. Compilation and tests run in a builder container, on
+this machine or on another host chosen by <code>CH_HOST</code> (an ssh name) and
+<code>CH_REMOTE_ROOT</code> (the directory on that host that holds the checkouts), both
+from the environment or from <code>deploy/dev/local.env</code> (see
+<code>deploy/dev/local.env.example</code>). There is no default host: with <code>CH_HOST</code> unset,
+<code>deploy/dev/local.sh</code> runs the same job on this machine and no ssh is involved.
+The <code>Makefile</code> wraps the scripts in <code>deploy/dev/*.sh</code>.</p>
+<h3 id="151-builder-image">15.1 Builder image <a class="anchor" href="#151-builder-image" aria-label="Link to this section">#</a></h3>
+<p><code>deploy/images/builder.Dockerfile</code>: <code>rust:&lt;pinned&gt;-trixie</code> plus <code>git</code>,
+<code>openssh-client</code>, <code>sccache</code>, <code>cargo-nextest</code>, <code>sqlx-cli</code> and <code>insta</code>'s
+<code>cargo-insta</code>, built once as <code>codehaven-builder:&lt;toolchain&gt;</code>
+(<code>deploy/dev/builder-image.sh</code>).</p>
+<h3 id="152-caches">15.2 Caches <a class="anchor" href="#152-caches" aria-label="Link to this section">#</a></h3>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Volume</th><th scope="col">Shared by</th><th scope="col">Holds</th></tr></thead><tbody><tr><td><code>codehaven-cargo-home</code></td><td>all streams</td><td>registry index, crate sources, git deps</td></tr><tr><td><code>codehaven-sccache</code></td><td>all streams</td><td>compiled dependency objects, capped at 20 GB</td></tr><tr><td><code>codehaven-target-&lt;stream&gt;</code></td><td>one stream</td><td>that stream's <code>target/</code></td></tr></tbody></table></div>
+<p>A target dir per stream, because cargo holds a lock on a target directory for
+the whole build and one shared dir would serialise every stream. sccache makes
+the per-stream dirs cheap: a dependency compiled for one stream is a cache hit
+for the next. Debug info is <code>line-tables-only</code> in the dev profile to keep target
+dirs near 3 GB each.</p>
+<h3 id="153-running-a-build">15.3 Running a build <a class="anchor" href="#153-running-a-build" aria-label="Link to this section">#</a></h3>
+<p><code>deploy/dev/remote.sh &lt;stream&gt; &lt;command&gt;</code> from the working machine, or
+<code>deploy/dev/local.sh &lt;stream&gt; &lt;command&gt;</code> with no build host:</p>
+<ol>
+<li><code>rsync</code>s the stream's worktree to <code>&lt;CH_REMOTE_ROOT&gt;/streams/&lt;stream&gt;/</code> on
+the build host, skipping <code>target/</code>, <code>.git/</code> and the env files.</li>
+<li>Runs <code>deploy/dev/diskcheck.sh</code> there and stops if a watched disk
+(<code>CODEHAVEN_DISK_PATHS</code>) is at <code>CODEHAVEN_DISK_LIMIT</code> percent or more.</li>
+<li>Takes one of <code>CODEHAVEN_BUILD_SLOTS</code> slots (3 by default) with <code>flock</code> on
+<code>&lt;CODEHAVEN_BUILD_ROOT&gt;/run/slot.&lt;n&gt;</code>, waiting if all are busy, so a few
+builds run at once and the host keeps room for everything else.</li>
+<li><code>deploy/dev/slot.sh</code> runs `docker compose -p codehaven-dev run --rm builder
+bash -c &lt;command&gt;<code>(not</code>-lc<code>: a login shell on Debian resets </code>PATH` and
+loses cargo), where <code>compose.dev.yml</code> caps the builder at
+<code>CODEHAVEN_BUILD_CPUS</code> cpus (default <code>min(nproc, 3)</code>) and
+<code>CODEHAVEN_BUILD_MEMORY</code> memory (default 8g), with <code>SQLX_OFFLINE=true</code> and
+<code>DATABASE_URL</code> pointing at <code>pg-test</code>.</li>
+</ol>
+<p><code>deploy/dev/host.sh</code> syncs the same way but runs the command on the host
+itself, not in the builder, for docker and compose work such as release builds
+and the end-to-end run.</p>
+<p><code>#[sqlx::test]</code> creates a fresh database per test inside <code>pg-test</code>, so streams
+never see each other's data. Git tests use the real <code>git</code> in the builder image.</p>
+<h3 id="153a-docker-tests">15.3a Docker tests <a class="anchor" href="#153a-docker-tests" aria-label="Link to this section">#</a></h3>
+<p>The runner's executor tests need a Docker daemon, and the builder has none (it never gets the
+host's). <code>make STREAM=runner docker-test</code> starts <code>dind-test</code>, a throwaway daemon in the
+<code>docker-tests</code> profile of <code>deploy/compose.dev.yml</code> on the private <code>dev</code> network, builds the job
+image into it, runs <code>crates/haven-runner/tests/docker.rs</code> with <code>HAVEN_REQUIRE_DOCKER=1</code>, and stops
+it. Its images live in the <code>codehaven-dind-test-data</code> volume, which <code>clean.sh</code> removes.</p>
+<h3 id="154-the-end-to-end-run">15.4 The end-to-end run <a class="anchor" href="#154-the-end-to-end-run" aria-label="Link to this section">#</a></h3>
+<p><code>deploy/dev/e2e.sh</code> (or <code>make e2e E2E_TAG=test-&lt;word&gt;</code>) builds the images under
+a throwaway tag and runs the harness from <code>tests/e2e</code> in a compose project of
+its own (<code>deploy/compose.e2e.yml</code>), then tears that project down whatever
+happened. Throwaway is enforced, not requested: the project name and the image
+tag must both be <code>test-</code>, <code>e2e-</code>, <code>shots-</code> or <code>tmp-</code> plus a word
+(<code>deploy/lib/throwaway.sh</code>), a project that already holds a container that was
+not started as a throwaway one is left alone, and a tag the running instance
+uses is refused. There is no flag that relaxes any of this.</p>
+<h3 id="155-cleanup">15.5 Cleanup <a class="anchor" href="#155-cleanup" aria-label="Link to this section">#</a></h3>
+<p><code>deploy/dev/clean.sh</code> removes the <code>codehaven-target-*</code> volumes and the synced
+checkouts of the streams named on its command line, the runner's test volumes,
+dangling <code>codehaven-*</code> images and the codehaven buildx cache
+(<code>CODEHAVEN_BUILDX_BUILDER</code> when set). It never runs <code>docker system prune</code>.</p>
+<h3 id="156-release-images-and-tags">15.6 Release images and tags <a class="anchor" href="#156-release-images-and-tags" aria-label="Link to this section">#</a></h3>
+<p><code>deploy/dev/release.sh &lt;tag&gt;</code> (or <code>make release TAG=&lt;tag&gt;</code>) builds the release
+binaries inside the builder, so they use the same cargo and sccache volumes and
+the same build slots as every other build, then <code>docker buildx build --load</code>
+packs them into runtime images from a <code>dist/</code> directory
+(<code>deploy/images/runtime.Dockerfile</code>). Runtime images are <code>debian:trixie-slim</code>
+with <code>git</code>, <code>ca-certificates</code> and <code>tini</code>, run as uid 10001: <code>codehaven-server</code>,
+<code>codehaven-e2e</code> (the harness, which also holds the server binary so steps can
+run <code>codehaven admin</code>), <code>codehaven-runner</code>. <code>codehaven-job:trixie</code> is built by
+<code>deploy/dev/job-image.sh</code> from <code>deploy/images/job.Dockerfile</code> and loaded into
+<code>dind</code> by <code>deploy/prod/ci-up.sh</code>. Building the binaries in the builder rather
+than in a Dockerfile stage keeps the release build inside the same CPU cap as
+every other build.</p>
+<p>The tag is required and has no default: it is how an instance picks what runs.
+<code>deploy/prod/up.sh</code> uses <code>CODEHAVEN_TAG</code> from the env file, else the short
+commit id of the checkout, and never a name something else may already run;
+<code>release.sh</code> refuses a tag a running instance uses unless <code>--deploy</code> says
+replacing it is the point.</p>
+<h3 id="157-the-portability-check">15.7 The portability check <a class="anchor" href="#157-the-portability-check" aria-label="Link to this section">#</a></h3>
+<p><code>deploy/check-portable.py</code> (or <code>make portable</code>) fails when something that
+belongs to one deployment is in the tree: a person's or host's name, an address
+outside the documentation ranges, a real email domain, or a path of one
+particular machine. The blocked words are stored as SHA-256 hashes, so the
+check itself publishes none of them. Codehaven is meant to be cloned and run by
+anyone, so no file may carry a name, an address or a path that belongs to one
+instance. <code>deploy/export-public.sh</code> runs the same check over a clean snapshot
+of the tree, with the publisher's own private patterns added, before anything
+is published.</p>
+<h2 id="16-quality-gates">16. Quality gates <a class="anchor" href="#16-quality-gates" aria-label="Link to this section">#</a></h2>
+<p>Every stream, before every merge:</p>
+<ul>
+<li><code>cargo fmt --check</code></li>
+<li><code>cargo clippy -p &lt;crates&gt; --all-targets -- -D warnings</code></li>
+<li><code>cargo nextest run -p &lt;crates&gt;</code> in the builder</li>
+<li><code>cargo sqlx prepare --check --workspace</code></li>
+<li><code>cargo build --workspace</code> in the builder with main merged in</li>
+<li>the end-to-end steps for the current milestone (<a href="roadmap.html"><code>ROADMAP.md</code></a> section 6)</li>
+</ul>
+<p>Plus, per stream: property tests (<code>proptest</code>) for parsers (pkt-line, diff,
+expressions, cron, refs), <code>insta</code> snapshots for templates and API JSON, and for
+the web stream, screenshots at phone and desktop width in light and dark,
+reviewed before merge.</p>
+<h2 id="17-not-in-v1">17. Not in v1 <a class="anchor" href="#17-not-in-v1" aria-label="Link to this section">#</a></h2>
+<p>GraphQL, a wiki, project boards, Git LFS, pull mirrors, more than one server instance, S3 storage.
+(Reusable workflows, environments with approval and WebAuthn passkeys were on this list and are built now.) Each fits behind
+an existing boundary and is listed in <a href="roadmap.html"><code>ROADMAP.md</code></a> under later work.</p>
+<p>Never, by design: open sign-up, anonymous writes, anonymous reads of anything
+that is not in a public repository, a web setup page for the
+first admin, and login by trusted proxy header.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="state.html"><small>Previous</small>State of the project</a><a class="next" href="roadmap.html"><small>Next</small>Roadmap</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/ARCHITECTURE.md" rel="noopener">ARCHITECTURE.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#1-decisions-at-a-glance">1. Decisions at a glance</a></li><li class="l2"><a href="#2-deployment">2. Deployment</a></li><li class="l3"><a href="#21-layout">2.1 Layout</a></li><li class="l3"><a href="#22-compose-projects">2.2 Compose projects</a></li><li class="l3"><a href="#23-reaching-it">2.3 Reaching it</a></li><li class="l3"><a href="#24-exposure-and-the-reverse-proxy">2.4 Exposure and the reverse proxy</a></li><li class="l3"><a href="#25-runner-isolation">2.5 Runner isolation</a></li><li class="l2"><a href="#3-workspace-and-crates">3. Workspace and crates</a></li><li class="l3"><a href="#31-layout">3.1 Layout</a></li><li class="l3"><a href="#32-the-dependency-rule">3.2 The dependency rule</a></li><li class="l3"><a href="#33-mount-points">3.3 Mount points</a></li><li class="l2"><a href="#4-contracts-in-ch-core">4. Contracts in ch-core</a></li><li class="l3"><a href="#41-identity-of-the-caller">4.1 Identity of the caller</a></li><li class="l3"><a href="#41a-the-public-route-list">4.1a The public route list</a></li><li class="l3"><a href="#42-errors">4.2 Errors</a></li><li class="l3"><a href="#43-service-traits">4.3 Service traits</a></li><li class="l3"><a href="#44-domain-events">4.4 Domain events</a></li><li class="l3"><a href="#45-text-references">4.5 Text references</a></li><li class="l2"><a href="#5-storage">5. Storage</a></li><li class="l3"><a href="#51-git-on-disk">5.1 Git on disk</a></li><li class="l3"><a href="#52-blobs">5.2 Blobs</a></li><li class="l3"><a href="#53-postgres-schema">5.3 Postgres schema</a></li><li class="l3"><a href="#54-secrets-at-rest">5.4 Secrets at rest</a></li><li class="l2"><a href="#6-git">6. Git</a></li><li class="l3"><a href="#61-reads-and-writes">6.1 Reads and writes</a></li><li class="l3"><a href="#62-smart-http">6.2 Smart HTTP</a></li><li class="l3"><a href="#63-ssh">6.3 SSH</a></li><li class="l3"><a href="#64-hooks-and-the-push-pipeline">6.4 Hooks and the push pipeline</a></li><li class="l3"><a href="#65-merging">6.5 Merging</a></li><li class="l3"><a href="#66-diffs-and-blame">6.6 Diffs and blame</a></li><li class="l3"><a href="#67-web-edits">6.7 Web edits</a></li><li class="l3"><a href="#68-other">6.8 Other</a></li><li class="l2"><a href="#7-accounts-auth-and-permissions">7. Accounts, auth and permissions</a></li><li class="l3"><a href="#71-ways-in">7.1 Ways in</a></li><li class="l3"><a href="#72-permission-model">7.2 Permission model</a></li><li class="l3"><a href="#73-what-a-signed-out-visitor-can-reach">7.3 What a signed-out visitor can reach</a></li><li class="l3"><a href="#74-invites">7.4 Invites</a></li><li class="l3"><a href="#75-the-first-admin">7.5 The first admin</a></li><li class="l3"><a href="#76-hardening">7.6 Hardening</a></li><li class="l3"><a href="#77-audit-log">7.7 Audit log</a></li><li class="l2"><a href="#8-collaboration">8. Collaboration</a></li><li class="l3"><a href="#81-issues">8.1 Issues</a></li><li class="l3"><a href="#82-pull-requests">8.2 Pull requests</a></li><li class="l3"><a href="#83-the-merge-gate">8.3 The merge gate</a></li><li class="l3"><a href="#84-notifications">8.4 Notifications</a></li><li class="l3"><a href="#85-webhooks">8.5 Webhooks</a></li><li class="l3"><a href="#86-releases">8.6 Releases</a></li><li class="l3"><a href="#87-search">8.7 Search</a></li><li class="l2"><a href="#9-ci">9. CI</a></li><li class="l3"><a href="#91-workflow-files">9.1 Workflow files</a></li><li class="l3"><a href="#92-ch-workflow-pure">9.2 ch-workflow (pure)</a></li><li class="l3"><a href="#93-server-side-ch-ci">9.3 Server side (ch-ci)</a></li><li class="l3"><a href="#94-runner-protocol-apirunnerv1">9.4 Runner protocol (<code>/api/runner/v1</code>)</a></li><li class="l3"><a href="#95-runner-haven-runner">9.5 Runner (haven-runner)</a></li><li class="l3"><a href="#96-secrets-and-variables">9.6 Secrets and variables</a></li><li class="l3"><a href="#97-logs">9.7 Logs</a></li><li class="l3"><a href="#98-checks-and-statuses">9.8 Checks and statuses</a></li><li class="l2"><a href="#10-container-registry">10. Container registry</a></li><li class="l2"><a href="#11-rest-api">11. REST API</a></li><li class="l2"><a href="#12-web-ui">12. Web UI</a></li><li class="l3"><a href="#121-why-askama-and-htmx-not-leptos">12.1 Why Askama and htmx, not Leptos</a></li><li class="l3"><a href="#122-shape-of-ch-web">12.2 Shape of ch-web</a></li><li class="l3"><a href="#123-look-and-feel">12.3 Look and feel</a></li><li class="l3"><a href="#124-phone-friendly">12.4 Phone friendly</a></li><li class="l3"><a href="#125-accessibility">12.5 Accessibility</a></li><li class="l3"><a href="#126-pages">12.6 Pages</a></li><li class="l2"><a href="#13-cli-haven">13. CLI (haven)</a></li><li class="l2"><a href="#14-server-binary-config-and-operations">14. Server binary, config and operations</a></li><li class="l2"><a href="#15-build-and-test-workflow">15. Build and test workflow</a></li><li class="l3"><a href="#151-builder-image">15.1 Builder image</a></li><li class="l3"><a href="#152-caches">15.2 Caches</a></li><li class="l3"><a href="#153-running-a-build">15.3 Running a build</a></li><li class="l3"><a href="#153a-docker-tests">15.3a Docker tests</a></li><li class="l3"><a href="#154-the-end-to-end-run">15.4 The end-to-end run</a></li><li class="l3"><a href="#155-cleanup">15.5 Cleanup</a></li><li class="l3"><a href="#156-release-images-and-tags">15.6 Release images and tags</a></li><li class="l3"><a href="#157-the-portability-check">15.7 The portability check</a></li><li class="l2"><a href="#16-quality-gates">16. Quality gates</a></li><li class="l2"><a href="#17-not-in-v1">17. Not in v1</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

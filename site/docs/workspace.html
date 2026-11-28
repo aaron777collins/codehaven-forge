@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The browser workspace | Codehaven</title>
+<meta name="description" content="Every repository has a workspace at /{owner}/{repo}/workspace, opened from the repository page.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html" aria-current="page">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html" aria-current="page">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#what-is-in-it">What is in it</a></li><li class="l2"><a href="#who-can-use-it">Who can use it</a></li><li class="l2"><a href="#turning-it-off">Turning it off</a></li><li class="l2"><a href="#what-it-needs">What it needs</a></li></ul></div></details>
+<article class="prose">
+<h1 id="the-browser-workspace">The browser workspace <a class="anchor" href="#the-browser-workspace" aria-label="Link to this section">#</a></h1>
+<p>Every repository has a workspace at <code>/{owner}/{repo}/workspace</code>, opened from the repository page. It is a code editor, a commit box, a run panel and a terminal in one page, served entirely by your instance.</p>
+<h2 id="what-is-in-it">What is in it <a class="anchor" href="#what-is-in-it" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Editor.</strong> Monaco, the editor inside VS Code, with a file tree, tabs, search and a diff. Unsaved edits are kept as drafts in the browser, encrypted, and locked when you sign out.</li>
+<li><strong>Commit.</strong> Many files in one commit, to the current branch or a new one. When you commit to a new branch there is a link to open a pull request.</li>
+<li><strong>Runs.</strong> The workflows of each commit with their live logs beside the code, with run, re-run and cancel.</li>
+<li><strong>Terminal.</strong> A bash shell with pipes, loops, grep, sed, awk, find, sort, diff and jq, on a copy of the repository's files with your drafts on top. It runs in your browser, with no internet. Nothing it changes reaches your drafts until you tick it in review. Details are in <a href="terminal.html">The workspace terminal</a>.</li>
+</ul>
+<h2 id="who-can-use-it">Who can use it <a class="anchor" href="#who-can-use-it" aria-label="Link to this section">#</a></h2>
+<p>It is for signed-in accounts only. Nobody who is signed out can open any workspace page, file or stream, even for a public repository. A signed-in account can open the workspace of any repository it can read, and needs write access to commit or run a workflow. Streams close as soon as access ends.</p>
+<p>The server starts no shell and no container for it, and every file the editor needs is served by the instance itself, with nothing loaded from another site.</p>
+<h2 id="turning-it-off">Turning it off <a class="anchor" href="#turning-it-off" aria-label="Link to this section">#</a></h2>
+<p>A site admin with two-factor sign-in can turn the editor off, and the terminal separately, at Site admin, Workspace (<code>/admin/workspace</code>). The terminal is on by default. Turning the editor off hides the workspace links, and the workspace pages answer "not found". Turning the terminal off applies to the next page load: a terminal that is already open runs until its page closes.</p>
+<p>The server's <code>workspace.enabled</code> and <code>workspace.terminal</code> settings are the ceiling. The admin page can turn a part off, never on past them. See <a href="configuration.html">Configuration</a>.</p>
+<h2 id="what-it-needs">What it needs <a class="anchor" href="#what-it-needs" aria-label="Link to this section">#</a></h2>
+<p>Serve Codehaven over <code>https</code> at a host name. On plain <code>http</code> away from <code>localhost</code>, browsers do not send the header the server uses to refuse framed requests, and drafts cannot be encrypted. An IPv6 literal address cannot use the workspace at all, because a content security policy cannot name one. Do not add your own <code>Cross-Origin-Embedder-Policy</code> or <code>frame-ancestors</code> rule for the workspace in a proxy, and do not let a proxy rewrite <code>Content-Security-Policy</code>: it breaks the terminal.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="pages.html"><small>Previous</small>Pages</a><a class="next" href="terminal.html"><small>Next</small>The workspace terminal</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/workspace.md" rel="noopener">docs/workspace.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#what-is-in-it">What is in it</a></li><li class="l2"><a href="#who-can-use-it">Who can use it</a></li><li class="l2"><a href="#turning-it-off">Turning it off</a></li><li class="l2"><a href="#what-it-needs">What it needs</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

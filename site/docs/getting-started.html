@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started | Codehaven</title>
+<meta name="description" content="Codehaven is a self-hosted code forge written in Rust.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html" aria-current="page">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html" aria-current="page">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#words-used-in-these-docs">Words used in these docs</a></li><li class="l2"><a href="#what-you-need">What you need</a></li><li class="l3"><a href="#docker-on-debian-or-ubuntu">Docker on Debian or Ubuntu</a></li><li class="l2"><a href="#what-works-on-a-trial-and-what-needs-the-real-setup">What works on a trial and what needs the real setup</a></li><li class="l2"><a href="#1-get-the-code">1. Get the code</a></li><li class="l2"><a href="#2-make-the-settings-file">2. Make the settings file</a></li><li class="l3"><a href="#a-trial-on-one-machine">A trial on one machine</a></li><li class="l3"><a href="#a-real-instance-with-caddy">A real instance with Caddy</a></li><li class="l2"><a href="#3-set-up-and-start">3. Set up and start</a></li><li class="l3"><a href="#check-that-it-works">Check that it works</a></li><li class="l2"><a href="#4-make-the-first-admin">4. Make the first admin</a></li><li class="l2"><a href="#5-back-up-now">5. Back up now</a></li><li class="l2"><a href="#6-your-first-repository">6. Your first repository</a></li><li class="l3"><a href="#push-over-https">Push over HTTPS</a></li><li class="l3"><a href="#push-over-ssh">Push over SSH</a></li><li class="l2"><a href="#7-your-first-issue-and-pull-request">7. Your first issue and pull request</a></li><li class="l2"><a href="#8-your-first-ci-run">8. Your first CI run</a></li><li class="l2"><a href="#9-invite-people">9. Invite people</a></li><li class="l2"><a href="#10-public-repositories">10. Public repositories</a></li><li class="l2"><a href="#where-to-go-next">Where to go next</a></li></ul></div></details>
+<article class="prose">
+<h1 id="getting-started">Getting started <a class="anchor" href="#getting-started" aria-label="Link to this section">#</a></h1>
+<p>Codehaven is a self-hosted code forge written in Rust. It hosts git over HTTP and SSH, and has issues, pull requests with review, CI with registered runners, releases, packages, a container registry, static sites and a code editor in the browser. This page takes you from an empty Linux machine to a running instance with an admin account, a repository, a pull request, a first CI run and a backup. It is the page to start from; the others go deeper.</p>
+<p>It is invite-only. There is no sign-up page. The first account is made on the server with one command, and every account after it comes from an invite. A repository starts private; its owner can widen it to every signed-in account on the server, or to anyone on the internet while the site admin allows public repositories. Contributing to any repository needs an account.</p>
+<h2 id="words-used-in-these-docs">Words used in these docs <a class="anchor" href="#words-used-in-these-docs" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Settings</strong> in the page header is your account's settings: open the round avatar button at the top right, then Settings. It holds your profile, password, two-factor, sessions, SSH keys, access tokens, connected apps and notifications.</li>
+<li><strong>Settings</strong> on a repository is the last tab of that repository's page: General, Collaborators, Branches, Webhooks, Secrets and variables, Environments, Runners and Pages.</li>
+<li><strong>Site admin</strong> is in the same avatar menu, and only for site admins. It manages the whole instance.</li>
+<li><strong>The checkout</strong> is the folder you cloned Codehaven into. Every <code>deploy/...</code> command runs from it.</li>
+<li><strong>sudo.</strong> The setup, start, backup and restore scripts create files owned by the server's user, so they need root: run them with <code>sudo</code>. <code>deploy/compose.sh</code> needs only access to Docker, so it works without <code>sudo</code> if your user is in the <code>docker</code> group.</li>
+<li><strong><code>deploy/compose.sh exec server codehaven ...</code></strong> runs the <code>codehaven</code> command inside the running server container. That is where the admin commands live, so only someone with access to the host can use them.</li>
+</ul>
+<h2 id="what-you-need">What you need <a class="anchor" href="#what-you-need" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Need</th><th scope="col">Why</th></tr></thead><tbody><tr><td>A Linux machine</td><td>The scripts use <code>/proc/meminfo</code>, <code>flock</code>, <code>ss</code> and systemd (for the backup timer). They are not written for macOS or Windows</td></tr><tr><td>Docker Engine with Compose 2.24 or newer and buildx</td><td>Everything runs and builds in containers. The host needs no Rust and no PostgreSQL</td></tr><tr><td><code>git</code>, <code>openssl</code>, <code>curl</code>, <code>python3</code> and iproute2 (the <code>ip</code> command)</td><td><code>setup.sh</code> checks for each and stops with its name if one is missing</td></tr><tr><td>Root, through <code>sudo</code></td><td>The scripts make directories owned by the server's user (uid 10001) and write secrets</td></tr><tr><td>4 GB of memory</td><td><code>setup.sh</code> stops below about 3.8 GB, because the first build compiles the server</td></tr><tr><td>20 GB free where the data lives</td><td><code>CODEHAVEN_DATA_DIR</code>. <code>setup.sh</code> checks it</td></tr><tr><td>Room for Docker's images and build cache</td><td>They live under Docker's data root (<code>/var/lib/docker</code> by default). The first build makes a builder image and compiles the server, and the CI job image comes later. Plan for several more GB there; the figure was not measured. <code>docker system df</code> shows what is used. A watched disk at or over 85 percent full stops builds (<code>CODEHAVEN_DISK_LIMIT</code>)</td></tr><tr><td>Internet access while building</td><td>The builds pull base images, Debian packages, Rust crates and the Rust toolchain</td></tr></tbody></table></div>
+<p><code>make</code> is not needed for any command on this page. It is only for building and testing Codehaven itself.</p>
+<h3 id="docker-on-debian-or-ubuntu">Docker on Debian or Ubuntu <a class="anchor" href="#docker-on-debian-or-ubuntu" aria-label="Link to this section">#</a></h3>
+<p>Install Docker Engine from Docker's own apt repository (follow Docker's instructions for your distribution), with these packages: <code>docker-ce</code>, <code>docker-ce-cli</code>, <code>containerd.io</code>, <code>docker-buildx-plugin</code> and <code>docker-compose-plugin</code>. The <code>docker.io</code> package from a distribution's own repository may lack the buildx or Compose plugin, or have an old Compose; the version checks below tell you. Then check:</p>
+<pre tabindex="0"><code class="language-sh">docker --version
+docker compose version          # 2.24.0 or newer
+docker buildx version
+sudo docker info                # proves Docker is running and you can reach it
+git --version; openssl version; curl --version | head -1; python3 --version; ip -V</code></pre>
+<h2 id="what-works-on-a-trial-and-what-needs-the-real-setup">What works on a trial and what needs the real setup <a class="anchor" href="#what-works-on-a-trial-and-what-needs-the-real-setup" aria-label="Link to this section">#</a></h2>
+<p>You can try Codehaven on loopback with plain <code>http</code> and no domain. Some features need more.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Feature</th><th scope="col">On a trial (<code>http://127.0.0.1:3200</code>)</th><th scope="col">Needs</th></tr></thead><tbody><tr><td>Sign in, repositories, issues, pull requests, review</td><td>Works</td><td>Nothing more</td></tr><tr><td>git over HTTPS and SSH from the same machine</td><td>Works</td><td>Nothing more</td></tr><tr><td>git over SSH from other machines</td><td>No</td><td><code>CODEHAVEN_SSH_BIND</code> on a reachable address and <code>CODEHAVEN_SSH_EXTERNAL</code> set to match, with the port open</td></tr><tr><td>Other people reaching it</td><td>No</td><td>A reachable address, and for the internet a DNS name with TLS</td></tr><tr><td>CI jobs</td><td>The runner starts, but checkout fails: jobs get their code from <code>CODEHAVEN_EXTERNAL_URL</code>, and a job cannot reach a loopback or private address</td><td>A public <code>https</code> name on port 443</td></tr><tr><td>Passkeys</td><td>No: an IP address cannot be a passkey's site</td><td>A domain name over <code>https</code></td></tr><tr><td>Claude connector</td><td>Claude Code on the same machine only</td><td>An <code>https</code> address. Claude on the web, desktop and mobile needs a public one</td></tr><tr><td>Pages</td><td>No</td><td><code>CODEHAVEN_PAGES_HOST</code>, a DNS name and a proxy site for it</td></tr><tr><td>Browser workspace and terminal</td><td>Works on <code>127.0.0.1</code></td><td><code>https</code> at a host name for other people. On plain <code>http</code> away from localhost, drafts cannot be encrypted</td></tr><tr><td>Email (password reset, invites, notifications)</td><td>Off</td><td>SMTP settings</td></tr></tbody></table></div>
+<h2 id="1-get-the-code">1. Get the code <a class="anchor" href="#1-get-the-code" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">git clone https://github.com/aaron777collins/codehaven-forge codehaven
+cd codehaven</code></pre>
+<p>You get the <code>main</code> branch, the newest code. To run a fixed version instead, list the tags with <code>git tag --list</code> and check one out with <code>git checkout &lt;tag&gt;</code>; if there are none, <code>git rev-parse --short=12 HEAD</code> names the commit you run. Each commit builds into its own image tag, so an upgrade is <code>git pull</code> followed by <code>up.sh</code>, and an older commit stays available for rollback.</p>
+<h2 id="2-make-the-settings-file">2. Make the settings file <a class="anchor" href="#2-make-the-settings-file" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">cp .env.example .env</code></pre>
+<p>Edit <code>.env</code>. It holds no secrets, and <a href="configuration.html">Configuration</a> explains every setting. The rules for the file: one <code>KEY=value</code> per line with an upper case name, <code>#</code> starts a comment only at the start of a line, and a value may be wrapped in one pair of single or double quotes, which are removed. Nothing else is interpreted, so a <code>#</code> later on a line is part of the value. A setting that is missing stops the scripts with its name.</p>
+<p>The scripts create the directories you name, as root, so you do not make them yourself. A typical block:</p>
+<pre tabindex="0"><code class="language-sh">CODEHAVEN_PROJECT=codehaven
+CODEHAVEN_DATA_DIR=/srv/codehaven/data           # database, repositories, blobs, logs, master key
+CODEHAVEN_SECRETS_DIR=/srv/codehaven/secrets     # database password, made by setup.sh
+CODEHAVEN_BACKUP_DIR=/srv/codehaven/backups      # outside the checkout
+CODEHAVEN_BUILD_ROOT=/srv/codehaven              # build locks and run marks</code></pre>
+<h3 id="a-trial-on-one-machine">A trial on one machine <a class="anchor" href="#a-trial-on-one-machine" aria-label="Link to this section">#</a></h3>
+<pre tabindex="0"><code class="language-sh">CODEHAVEN_EXTERNAL_URL=http://127.0.0.1:3200
+CODEHAVEN_PROXY=none
+CODEHAVEN_TRUSTED_PROXIES='[]'
+CODEHAVEN_HTTP_BIND=127.0.0.1:3200
+CODEHAVEN_SSH_BIND=127.0.0.1:2222
+CODEHAVEN_SSH_EXTERNAL=127.0.0.1:2222</code></pre>
+<p>Open <code>http://127.0.0.1:3200</code> on that machine, or through an <code>ssh -L 3200:127.0.0.1:3200</code> tunnel from yours. The address you open must match <code>CODEHAVEN_EXTERNAL_URL</code> exactly, or sign-in forms answer "Request blocked: the origin does not match this server."</p>
+<h3 id="a-real-instance-with-caddy">A real instance with Caddy <a class="anchor" href="#a-real-instance-with-caddy" aria-label="Link to this section">#</a></h3>
+<p>Point a DNS name at the machine, pick a free private /24 for the link between Caddy and the server, and set:</p>
+<pre tabindex="0"><code class="language-sh">CODEHAVEN_EXTERNAL_URL=https://code.example.com
+CODEHAVEN_PROXY=caddy
+CODEHAVEN_SITE_HOST=code.example.com
+CODEHAVEN_EDGE_SUBNET=10.20.16.0/24
+CODEHAVEN_TRUSTED_PROXIES='["10.20.16.0/24"]'</code></pre>
+<p>To choose the subnet, list what the host already uses and take a range that is not there: <code>ip route</code> and <code>docker network inspect $(docker network ls -q) --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'</code>. The same value goes into both <code>CODEHAVEN_EDGE_SUBNET</code> and <code>CODEHAVEN_TRUSTED_PROXIES</code>, which is a JSON list of network strings, so it keeps its double quotes inside single quotes. Only a peer in that list may tell the server a client's real address. Caddy gets the certificate for <code>CODEHAVEN_SITE_HOST</code> on its own. Ports 80 and 443 must be free.</p>
+<p>For git over SSH from other machines also set <code>CODEHAVEN_SSH_BIND=0.0.0.0:2222</code> and <code>CODEHAVEN_SSH_EXTERNAL=code.example.com:2222</code> (the host people connect to, with the port), and open the port in your firewall. The proxy does not carry SSH. Behind your own proxy, see <a href="configuration.html">Configuration</a>, "The proxy".</p>
+<p>Where settings live besides this file is explained at the top of <a href="configuration.html">Configuration</a>.</p>
+<h2 id="3-set-up-and-start">3. Set up and start <a class="anchor" href="#3-set-up-and-start" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/setup.sh
+sudo bash deploy/prod/up.sh</code></pre>
+<p><code>setup.sh</code> checks the host, makes the directories, and writes the database credentials into <code>CODEHAVEN_SECRETS_DIR</code>. It never prints them. It is safe to run again. <code>up.sh</code> builds the images, starts the instance, waits for the server to be healthy, runs a smoke check and prints the published ports. The first build compiles the server and takes a while. The server applies its own database migrations as it starts and makes its master key on first start.</p>
+<h3 id="check-that-it-works">Check that it works <a class="anchor" href="#check-that-it-works" aria-label="Link to this section">#</a></h3>
+<p>The server's port is published on <code>CODEHAVEN_HTTP_BIND</code> in all three proxy modes, so this works whichever you chose:</p>
+<pre tabindex="0"><code class="language-sh">deploy/compose.sh ps
+curl -fsS http://127.0.0.1:3200/healthz        # prints: ok</code></pre>
+<p>With <code>caddy</code>, ports 80 and 443 are also published, so check from outside too: <code>curl -fsS https://code.example.com/healthz</code>. With <code>network</code>, your own proxy sends to <code>&lt;alias&gt;:3200</code>, so check through the proxy's address. Then run the outside check against your public address:</p>
+<pre tabindex="0"><code class="language-sh">bash deploy/dev/public-smoke.sh https://code.example.com</code></pre>
+<p>It makes read-only requests and prints one line per check. A good run looks like:</p>
+<pre tabindex="0"><code>ok    TLS is valid and /healthz is 200
+ok    /healthz says ok and nothing else
+ok    header content-security-policy
+...
+public smoke: all checks passed</code></pre>
+<p>Any line that starts with <code>FAIL</code> ends the run with <code>public smoke: FAILED</code>. <a href="troubleshooting.html">Troubleshooting</a> explains the common ones.</p>
+<h2 id="4-make-the-first-admin">4. Make the first admin <a class="anchor" href="#4-make-the-first-admin" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/first-admin.sh alice alice@example.com</code></pre>
+<p>This makes the account <code>alice</code> at once, an admin who may run CI, with no password yet, and prints a link. The link starts with <code>CODEHAVEN_EXTERNAL_URL</code>, so if that setting is wrong the link is too. It works once and lasts one hour. Open it and choose a password: 12 to 128 characters, not easy to guess, and without your username or email name in it. You are then signed in.</p>
+<p><strong>Two-factor is not part of that page.</strong> It is turned on afterwards, in Settings, Two-factor and security. Site admins are reminded: until two-factor is on, a banner says "Turn on two-factor sign-in to use the admin pages." and Site admin answers "Turn on two-factor sign-in in Settings before using the admin pages." Connecting Claude needs it as well. Choose "Set up an authenticator app", scan the QR code (or type the key) into an authenticator app, enter the code, and keep the ten recovery codes somewhere safe. They are shown once and are the way back in if you lose the app.</p>
+<p>If the link expires before you use it, the account already exists, so <code>first-admin.sh</code> refuses to run again. Make a new link:</p>
+<pre tabindex="0"><code class="language-sh">deploy/compose.sh exec server codehaven admin reset-password alice</code></pre>
+<p>The same command is the way back in if you, as the only admin, forget your password. It signs the account out everywhere and prints a new one-hour link. It does not turn two-factor off, so keep the recovery codes.</p>
+<h2 id="5-back-up-now">5. Back up now <a class="anchor" href="#5-back-up-now" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/backup.sh</code></pre>
+<p>It prints the path of one archive under <code>CODEHAVEN_BACKUP_DIR</code>. The archive holds the database, the repositories and the server's master key, so it is as sensitive as the instance. It sits on the same disk as the instance, so it does not survive losing that disk: copy it to another machine, encrypted. Then set up a daily schedule with <code>sudo bash deploy/prod/backup-timer.sh install</code>, and try a restore once. <a href="operations.html">Running an instance</a> has the details, including an encrypted copy sent off the host for you.</p>
+<h2 id="6-your-first-repository">6. Your first repository <a class="anchor" href="#6-your-first-repository" aria-label="Link to this section">#</a></h2>
+<p>Choose New repository (the plus menu, or <code>/new</code>). Name it <code>demo</code>, leave it private, and leave "Add a README file" unticked to see the empty-repository case, or tick it to start with a commit.</p>
+<h3 id="push-over-https">Push over HTTPS <a class="anchor" href="#push-over-https" aria-label="Link to this section">#</a></h3>
+<p>Make an access token: avatar menu, Settings, Access tokens. Name it, tick the <strong>Repositories</strong> scope, and also tick <strong>Workflows</strong> if you will push a file under <code>.codehaven/workflows/</code> (step 8 does). Copy the token when it is shown, because it is shown once. Use it as the password; your username stays the same.</p>
+<p>An empty repository shows the commands. With a new local folder:</p>
+<pre tabindex="0"><code class="language-sh">git init -b main
+echo "# demo" &gt; README.md
+git add README.md
+git commit -m "First commit"
+git remote add origin https://code.example.com/alice/demo.git
+git push -u origin main          # username: alice   password: the token</code></pre>
+<p>The first branch pushed becomes the default branch (<code>main</code>, then <code>master</code>, then the first by name). If you ticked "Add a README file", clone it instead: <code>git clone https://code.example.com/alice/demo.git</code>.</p>
+<p>To stop typing the token, store it with a credential helper, for example <code>git config --global credential.helper store</code> (plain text on disk) or your system's keychain helper. A token expires after the time you chose, 90 days by default. The symptom is a push that fails with 401 or "Authentication failed" on something that worked before. Make a new token at the same page and push again; git may need the old stored one removed (<code>git credential reject</code>, or edit your credential store). An account with two-factor on cannot use its password for git, only a token.</p>
+<h3 id="push-over-ssh">Push over SSH <a class="anchor" href="#push-over-ssh" aria-label="Link to this section">#</a></h3>
+<p>Add a public key: avatar menu, Settings, SSH keys, paste the contents of <code>~/.ssh/id_ed25519.pub</code> (make one with <code>ssh-keygen -t ed25519</code>). The repository page shows the SSH address. On a trial, or with any port other than 22, it has this exact form, user <code>git</code> always:</p>
+<pre tabindex="0"><code>ssh://git@127.0.0.1:2222/alice/demo.git</code></pre>
+<p>On port 22 it is <code>git@host:alice/demo.git</code>. The host and port come from <code>CODEHAVEN_SSH_EXTERNAL</code>, with or without a port (no port means 22). Test the connection before cloning:</p>
+<pre tabindex="0"><code class="language-sh">ssh -T -p 2222 git@127.0.0.1</code></pre>
+<p>The first time, ssh asks whether to trust the server: "The authenticity of host '[127.0.0.1]:2222' can't be established. ED25519 key fingerprint is SHA256:... Are you sure you want to continue connecting (yes/no)?" Answer <code>yes</code>. The server makes that host key on first start and keeps it with its other secrets, so it does not change on restart or after a restore. A good key then prints "Hi alice! You have signed in, but Codehaven does not give shell access. Use git over SSH." Then <code>git clone ssh://git@127.0.0.1:2222/alice/demo.git</code> works.</p>
+<h2 id="7-your-first-issue-and-pull-request">7. Your first issue and pull request <a class="anchor" href="#7-your-first-issue-and-pull-request" aria-label="Link to this section">#</a></h2>
+<ol>
+<li>
+<p>In the repository, open Issues, then New issue. Give it a title and a description and submit it. It is <code>#1</code>.</p>
+</li>
+<li>
+<p>Make a change on a branch and push it:</p>
+<pre tabindex="0"><code class="language-sh">git switch -c add-greeting
+echo "hello" &gt; greeting.txt
+git add greeting.txt
+git commit -m "Add a greeting"
+git push -u origin add-greeting</code></pre>
+</li>
+<li>
+<p>Open Pull requests, then New pull request. Choose base <code>main</code> and compare <code>add-greeting</code>, write a title, and create it.</p>
+</li>
+<li>
+<p>Open the pull request and choose Merge pull request (choose a method if asked).</p>
+</li>
+</ol>
+<p>A new repository has no branch protection, so nothing blocks you: as the owner you can merge your own pull request, with no approvals needed. The rules come from Settings, Branches on the repository (for example, "Required approvals"); once a rule requires approvals, your own approval never counts. See <a href="pull-requests.html">Issues and pull requests</a>.</p>
+<h2 id="8-your-first-ci-run">8. Your first CI run <a class="anchor" href="#8-your-first-ci-run" aria-label="Link to this section">#</a></h2>
+<p>CI needs a runner. This takes some minutes the first time, because the job image is built once.</p>
+<ol>
+<li>
+<p>In the browser, open Site admin, Runners, and choose New registration token. Copy the token; it is shown once, works once and lasts 60 minutes. (Or: <code>deploy/compose.sh exec server codehaven admin runner-token</code>.)</p>
+</li>
+<li>
+<p>On the host, from the checkout, register the runner:</p>
+<pre tabindex="0"><code class="language-sh">HAVEN_RUNNER_TOKEN=&lt;token&gt; sudo -E bash deploy/prod/ci-up.sh register runner-1</code></pre>
+<p><code>sudo</code> normally drops your environment, so <code>-E</code> is what carries <code>HAVEN_RUNNER_TOKEN</code> through; the token stays out of the process list. This saves the runner's credential.</p>
+</li>
+<li>
+<p>Start CI:</p>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/ci-up.sh</code></pre>
+<p>This starts <strong>dind</strong>, a Docker daemon in its own container ("Docker in Docker") where only CI jobs run, so the host's Docker is never touched. It builds the job image <code>codehaven-job:trixie</code> (Debian with git, a C toolchain, Node, Python and Rust) if it is missing, which is the slow part on a first run and needs the internet, then loads the image into dind and starts the runner. It is safe to run again.</p>
+</li>
+<li>
+<p>Confirm it is <strong>Online</strong>: Site admin, Runners shows <code>runner-1</code> with the status Online, or run <code>deploy/compose.sh exec server codehaven admin runners</code>, which prints the status <code>online</code>.</p>
+</li>
+<li>
+<p>In your <code>demo</code> clone, make the file <code>.codehaven/workflows/hello.yml</code>:</p>
+<pre tabindex="0"><code class="language-yaml">name: hello
+on: [push, workflow_dispatch]
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "hello from CI"</code></pre>
+</li>
+<li>
+<p>Commit and push it (<code>git add .codehaven &amp;&amp; git commit -m "Add a workflow" &amp;&amp; git push</code>). Pushing a workflow file needs the Workflows scope on your token. Without it the push is refused: "This changes .codehaven/workflows, which runs as CI. A token needs the workflow scope to do that." Make a new token with the scope.</p>
+</li>
+<li>
+<p>Open the repository's Actions tab. The run <code>hello</code> appears, then turns green with a check mark. Open it, then the job, to see <code>hello from CI</code> in the log.</p>
+</li>
+</ol>
+<p>Your account needs the "Can run CI" role. The first admin has it, so there is nothing to do here.</p>
+<p>To prove that CI can fetch your code, add <code>- uses: actions/checkout@v4</code> as the first step and <code>- run: ls</code> after it, and push. If checkout fails, the job cannot reach <code>CODEHAVEN_EXTERNAL_URL</code>: see <a href="troubleshooting.html">Troubleshooting</a>.</p>
+<p>What CI needs from the network: the built-in actions (<code>checkout</code>, <code>cache</code>, <code>upload-artifact</code>, <code>download-artifact</code>) and <code>run:</code> steps need only the server's public address. Any other action is fetched by the server from <code>github.com</code>, so the server needs outbound internet for those, and a step that installs packages needs the internet from the job. Images for <code>services:</code> and <code>container:</code> are pulled by the job daemon from the registry they name. Jobs cannot reach private networks or the host's own addresses other than tcp/443. <a href="using-ci.html">Using CI</a> has the rest.</p>
+<h2 id="9-invite-people">9. Invite people <a class="anchor" href="#9-invite-people" aria-label="Link to this section">#</a></h2>
+<p>Every account after the first comes from an invite. In the browser: Site admin, Invites, Create an invite. Or on the server:</p>
+<pre tabindex="0"><code class="language-sh">deploy/compose.sh exec server codehaven admin invite create --email bob@example.com</code></pre>
+<p>The options are: an email address (the account must then use it), "They can manage the whole server" (site admin), "Their pushes may run workflows on this server's runners" (CI permission), an organization and team to join, a note for yourself, and how long the link works (1 hour to 30 days, 7 days by default). You do not need mail set up: Codehaven shows or prints the link and you send it yourself, by chat or email. The link works once. The invitee opens it, picks a username and a password, and has an account.</p>
+<h2 id="10-public-repositories">10. Public repositories <a class="anchor" href="#10-public-repositories" aria-label="Link to this section">#</a></h2>
+<p>They are off until a site admin turns them on. Either Site admin, Settings, "Allow public repositories", or:</p>
+<pre tabindex="0"><code class="language-sh">deploy/compose.sh exec server codehaven admin public-repos on</code></pre>
+<p>Turning it on makes nothing public. The owner of a repository then chooses Public at Settings, General, Visibility. Turning it off lowers every public repository to internal. See <a href="repositories.html">Repositories</a>.</p>
+<h2 id="where-to-go-next">Where to go next <a class="anchor" href="#where-to-go-next" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">You want</th><th scope="col">Read</th></tr></thead><tbody><tr><td>Backups on a schedule, upgrades, rollback</td><td><a href="operations.html">Running an instance</a></td></tr><tr><td>Every setting explained</td><td><a href="configuration.html">Configuration</a></td></tr><tr><td>Workflows, runners, secrets</td><td><a href="using-ci.html">Using CI</a></td></tr><tr><td>Mail for password resets and invites</td><td><a href="configuration.html">Configuration</a>, "Settings the env file does not carry"</td></tr><tr><td>A static site from a branch</td><td><a href="pages.html">Pages</a></td></tr><tr><td>Claude as a connected app</td><td><a href="connector.html">The Claude connector</a></td></tr><tr><td>Something went wrong</td><td><a href="troubleshooting.html">Troubleshooting</a></td></tr></tbody></table></div>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="next" href="configuration.html"><small>Next</small>Configuration</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/getting-started.md" rel="noopener">docs/getting-started.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#words-used-in-these-docs">Words used in these docs</a></li><li class="l2"><a href="#what-you-need">What you need</a></li><li class="l3"><a href="#docker-on-debian-or-ubuntu">Docker on Debian or Ubuntu</a></li><li class="l2"><a href="#what-works-on-a-trial-and-what-needs-the-real-setup">What works on a trial and what needs the real setup</a></li><li class="l2"><a href="#1-get-the-code">1. Get the code</a></li><li class="l2"><a href="#2-make-the-settings-file">2. Make the settings file</a></li><li class="l3"><a href="#a-trial-on-one-machine">A trial on one machine</a></li><li class="l3"><a href="#a-real-instance-with-caddy">A real instance with Caddy</a></li><li class="l2"><a href="#3-set-up-and-start">3. Set up and start</a></li><li class="l3"><a href="#check-that-it-works">Check that it works</a></li><li class="l2"><a href="#4-make-the-first-admin">4. Make the first admin</a></li><li class="l2"><a href="#5-back-up-now">5. Back up now</a></li><li class="l2"><a href="#6-your-first-repository">6. Your first repository</a></li><li class="l3"><a href="#push-over-https">Push over HTTPS</a></li><li class="l3"><a href="#push-over-ssh">Push over SSH</a></li><li class="l2"><a href="#7-your-first-issue-and-pull-request">7. Your first issue and pull request</a></li><li class="l2"><a href="#8-your-first-ci-run">8. Your first CI run</a></li><li class="l2"><a href="#9-invite-people">9. Invite people</a></li><li class="l2"><a href="#10-public-repositories">10. Public repositories</a></li><li class="l2"><a href="#where-to-go-next">Where to go next</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

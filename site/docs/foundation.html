@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What the foundation stream provides | Codehaven</title>
+<meta name="description" content="This is the working guide for every other stream: the interfaces you build on, where to put your code, and how to build and test.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html" aria-current="page">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html" aria-current="page">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#your-first-ten-minutes">Your first ten minutes</a></li><li class="l2"><a href="#the-dependency-rule">The dependency rule</a></li><li class="l2"><a href="#contracts">Contracts</a></li><li class="l3"><a href="#each-crates-entry-points">Each crate's entry points</a></li><li class="l3"><a href="#the-gate-your-routes-are-private-until-listed">The gate: your routes are private until listed</a></li><li class="l3"><a href="#database">Database</a></li><li class="l3"><a href="#runner-protocol">Runner protocol</a></li><li class="l2"><a href="#running-the-stack">Running the stack</a></li><li class="l2"><a href="#what-is-deliberately-not-here">What is deliberately not here</a></li></ul></div></details>
+<article class="prose">
+<h1 id="what-the-foundation-stream-provides">What the foundation stream provides <a class="anchor" href="#what-the-foundation-stream-provides" aria-label="Link to this section">#</a></h1>
+<p>This is the working guide for every other stream: the interfaces you build on, where to put your
+code, and how to build and test. <a href="architecture.html"><code>ARCHITECTURE.md</code></a> has the design and <a href="roadmap.html"><code>ROADMAP.md</code></a> the plan.
+When this file disagrees with them, fix whichever is wrong in the same commit.</p>
+<blockquote>
+<p>Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at <a href="getting-started.html">Getting started</a>.</p>
+</blockquote>
+<h2 id="your-first-ten-minutes">Your first ten minutes <a class="anchor" href="#your-first-ten-minutes" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">cp .env.example .env                     # once, in the main checkout: CODEHAVEN_BUILD_ROOT at least
+git worktree add .worktrees/&lt;stream&gt; -b stream/&lt;stream&gt; main
+make STREAM=&lt;stream&gt; test P=&lt;your-crate&gt; # builds and tests in the builder container</code></pre>
+<p><code>make</code> is a thin wrapper over the build scripts in <code>deploy/dev/</code>. Builds run on this machine by
+default (<code>deploy/dev/local.sh</code>). Set <code>CH_HOST</code> and <code>CH_REMOTE_ROOT</code> (in the environment, or in
+the untracked <code>deploy/dev/local.env</code>; see <code>local.env.example</code>) and the same targets run on that
+host over ssh instead: <code>deploy/dev/remote.sh</code> rsyncs your worktree to
+<code>&lt;CH_REMOTE_ROOT&gt;/streams/&lt;stream&gt;</code> first. Nothing picks a host for you. Either way the command
+runs in the <code>codehaven-builder</code> container against a throwaway Postgres: the wrapper checks disk,
+takes one of the build slots (<code>CODEHAVEN_BUILD_SLOTS</code>, default 3) and starts the container, so
+the machine needs Docker but no Rust. The first build also makes the builder image, which is
+slow once.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Task</th><th scope="col">Command (in your worktree)</th></tr></thead><tbody><tr><td>Test one crate</td><td><code>make STREAM=git test P=ch-git</code></td></tr><tr><td>Test everything</td><td><code>make STREAM=git test</code></td></tr><tr><td>Lint</td><td><code>make STREAM=git lint P=ch-git</code></td></tr><tr><td>Formatting</td><td><code>make STREAM=git fmt</code></td></tr><tr><td>The merge gate</td><td><code>make STREAM=git ci</code> (fmt, clippy <code>-D warnings</code>, <code>.sqlx</code> fresh, build, nextest)</td></tr><tr><td>After a query or migration change</td><td><code>make STREAM=git sqlx</code> (refreshes <code>.sqlx/</code>, fetches it back)</td></tr><tr><td>Any command in the builder</td><td><code>CH_FETCH=".sqlx" bash deploy/dev/local.sh &lt;stream&gt; "cargo ..."</code> (or <code>remote.sh</code>, when building over ssh)</td></tr><tr><td>End-to-end run</td><td><code>make e2e E2E_TAG=test-x</code> (steps 0-1 by default, <code>STEPS=0-19</code> for the whole run)</td></tr><tr><td>Runner executor tests (real Docker)</td><td><code>make STREAM=runner docker-test</code> (see <a href="runner.html"><code>docs/runner.md</code></a>)</td></tr></tbody></table></div>
+<p>Inside the builder: <code>DATABASE_URL</code> points at <code>pg-test</code> (tmpfs, <code>#[sqlx::test]</code> makes one
+database per test), <code>SQLX_OFFLINE=true</code> uses the committed <code>.sqlx/</code>, <code>sccache</code> and the cargo
+registry are shared volumes, and <code>/target</code> is a per-stream volume. The first build of a stream
+is slow, later ones are fast.</p>
+<p>When you add or change a <code>sqlx::query!</code> and have no <code>.sqlx/</code> entry yet, build once with
+<code>SQLX_OFFLINE=false</code> (the database is migrated for you by <code>cargo xtask db-prepare</code>).</p>
+<h2 id="the-dependency-rule">The dependency rule <a class="anchor" href="#the-dependency-rule" aria-label="Link to this section">#</a></h2>
+<p>Domain crates (<code>ch-git</code>, <code>ch-ssh</code>, <code>ch-registry</code>, <code>ch-auth</code>, <code>ch-notify</code>, <code>ch-collab</code>, <code>ch-ci</code>,
+<code>ch-web</code>) depend only on <code>ch-core</code>, <code>ch-db</code>, <code>ch-api-types</code> and the pure <code>ch-workflow</code> and
+<code>ch-render</code>. They never depend on each other. When collab needs a merge it calls
+<code>ch_core::services::GitService</code>. Only <code>crates/codehaven</code> knows every crate.</p>
+<h2 id="contracts">Contracts <a class="anchor" href="#contracts" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Where</th><th scope="col">What</th></tr></thead><tbody><tr><td><code>ch_core::ids</code></td><td><code>UserId</code>, <code>RepoId</code>, ... newtypes over <code>i64</code>, with sqlx and serde support</td></tr><tr><td><code>ch_core::actor</code></td><td><code>Actor</code> (<code>Anonymous</code>, <code>User</code>, <code>Token</code>, <code>Job</code>, <code>Runner</code>, <code>System</code>), <code>Permission</code>, <code>Scopes</code>. <code>Actor::is_site_admin()</code> needs a session with two-factor</td></tr><tr><td><code>ch_core::error</code></td><td><code>Error</code> and its GitHub-shaped <code>IntoResponse</code>. Private repos you cannot read are <code>NotFound</code></td></tr><tr><td><code>ch_core::services</code></td><td>Every service trait. <code>NotBuilt</code> (in <code>ch_core::not_built</code>) implements them all and fails closed. <code>GitTransport</code> is how ch-ssh and smart HTTP start git (added by the git stream)</td></tr><tr><td><code>ch_core::model</code></td><td>Plain data passed between services. No URLs: the REST edge adds them</td></tr><tr><td><code>ch_core::events</code></td><td><code>DomainEvent</code>, the outbox payload</td></tr><tr><td><code>ch_core::audit</code></td><td><code>AuditEvent</code> and the list of action names in <code>audit::action</code></td></tr><tr><td><code>ch_core::access</code></td><td><code>PUBLIC_ROUTES</code>, <code>classify</code>, <code>actor_accepted</code>, the <code>CurrentActor</code> extractor</td></tr><tr><td><code>ch_core::state</code></td><td><code>AppState</code>, <code>AppStateBuilder</code>, <code>Install</code>, <code>Worker</code>, <code>Extensions</code> (a typed map: <code>build</code> inserts a crate's concrete service, its routes and workers read it back with <code>state.ext.get::&lt;T&gt;()</code>)</td></tr><tr><td><code>ch_core::identity</code></td><td>Sign-in, sessions, two-factor, orgs, directory traits for the web layer, and <code>CsrfToken</code>. See <a href="identity.html"><code>docs/identity.md</code></a></td></tr><tr><td><code>ch_core::web_contract</code></td><td>Added by the web stream: <code>Sessions</code>, <code>Directory</code>, <code>Tracker</code>, <code>Pipelines</code>, their models, <code>RepoUpdate</code> and <code>BlameHunk</code>. <code>NotBuilt</code> implements them, so the identity, collab and ci streams fill them in. See docs/web.md</td></tr><tr><td><code>ch_core::text::refs</code></td><td><code>@user</code>, <code>#12</code>, <code>owner/repo#12</code>, shas and closing keywords</td></tr><tr><td><code>ch_core::net</code></td><td>Client IP from <code>X-Forwarded-For</code>, trusted proxies only</td></tr><tr><td><code>ch_db</code></td><td><code>connect</code>, <code>MIGRATOR</code>, <code>PgAudit</code>, <code>PgEventBus</code>, <code>FsBlobStore</code>, <code>jobs::JobQueue</code>, <code>sealing::MasterKey</code>, <code>tokens</code></td></tr><tr><td><code>ch_api_types</code></td><td>REST v3 DTOs per group, webhook payloads, <code>runner</code> protocol</td></tr><tr><td><code>ch_testkit</code></td><td><code>TestEnv</code> (users, repos, collaborators, an <code>AppStateBuilder</code>), <code>TempRepo</code>, actor builders</td></tr></tbody></table></div>
+<h3 id="each-crates-entry-points">Each crate's entry points <a class="anchor" href="#each-crates-entry-points" aria-label="Link to this section">#</a></h3>
+<p>Every domain crate already has these, so wiring never changes. Fill in the bodies.</p>
+<pre tabindex="0"><code class="language-rust">pub fn api_routes() -&gt; axum::Router&lt;AppState&gt;;          // mounted under /api/v3
+pub fn workers(state: &amp;AppState) -&gt; Vec&lt;Worker&gt;;        // background loops, stop on the token
+pub fn build(b: &amp;AppStateBuilder) -&gt; Result&lt;XServices&gt;; // XServices: Install</code></pre>
+<p>Extra entry points: <code>ch_git::http_routes()</code> (smart HTTP, merged at the root),
+<code>ch_ci::runner_routes()</code> (under <code>/api/runner/v1</code>), <code>ch_registry::registry_routes()</code> (at <code>/v2</code>),
+<code>ch_web::web_routes()</code> (at the root, replaces the placeholder). Build order in
+<code>wiring::install_services</code>: auth, notify, git, collab, ci. A service that needs another reads it
+from the builder: <code>b.authz.clone()</code>, <code>b.git.clone()</code>.</p>
+<h3 id="the-gate-your-routes-are-private-until-listed">The gate: your routes are private until listed <a class="anchor" href="#the-gate-your-routes-are-private-until-listed" aria-label="Link to this section">#</a></h3>
+<p><code>crates/codehaven/src/gate.rs</code> wraps the whole router. A signed-out request reaches a handler
+only if its method and path are in <code>ch_core::access::PUBLIC_ROUTES</code>. Everything else gets the
+rejection for its kind (page: 303 to <code>/login?next=</code>, API and runner: 401 JSON, git: 401 with a
+Basic challenge, registry: 401 with a Bearer challenge). It also limits which credential opens
+which door: a session opens pages and the API, Basic and tokens open the API, git and registry,
+a job token opens the runner API and git, a runner credential opens the runner API only.</p>
+<p>Reads on public repositories are the one exception, in <code>ch_core::access::PUBLIC_REPO_ROUTES</code>:
+the gate admits those only while the site admin allows public repositories and the repository
+the request names is public, and <code>Authz</code> must still say <code>View</code>.</p>
+<p>You do not write any auth plumbing for "signed out". Your handler gets the caller with
+<code>CurrentActor(actor): CurrentActor</code> and calls <code>Authz</code>. To make a route public you edit
+<code>PUBLIC_ROUTES</code>, which only Claude reviews, and delete its line from <code>PUBLIC_NOT_BUILT_YET</code> in
+<code>crates/codehaven/tests/anonymous_surface.rs</code> if it was waiting there.</p>
+<p><code>crates/codehaven/tests/anonymous_surface.rs</code> walks every route the router has registered, with
+every method, signed out. A new route is covered the moment you register it. Run it with
+<code>make STREAM=&lt;s&gt; test P=codehaven</code>.</p>
+<h3 id="database">Database <a class="anchor" href="#database" aria-label="Link to this section">#</a></h3>
+<p><code>crates/ch-db/migrations/</code> is the whole v1 schema. Need a column or table? Open a small pull
+request against foundation with the migration and the refreshed <code>.sqlx/</code>. Rules: ids are
+<code>BIGINT GENERATED ALWAYS AS IDENTITY</code>, names people type are <code>citext</code>, times are <code>timestamptz</code>,
+tokens are stored as 32 byte SHA-256 hashes (a CHECK enforces the length).</p>
+<p>Write queries with <code>sqlx::query!</code> so a schema change is a compile error. In tests use
+<code>#[sqlx::test(migrator = "ch_db::MIGRATOR")]</code> and <code>ch_testkit::TestEnv::new(pool)</code>.</p>
+<p>Emit events and audit records in the same transaction as the change:</p>
+<pre tabindex="0"><code class="language-rust">let mut tx = state.db.begin().await?;
+// ... change rows ...
+state.audit.record(&amp;mut tx, AuditEvent::new(&amp;actor, &amp;client, action::TOKEN_CREATED, Outcome::Success).target("token", id)).await?;
+state.events.emit(&amp;mut tx, DomainEvent::RepoCreated { repo_id, actor: Some(user) }).await?;
+tx.commit().await?;</code></pre>
+<p><code>emit</code> takes a transaction-scoped advisory lock so event ids commit in order and a consumer's
+cursor never skips one. Keep transactions that emit short.</p>
+<h3 id="runner-protocol">Runner protocol <a class="anchor" href="#runner-protocol" aria-label="Link to this section">#</a></h3>
+<p><code>ch_api_types::runner</code> is the contract between <code>ch-ci</code> and <code>haven-runner</code>. Change it in a small
+pull request announced to both streams. Secrets in a job payload are only the ones the job
+references, never for fork pull request jobs.</p>
+<h2 id="running-the-stack">Running the stack <a class="anchor" href="#running-the-stack" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">make up                     # builds the images, starts the instance the .env describes
+make e2e E2E_TAG=test-x     # throwaway stack in a project of its own, tears down after
+make down                   # stop it, keep the data
+make clean                  # remove what Codehaven's builds made (never `docker system prune`)</code></pre>
+<p>With no <code>CH_HOST</code> these run on this machine; with one they run on the build host over ssh. The
+first run on a host is <code>sudo bash deploy/prod/setup.sh</code> (directories, permissions, database
+credentials), then <code>deploy/prod/up.sh</code>; <a href="integration.html"><code>docs/integration.md</code></a> walks the whole first run, and
+<code>.env.example</code> lists every setting. By default the web server and ssh bind to loopback only
+(127.0.0.1:3200 and :2222).</p>
+<p>Reach the instance from another machine with <code>ssh -L 3200:127.0.0.1:3200 &lt;host&gt;</code>, then
+<code>http://127.0.0.1:3200</code>. Sign-in forms only accept the public origin (ARCHITECTURE.md 7.6), so a
+browser sign-in on the tunnel needs <code>CODEHAVEN_EXTERNAL_URL=http://127.0.0.1:3200</code> in the compose
+environment.</p>
+<p>The first admin account is created on the server, never from the web:</p>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/first-admin.sh &lt;username&gt; &lt;email&gt;</code></pre>
+<p>It prints a one-time link (valid for 1 hour). The script refuses unless the instance has no
+accounts at all, and it never deletes one; every account after the first comes from an invite
+(<a href="integration.html"><code>docs/integration.md</code></a>).</p>
+<h2 id="what-is-deliberately-not-here">What is deliberately not here <a class="anchor" href="#what-is-deliberately-not-here" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>No sign-up route, no setup page, no proxy-header login, no anonymous read outside public
+repositories, and no anonymous write. Ever.</li>
+<li>Rate limits, lockout, CSRF and the Origin check are built (see <a href="identity.html"><code>docs/identity.md</code></a>). Handlers get the
+caller's address with the <code>ch_core::access::Client</code> extractor.</li>
+<li><code>codehaven hook</code> is the git stream's push pipeline client (<code>ch_git::hooks::client</code>); see <a href="git.html"><code>docs/git.md</code></a>.</li>
+<li>Nothing in <code>ch-web</code> talks to the database or to another domain crate: it calls the service traits only. See docs/web.md.</li>
+</ul>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="runner.html"><small>Previous</small>The runner and the CLI</a><a class="next" href="identity.html"><small>Next</small>Identity</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/foundation.md" rel="noopener">docs/foundation.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#your-first-ten-minutes">Your first ten minutes</a></li><li class="l2"><a href="#the-dependency-rule">The dependency rule</a></li><li class="l2"><a href="#contracts">Contracts</a></li><li class="l3"><a href="#each-crates-entry-points">Each crate's entry points</a></li><li class="l3"><a href="#the-gate-your-routes-are-private-until-listed">The gate: your routes are private until listed</a></li><li class="l3"><a href="#database">Database</a></li><li class="l3"><a href="#runner-protocol">Runner protocol</a></li><li class="l2"><a href="#running-the-stack">Running the stack</a></li><li class="l2"><a href="#what-is-deliberately-not-here">What is deliberately not here</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

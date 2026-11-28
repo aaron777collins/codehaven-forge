@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Running an instance | Codehaven</title>
+<meta name="description" content="What an operator does after the first run (docs/integration.md): look after the settings, take backups, restore, upgrade and roll back.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html" aria-current="page">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html" aria-current="page">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#the-settings">The settings</a></li><li class="l2"><a href="#public-repositories">Public repositories</a></li><li class="l2"><a href="#email">Email</a></li><li class="l2"><a href="#the-proxy">The proxy</a></li><li class="l2"><a href="#pages">Pages</a></li><li class="l2"><a href="#runners">Runners</a></li><li class="l2"><a href="#codehavens-own-repository-and-ci">Codehaven's own repository and CI</a></li><li class="l2"><a href="#the-access-matrix">The access matrix</a></li><li class="l2"><a href="#backups">Backups</a></li><li class="l3"><a href="#a-daily-schedule">A daily schedule</a></li><li class="l3"><a href="#a-copy-off-the-host-optional">A copy off the host (optional)</a></li><li class="l2"><a href="#restoring">Restoring</a></li><li class="l2"><a href="#upgrading">Upgrading</a></li><li class="l2"><a href="#rolling-back">Rolling back</a></li><li class="l2"><a href="#when-something-is-wrong">When something is wrong</a></li><li class="l3"><a href="#fixed-subnets-for-the-instances-networks">Fixed subnets for the instance's networks</a></li></ul></div></details>
+<article class="prose">
+<h1 id="running-an-instance">Running an instance <a class="anchor" href="#running-an-instance" aria-label="Link to this section">#</a></h1>
+<p>What an operator does after the first run (<a href="integration.html"><code>docs/integration.md</code></a>): look after the settings, take
+backups, restore, upgrade and roll back. Every setting is explained in <a href="configuration.html"><code>docs/configuration.md</code></a>, and
+<a href="troubleshooting.html"><code>docs/troubleshooting.md</code></a> lists the failures you are likely to meet with the command to run for each. Every command runs on the host, as root, from the
+checkout. The scripts read one env file; copy <code>.env.example</code> to <code>.env</code> to make it, or keep it
+next to the checkout as <code>../codehaven.env</code>, or point <code>CH_ENV_FILE</code> at it. Use one place only: with
+two candidates the scripts stop and say so.</p>
+<h2 id="the-settings">The settings <a class="anchor" href="#the-settings" aria-label="Link to this section">#</a></h2>
+<p><code>.env.example</code> is the list, with a comment on each setting. The scripts parse the file and never
+run it, so a value cannot hold a command, and a variable set in the shell wins over the file. A
+required setting that is missing stops with its name. The file holds no secrets: the database
+password lives in <code>CODEHAVEN_SECRETS_DIR</code>, written once by <code>setup.sh</code>, and the server's master key
+lives in <code>CODEHAVEN_DATA_DIR/secrets</code>, made by the server on first start.</p>
+<p>Always go through <code>deploy/compose.sh</code> to talk to the instance (<code>deploy/compose.sh ps</code>,
+<code>deploy/compose.sh logs server</code>, <code>deploy/compose.sh exec server codehaven doctor</code>). It loads the
+env file, works out the host's public addresses, adds the proxy file for <code>CODEHAVEN_PROXY</code> and
+passes the project name. Calling <code>docker compose</code> on <code>deploy/compose.yml</code> directly skips all that.</p>
+<h2 id="public-repositories">Public repositories <a class="anchor" href="#public-repositories" aria-label="Link to this section">#</a></h2>
+<p>Public repositories are off until a site admin turns them on, at <code>/admin/settings</code> or with:</p>
+<pre tabindex="0"><code class="language-sh">deploy/compose.sh exec server codehaven admin public-repos status
+deploy/compose.sh exec server codehaven admin public-repos on
+deploy/compose.sh exec server codehaven admin public-repos off</code></pre>
+<p>Turning the switch off lowers every public repository to internal: readable by the signed-in
+accounts of this server and nobody else. Turning it on makes nothing public by itself; each
+repository is widened by its owner on the repository's visibility settings page. When the
+three tiers arrived, repositories that used to be called public became internal; nothing
+became public on its own.</p>
+<p>Before any widening the server rebuilds the repository's git store from its refs, so deleted
+history can no longer be fetched. The old store is kept unreachable for 7 days under
+<code>data/git/_prepublish</code> and then removed.</p>
+<h2 id="email">Email <a class="anchor" href="#email" aria-label="Link to this section">#</a></h2>
+<p>Codehaven sends no mail until <code>[mail.smtp]</code> is set in <code>codehaven.toml</code> (see
+<code>deploy/codehaven.example.toml</code>), or the same keys as <code>CODEHAVEN__MAIL__SMTP__HOST</code> and so on.
+The stock compose file passes neither to the server, so on a <code>deploy/prod</code> install you set them
+with an extra compose file (<a href="configuration.html"><code>docs/configuration.md</code></a>, "Settings the env file does not carry").
+With it set, three things are mailed: a reset link when someone uses "Forgot your password", an
+invite a site admin makes for an email address, and notifications for the people who turn email
+on at Settings, Notifications (off until chosen; each mail holds a title and a link, never the
+text of a comment, and a failed send is tried again up to five times).</p>
+<ul>
+<li>TLS is required. <code>tls = "starttls"</code> is the default, <code>tls = "tls"</code> is for port 465, and
+<code>tls = "none"</code> is accepted only when <code>host</code> is <code>localhost</code>, <code>127.0.0.1</code> or <code>::1</code>.</li>
+<li>The password lives in the file <code>password_file</code> names, read once at start. A username without a
+password file stops the server at start with a message.</li>
+<li>A reset link goes only to the account's primary email, works for an hour and once, and at most
+one is sent per account every ten minutes. Asking for one signs nobody out. Using it signs the
+account out everywhere.</li>
+<li>The answer on the page is the same whether or not an account matched, and it is given before
+the mail goes out.</li>
+</ul>
+<h2 id="the-proxy">The proxy <a class="anchor" href="#the-proxy" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col"><code>CODEHAVEN_PROXY</code></th><th scope="col">What you get</th></tr></thead><tbody><tr><td><code>none</code></td><td>The web server and ssh on the addresses in <code>CODEHAVEN_HTTP_BIND</code> and <code>CODEHAVEN_SSH_BIND</code>, loopback by default. No TLS. For a trial, or for a proxy that runs on the host</td></tr><tr><td><code>network</code></td><td>The server joins the existing Docker network <code>CODEHAVEN_PROXY_NETWORK</code> under the alias <code>CODEHAVEN_PROXY_ALIAS</code>. Your proxy sends to <code>&lt;alias&gt;:3200</code> and you add that site yourself. Codehaven changes nothing in your proxy</td></tr><tr><td><code>caddy</code></td><td>A Caddy in the same project gets the certificate for <code>CODEHAVEN_SITE_HOST</code> and sends to the server. It publishes ports 80 and 443, so the name must point at this machine and both ports must be free</td></tr></tbody></table></div>
+<p>Set <code>CODEHAVEN_TRUSTED_PROXIES</code> to the network your proxy reaches the server from (for <code>caddy</code>,
+<code>CODEHAVEN_EDGE_SUBNET</code>). Only a peer inside it may set <code>X-Forwarded-For</code> and
+<code>X-Forwarded-Proto</code>; with <code>[]</code> the server trusts no one and sees the proxy's address as the
+client. On a Docker network shared with other containers, name the proxy instead: set
+<code>CODEHAVEN_TRUSTED_PROXY_HOSTS</code> to its container name, for example <code>'["caddy"]'</code>, and
+<code>CODEHAVEN_TRUSTED_PROXIES</code> to <code>[]</code>. Then only that container's address is trusted, looked up
+again every 30 seconds, and a neighbour on the network cannot pick its own address for the rate
+limits or the audit log. Your proxy must send every path to the server (including <code>/.well-known/</code>), remove any
+<code>Remote-User</code> style header from the client, and not buffer responses, or live CI logs stall.</p>
+<h2 id="pages">Pages <a class="anchor" href="#pages" aria-label="Link to this section">#</a></h2>
+<p>Codehaven Pages (<a href="design/pages.html"><code>docs/design/pages.md</code></a>) is off until <code>CODEHAVEN_PAGES_HOST</code> names a host, for
+example <code>pages.example.com</code>. Point that name at the server, then give the proxy a site for it that
+drops <code>Cookie</code>, <code>Authorization</code> and identity headers on the way in and <code>Set-Cookie</code> on the way out
+(<code>deploy/Caddyfile.example</code>). The server does the same, and answers every request for that host
+itself, before any app route. The host must not be the app's host or a parent of it; the server
+refuses to start otherwise.</p>
+<p>Full mode (a site admin's switch at <code>/admin/pages</code>) also serves <code>*.pages.example.com</code>. Turn it on
+only after the proxy has a wildcard certificate for that name, which needs a DNS challenge.</p>
+<h2 id="runners">Runners <a class="anchor" href="#runners" aria-label="Link to this section">#</a></h2>
+<p>After a deploy, recreate the runner on the new image and check <code>codehaven admin runners</code>: one online runner,
+and no second registration with the same name that has stopped calling in (revoke it with <code>revoke-runner</code>; the
+web page at Site admin &gt; Runners does the same). A revoked runner stays in the table with a revoked time, which is
+the record that it was removed.</p>
+<p><code>codehaven admin runners</code> lists the registered runners and when each last called in.
+<code>codehaven admin revoke-runner &lt;id&gt;</code> removes one: its credential stops working at once. Both run
+inside the server container, like the other admin commands:</p>
+<pre tabindex="0"><code class="language-sh">docker compose -p &lt;project&gt; exec server codehaven admin runners
+docker compose -p &lt;project&gt; exec server codehaven admin revoke-runner 1</code></pre>
+<h2 id="codehavens-own-repository-and-ci">Codehaven's own repository and CI <a class="anchor" href="#codehavens-own-repository-and-ci" aria-label="Link to this section">#</a></h2>
+<p>Codehaven can build itself (ch-d9s). <code>.codehaven/workflows/ci.yml</code> runs <code>make ci CH_NATIVE=1</code>
+in the builder image with a Postgres service beside it, which is the same gate <code>make ci</code> runs
+on a build host. Once, on the instance that should run it:</p>
+<ol>
+<li>Load the builder image into the runner's Docker daemon: `CODEHAVEN_CI_BUILDER=1 bash
+deploy/prod/ci-up.sh`. It is a few GiB in that daemon's storage.</li>
+<li>Make sure the account that will own the repository may run CI (<code>can_run_ci</code>; Site admin &gt;
+Users, or <code>codehaven admin create-user --can-run-ci</code> for a new one).</li>
+<li>Create an empty private repository for it in the browser (New repository, private, no
+README), and a personal access token with the <code>repo</code> and <code>workflow</code> scopes (Settings &gt;
+Tokens). The <code>workflow</code> scope is what lets a push carry <code>.codehaven/workflows/</code>.</li>
+<li>From a checkout of the source: <code>git remote add haven https://&lt;host&gt;/&lt;owner&gt;/codehaven.git</code>
+and <code>git push haven main</code>, with the token as the password. Nothing is copied from anywhere
+else.</li>
+<li>The push starts the <code>ci</code> workflow on the instance's runner. Later pushes and pull requests
+run it again.</li>
+</ol>
+<p>Without a password or a token: a person with root on the host can do steps 3 and 4 inside the
+server container with the admin command, which makes a private repository for an existing
+account (it never overwrites, and is audited as <code>repo.imported_from_server_path</code>) from a bare
+git repository at a path in the container, and with <code>--run-ci</code> starts the workflows once:</p>
+<pre tabindex="0"><code class="language-sh">git clone --bare &lt;the source checkout&gt; /tmp/codehaven-src.git          # on the host
+docker cp /tmp/codehaven-src.git &lt;server container&gt;:/tmp/codehaven-src.git
+docker exec &lt;server container&gt; codehaven admin repo-import --owner &lt;account&gt; --name codehaven \
+  --from /tmp/codehaven-src.git --run-ci
+docker exec &lt;server container&gt; rm -rf /tmp/codehaven-src.git</code></pre>
+<p>The job takes the source from the instance, so its address must be one a job may reach: the
+public https name does (the runner's Docker daemon lets jobs open tcp/443 to it and nothing else on
+the host). The Postgres service image is pulled from Docker Hub by that daemon the first time.</p>
+<p>Proof, on a throwaway stack (no account, repository or token of a real instance was used): the e2e
+harness's step 26 creates a repository, pushes the whole source of a checkout, and waits for this
+workflow to finish on the stack's own runner. On 2026-11-25 it took 13.7 minutes and <code>make ci</code>
+passed, 2135 of 2135 tests:</p>
+<pre tabindex="0"><code class="language-sh">bash deploy/dev/host.sh &lt;stream&gt; 'CH_STREAM=&lt;stream&gt; bash deploy/dev/release.sh shots-mine'
+bash deploy/dev/host.sh &lt;stream&gt; 'SHOTS_STEPS=0-4,26 SHOTS_DOGFOOD=1 SHOTS_NO_SHOTS=1 bash deploy/dev/shots.sh --tag shots-mine'</code></pre>
+<p><code>SHOTS_JOBS_REACH_SERVER=1</code> is the same fixed address and guard exception without the builder and Postgres
+images. The real-actions steps (35 and 36) need it, and the internet, because the server fetches each action from
+GitHub: <code>SHOTS_STEPS=0-4,35,36 SHOTS_JOBS_REACH_SERVER=1 SHOTS_NO_SHOTS=1 bash deploy/dev/shots.sh --tag shots-mine</code>.</p>
+<p>Step 38 (the acceptance rows step 35 does not run: setup-java, setup-go, setup-ruby, setup-dotnet and
+rust-toolchain, a 1 GiB artifact, a Postgres service reached by port and by name with a <code>nuget push</code> using the job
+token, the cache read order including a fork's pull request, ncipollo/release-action and
+peter-evans/create-pull-request) runs the same way and needs the same two things: <code>SHOTS_STEPS=0-4,38</code>. The
+throwaway server gets 5 GiB of memory for it, because its data directory is memory there.</p>
+<p><code>SHOTS_DOGFOOD=1</code> loads the builder and Postgres images into the stack's daemon, gives the server a
+fixed address on the runners network (<code>deploy/compose.shots-dogfood.yml</code>) and tells the daemon's
+guard (<code>GUARD_ALLOW</code>, never set by the production compose file) to let jobs reach that one address
+and port, because a throwaway server has no public https name.</p>
+<h2 id="the-access-matrix">The access matrix <a class="anchor" href="#the-access-matrix" aria-label="Link to this section">#</a></h2>
+<p><code>tests/access/</code> holds what each credential reaches, as committed tables. The signed-out tables
+(<code>anonymous.*.txt</code>) are checked by <code>public_surface.rs</code>. Every other credential has one
+file (<code>matrix.&lt;credential&gt;.txt</code>), checked by <code>access_matrix.rs</code>: one row per route and method with six
+cells, for a private, an internal and a public repository, each with the owner's contribution limit off and on.
+<code>.</code> is refused, <code>v</code> is answered but the request was not valid, <code>r</code> is answered and no row or ref changed, <code>w</code> is
+answered and a row or ref changed. <code>matrix.routes.txt</code> lists every route the router registers, and a route
+that is not in it fails the build, so a new route cannot arrive without someone reading what each credential does
+with it.</p>
+<p>When a route changes on purpose, regenerate the tables and read the diff before committing it:</p>
+<pre tabindex="0"><code class="language-sh">CH_FETCH=tests/access/.gen bash deploy/dev/remote.sh &lt;stream&gt; \
+  'CH_MATRIX_OUT=/work/tests/access/.gen cargo nextest run -p codehaven --test access_matrix --no-fail-fast'
+python3 tests/access/merge_matrix.py tests/access/.gen</code></pre>
+<p>Besides the tables, the test fails whatever they say when a request answers 5xx, when a GET changes a row, when an
+account with no grant changes anything but issues, comments, reviews, stars and watches, when the contribution limit
+does not hold, when a read-only credential writes, and when a private repository answers a credential with no right
+to it differently from one that does not exist.</p>
+<h2 id="backups">Backups <a class="anchor" href="#backups" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/backup.sh</code></pre>
+<p>It prints the path of one archive under <code>CODEHAVEN_BACKUP_DIR</code> (which must be outside the
+checkout, mode 0600). The archive holds a <code>pg_dump</code> of the database, the git repositories, blobs
+and logs, the server's master key, the database credentials and the env file. That makes it as
+sensitive as the instance: keep it where only you can read it, and encrypt it before it leaves
+the machine. Without the master key, stored secrets cannot be read, which is why it is in the
+archive.</p>
+<p>The server is stopped while the files are copied, so the database and the repositories match,
+and it is started again whatever happens. Expect a pause of seconds to minutes, depending on how
+much data there is. Nothing else is stopped. If anything fails the archive is removed and the
+script says so. Take backups on a schedule with cron or a systemd timer, and test a restore now
+and then: a backup nobody has restored is a hope.</p>
+<h3 id="a-daily-schedule">A daily schedule <a class="anchor" href="#a-daily-schedule" aria-label="Link to this section">#</a></h3>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/backup-timer.sh install</code></pre>
+<p>That installs a systemd timer that runs <code>deploy/prod/backup-daily.sh</code> once a day at 04:17
+local time, up to ten minutes later, and catches up after the host was off. Each run takes one
+backup and then prunes: the newest archive of each of the last 7 days and of each of the last
+4 ISO weeks is kept, the rest is deleted, and nothing else in <code>CODEHAVEN_BACKUP_DIR</code> is ever
+touched. The counts are settings: <code>CODEHAVEN_BACKUP_KEEP_DAILY</code> (default 7) and
+<code>CODEHAVEN_BACKUP_KEEP_WEEKLY</code> (default 4).</p>
+<p>Before the backup the run checks the free space on the disk behind <code>CODEHAVEN_BACKUP_DIR</code>.
+When less than <code>CODEHAVEN_BACKUP_MIN_FREE_MB</code> (default 2048) is free, or less than three
+times the newest archive, or less than twice the data it copies, the run is skipped and writes <code>SKIPPED</code> to <code>backup-daily.log</code> in
+the backup directory, so a nearly full disk does not eat its own backups. Every line of the
+run lands in that log.</p>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/backup-timer.sh status</code></pre>
+<p>shows when the timer fires next and the last 20 lines of the log.</p>
+<p>The timer runs a copy of <code>deploy/</code> taken at install time, kept under
+<code>CODEHAVEN_BUILD_ROOT/backup-tool</code>, so a checkout that is being synced or edited is never
+what runs at night. Run <code>install</code> again after updating the checkout to refresh the copy.
+<code>remove</code> uninstalls the timer and keeps every archive already taken.</p>
+<h3 id="a-copy-off-the-host-optional">A copy off the host (optional) <a class="anchor" href="#a-copy-off-the-host-optional" aria-label="Link to this section">#</a></h3>
+<p>Off by default: nothing is sent anywhere until <code>CODEHAVEN_BACKUP_OFFSITE</code> in the env file
+names a destination. When it does, the daily run encrypts each archive with openssl
+AES-256 and sends only the encrypted <code>.enc</code> file, because the archive holds the instance's
+master key. Two forms:</p>
+<ul>
+<li><code>rsync:&lt;destination&gt;</code>, for example <code>rsync:backup@example.com:/srv/codehaven-backups/</code>.
+Root's ssh key must already be trusted by the destination: the copy goes over BatchMode
+ssh, which never prompts for a password.</li>
+<li><code>s3://&lt;bucket&gt;/&lt;prefix&gt;</code>, for any S3-compatible store. The <code>aws</code> CLI needs its own
+credentials for root; Codehaven never reads or stores them. When the store is not AWS's
+own S3, set <code>CODEHAVEN_BACKUP_OFFSITE_ENDPOINT</code> to its endpoint URL.</li>
+</ul>
+<p>The passphrase lives in the file named by <code>CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE</code>:
+root-only, mode 600, one passphrase. Write it once and keep a copy of it somewhere other
+than this host, because without it the off-site copies cannot be opened. To open one on
+another machine:</p>
+<pre tabindex="0"><code class="language-sh">CODEHAVEN_BACKUP_OFFSITE_PASSPHRASE_FILE=/path/to/passphrase \
+  bash deploy/prod/backup-open.sh &lt;name&gt;.tar.gz.enc &lt;name&gt;.tar.gz</code></pre>
+<p>Each copy is encrypted and then authenticated: a 32 byte HMAC-SHA256 tag (made with a key
+of its own, from the same passphrase) follows the encrypted data. <code>backup-open.sh</code> checks
+the tag first and refuses a copy that was changed, cut short or sealed with another
+passphrase, writing nothing. <code>restore.sh</code> takes a <code>.enc</code> copy directly and does the same
+check before it touches anything. It needs only openssl and python3.</p>
+<p>Codehaven never prunes the remote side: what the destination keeps is the operator's
+retention policy. When a send fails, the run writes <code>OFFSITE FAILED</code> to <code>backup-daily.log</code>
+and exits non-zero, while the local backup and its prune have already happened.</p>
+<p>These archives otherwise stay on the same disk as the instance, so they do not survive
+losing that disk, and a copy off the host is the way to change that.</p>
+<h2 id="restoring">Restoring <a class="anchor" href="#restoring" aria-label="Link to this section">#</a></h2>
+<p>Restore into an empty location. On a new host, use your env file as it is: install the checkout
+and the env file first (the archive holds a copy as <code>codehaven.env.restored</code>). To restore beside a
+running instance, make an env file with a new <code>CODEHAVEN_PROJECT</code>, <code>CODEHAVEN_DATA_DIR</code> and
+<code>CODEHAVEN_SECRETS_DIR</code>, and ports that do not clash. The script refuses only when the project
+already has containers or a directory is not empty. Then:</p>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/restore.sh &lt;archive&gt;
+sudo bash deploy/prod/up.sh</code></pre>
+<p>The script refuses when the project already has containers, or when any data directory, the
+secrets directory or the database directory holds a file. It never overwrites and never deletes.
+The env file saved in the archive is unpacked next to the archive as <code>codehaven.env.restored</code> for
+you to compare with yours; it is not applied. To replace a broken instance in place, move its
+directories aside first (do not delete them until the restored one is checked).</p>
+<h2 id="upgrading">Upgrading <a class="anchor" href="#upgrading" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/backup.sh
+git pull
+sudo bash deploy/prod/up.sh</code></pre>
+<p><code>up.sh</code> builds images for the new commit when it has none, then starts the instance on them, and
+the server applies new database migrations as it starts.</p>
+<p>Before it changes anything, <code>up.sh</code> dumps the database to <code>CODEHAVEN_BACKUP_DIR</code> as
+<code>pre-deploy-&lt;project&gt;-&lt;time&gt;-&lt;tag&gt;.dump</code> (the newest 5 are kept) and tags the image the server runs
+now as <code>codehaven-server:&lt;project&gt;-previous</code>. After the deploy the server has to be healthy within
+<code>CODEHAVEN_DEPLOY_WAIT</code> seconds (default 300) and <code>deploy/dev/public-smoke.sh</code> has to pass against
+<code>CODEHAVEN_SMOKE_URL</code> (default <code>http://CODEHAVEN_HTTP_BIND</code>). If either fails, <code>up.sh</code> starts the
+server again on the previous image, without migrating, and exits with an error that says so. The
+database is never rolled back automatically: the old server runs on it as the new one left it, and
+the dump is there if the data itself needs to go back (see Restoring). Until a later <code>up.sh</code>
+succeeds, every <code>deploy/compose.sh</code> call (a restart, <code>ci-up.sh</code>) keeps running the rolled back
+images without migrating, and says so: the mark is <code>&lt;CODEHAVEN_BUILD_ROOT&gt;/run/&lt;project&gt;.rolled-back</code>.
+Deploy a fixed version with <code>up.sh</code> to clear it. The image tag
+is <code>CODEHAVEN_TAG</code> when you set it, otherwise the short id of the checked-out commit, so every
+version has its own tag and the previous images stay on the host.</p>
+<h2 id="rolling-back">Rolling back <a class="anchor" href="#rolling-back" aria-label="Link to this section">#</a></h2>
+<p>A newer version may have added tables that an older one does not know. The older server then
+refuses <code>serve --migrate</code>, because the database holds migrations it cannot find. It runs fine
+on that database when it is not asked to migrate, which <code>CODEHAVEN_NO_MIGRATE=1</code> does:</p>
+<pre tabindex="0"><code class="language-sh">git checkout &lt;the older commit&gt;
+CODEHAVEN_NO_MIGRATE=1 sudo -E bash deploy/prod/up.sh</code></pre>
+<p>Migration 0139 added <code>issues.pin_position</code> with a CHECK that ties it to <code>pinned</code>. The image from
+before it pins and unpins with the flag alone, so migration 0140 adds a trigger that fills the
+position in (last) when an older writer pins, and clears it when it unpins. Rolling back to the
+C9 image therefore leaves pin and unpin working. Deploy 0140 before relying on a rollback to a
+version older than C10: on a database that has 0139 but not 0140, pin and unpin on that older image
+answer 500 until 0140 is applied.</p>
+<p>Migrations 0141 (environments) and 0142 (merge queue) are additive too. On the C10 image a workflow
+with <code>environment:</code> is refused as before, so a job that waited at an environment never starts there, and
+a repository that turned its merge queue on merges the ordinary way again (the older code does not know
+the queue exists), with whatever waited in it left in place until the queue code returns.</p>
+<p>Migrations 0143 to 0146 (repository access holds, a package orphan reason, passkeys, and the latest-release mark) only add
+tables and columns too. An image from before 0145 does not know passkeys, so passkeys people registered are kept in the database
+but that image does not offer them.</p>
+<p>Do not restore the database for a rollback of an additive migration; the old code ignores what it
+does not know. Restore from backup only when data itself was damaged. Take the next upgrade from
+a clean <code>up.sh</code> without the variable, so migrations apply again.</p>
+<h2 id="when-something-is-wrong">When something is wrong <a class="anchor" href="#when-something-is-wrong" aria-label="Link to this section">#</a></h2>
+<p><a href="troubleshooting.html"><code>docs/troubleshooting.md</code></a> has the long list. The short one:</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Symptom</th><th scope="col">Look at</th></tr></thead><tbody><tr><td>A script stops with a setting's name</td><td>That key is missing from the env file. <code>.env.example</code> has a comment for it</td></tr><tr><td><code>up.sh</code> says the server is not healthy</td><td><code>deploy/compose.sh logs server</code>, then <code>deploy/compose.sh exec server codehaven doctor</code></td></tr><tr><td>Sign-in forms say the origin is wrong</td><td><code>CODEHAVEN_EXTERNAL_URL</code> must be exactly what people type, with no path and no trailing slash</td></tr><tr><td>Everyone appears to come from one address</td><td><code>CODEHAVEN_TRUSTED_PROXIES</code> does not include the network your proxy uses</td></tr><tr><td>Live CI logs arrive all at once</td><td>The proxy buffers. Turn buffering off for the server</td></tr><tr><td>A build stops on disk</td><td><code>CODEHAVEN_DISK_LIMIT</code> was reached. <code>bash deploy/dev/clean.sh</code> removes what builds made</td></tr><tr><td>Docker says "all predefined address pools have been fully subnetted"</td><td>The host has no free range for the two networks the instance makes. Give them fixed subnets in an extra compose file and point <code>CODEHAVEN_COMPOSE_EXTRA</code> at it (the example below)</td></tr></tbody></table></div>
+<h3 id="fixed-subnets-for-the-instances-networks">Fixed subnets for the instance's networks <a class="anchor" href="#fixed-subnets-for-the-instances-networks" aria-label="Link to this section">#</a></h3>
+<p>Write a file such as <code>/srv/codehaven/compose.extra.yml</code>, using two ranges nothing else on the host uses:</p>
+<pre tabindex="0"><code class="language-yaml">networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 10.20.40.0/24
+  runners:
+    ipam:
+      config:
+        - subnet: 10.20.41.0/24</code></pre>
+<p>Then set <code>CODEHAVEN_COMPOSE_EXTRA=/srv/codehaven/compose.extra.yml</code> in the env file and run <code>sudo bash deploy/prod/up.sh</code> again. If the networks were half made, remove them first with <code>docker network rm &lt;project&gt;_backend &lt;project&gt;_runners</code>.</p>
+<p>If the first admin is lost, sign in with its recovery codes. There is no script that resets
+accounts or empties an instance, and none is needed.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="integration.html"><small>Previous</small>Going public and first run</a><a class="next" href="accounts.html"><small>Next</small>Accounts and sign-in</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/operations.md" rel="noopener">docs/operations.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#the-settings">The settings</a></li><li class="l2"><a href="#public-repositories">Public repositories</a></li><li class="l2"><a href="#email">Email</a></li><li class="l2"><a href="#the-proxy">The proxy</a></li><li class="l2"><a href="#pages">Pages</a></li><li class="l2"><a href="#runners">Runners</a></li><li class="l2"><a href="#codehavens-own-repository-and-ci">Codehaven's own repository and CI</a></li><li class="l2"><a href="#the-access-matrix">The access matrix</a></li><li class="l2"><a href="#backups">Backups</a></li><li class="l3"><a href="#a-daily-schedule">A daily schedule</a></li><li class="l3"><a href="#a-copy-off-the-host-optional">A copy off the host (optional)</a></li><li class="l2"><a href="#restoring">Restoring</a></li><li class="l2"><a href="#upgrading">Upgrading</a></li><li class="l2"><a href="#rolling-back">Rolling back</a></li><li class="l2"><a href="#when-something-is-wrong">When something is wrong</a></li><li class="l3"><a href="#fixed-subnets-for-the-instances-networks">Fixed subnets for the instance's networks</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

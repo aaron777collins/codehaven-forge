@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The workspace terminal | Codehaven</title>
+<meta name="description" content="The workspace of a repository (/{owner}/{repo}/workspace) has a terminal: a bash shell that runs in your own browser, on a copy of the repository&#x27;s files.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html" aria-current="page">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html" aria-current="page">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#what-it-is">What it is</a></li><li class="l2"><a href="#what-it-can-and-cannot-run">What it can and cannot run</a></li><li class="l2"><a href="#your-files">Your files</a></li><li class="l2"><a href="#moving-changes-into-drafts">Moving changes into drafts</a></li><li class="l2"><a href="#stopping-a-command">Stopping a command</a></li><li class="l2"><a href="#who-can-use-it">Who can use it</a></li><li class="l2"><a href="#how-it-is-kept-apart-from-your-account">How it is kept apart from your account</a></li><li class="l2"><a href="#for-people-who-run-codehaven">For people who run Codehaven</a></li><li class="l3"><a href="#checking-it-in-firefox-and-webkit">Checking it in Firefox and WebKit</a></li></ul></div></details>
+<article class="prose">
+<h1 id="the-workspace-terminal">The workspace terminal <a class="anchor" href="#the-workspace-terminal" aria-label="Link to this section">#</a></h1>
+<p>The workspace of a repository (<code>/{owner}/{repo}/workspace</code>) has a terminal: a bash shell that runs
+in your own browser, on a copy of the repository's files. The server starts no shell and no
+container for it.</p>
+<h2 id="what-it-is">What it is <a class="anchor" href="#what-it-is" aria-label="Link to this section">#</a></h2>
+<p>A command line beside the editor, for searching, comparing and trying things without cloning the
+repository. A fixed line under the terminal, outside its frame, says what it is:</p>
+<blockquote>
+<p>Runs in this browser. No internet. Not your CI machine. Codehaven never asks for a password
+here.</p>
+</blockquote>
+<h2 id="what-it-can-and-cannot-run">What it can and cannot run <a class="anchor" href="#what-it-can-and-cannot-run" aria-label="Link to this section">#</a></h2>
+<p>It runs bash syntax: pipes, loops and scripts, with grep, sed, awk, find, sort, diff, jq and more.</p>
+<p>It cannot run git, make, Python, Node, compilers or any native program, and it has no internet.
+Variables you export carry from one line to the next; functions and aliases do not.</p>
+<p>Each command line can run up to 30 seconds and 100,000 commands, and print up to 1 MB. There is
+no tar, gzip, sqlite3 or yq here.</p>
+<h2 id="your-files">Your files <a class="anchor" href="#your-files" aria-label="Link to this section">#</a></h2>
+<p>The terminal works on a copy of the repository's files at the commit the editor has open, in
+<code>/work</code>, with your unsaved drafts on top. Up to 2,000 files or 25 MB; a bigger repository asks you
+to pick a folder.</p>
+<p>Later saves in the editor reach the terminal. A file changed on both sides keeps the terminal's
+copy and says so.</p>
+<h2 id="moving-changes-into-drafts">Moving changes into drafts <a class="anchor" href="#moving-changes-into-drafts" aria-label="Link to this section">#</a></h2>
+<p>Nothing the terminal changes reaches your drafts on its own. "Review terminal changes" lists each
+changed file, nothing ticked. You open a file before you can tick it.</p>
+<p>Binary files, symbolic links, files inside <code>.git</code> and files over 2 MB are listed but cannot be
+moved. Ticked files become drafts marked "From terminal".</p>
+<p>Committing a terminal file shows its changes and the warning "CI may run this code with secrets",
+and needs its own tick. Commit on save never commits a terminal file.</p>
+<h2 id="stopping-a-command">Stopping a command <a class="anchor" href="#stopping-a-command" aria-label="Link to this section">#</a></h2>
+<p>Stop or Ctrl+C ends the running command. After two seconds the shell is restarted from the files
+as they were after the last finished command.</p>
+<h2 id="who-can-use-it">Who can use it <a class="anchor" href="#who-can-use-it" aria-label="Link to this section">#</a></h2>
+<p>Signed-in accounts only, like every workspace page: signed out, the terminal, its assets and its
+file snapshot answer a redirect to <code>/login</code>. An account that can read the repository can use the
+terminal. Committing still needs write access.</p>
+<h2 id="how-it-is-kept-apart-from-your-account">How it is kept apart from your account <a class="anchor" href="#how-it-is-kept-apart-from-your-account" aria-label="Link to this section">#</a></h2>
+<p>The shell runs in a Web Worker inside a sandboxed iframe: an opaque origin that may run scripts
+and nothing else, with no network (<code>connect-src 'none'</code>). The frame never receives your cookie,
+CSRF token, workspace key, user name or a URL with authority, and the page checks the shell's
+bytes against this build's hashes before it starts. Any unexpected message closes the frame.</p>
+<p>So a command cannot reach the internet, the instance or your session. What it can change is the
+copy of the files, and only you can move those changes into drafts.</p>
+<h2 id="for-people-who-run-codehaven">For people who run Codehaven <a class="anchor" href="#for-people-who-run-codehaven" aria-label="Link to this section">#</a></h2>
+<p>Nothing extra to install or configure. The shell, just-bash 3.6.0 (Apache-2.0), and the drawing,
+xterm.js 6.0.0 (MIT), are vendored with the server, so nothing is fetched from another site.</p>
+<p>Serve Codehaven over HTTPS at a host name. On plain HTTP away from localhost, browsers do not
+send <code>Sec-Fetch-Dest</code>, so the server's rule against framed requests is only a second lock, and
+drafts cannot be encrypted. An IPv6 literal origin cannot use the workspace at all, because CSP
+cannot name one.</p>
+<p>Do not add a <code>Cross-Origin-Embedder-Policy</code> or a <code>frame-ancestors</code> rule of your own for the
+workspace in a reverse proxy: the server sets the headers each workspace response needs. A proxy
+that strips or rewrites <code>Content-Security-Policy</code> breaks the terminal.</p>
+<p>The terminal is on by default. <code>[workspace] terminal</code> in the config file is the ceiling, and a
+site admin with two-factor sign-in can turn it on or off at <code>/admin/workspace</code>, separately from
+the editor. The change is audited and applies on the next request.</p>
+<p>Turning the terminal off applies to the next page load. A terminal that is already open keeps running
+until its page closes, because the shell lives in that page's own Worker; the admin page says so.</p>
+<h3 id="checking-it-in-firefox-and-webkit">Checking it in Firefox and WebKit <a class="anchor" href="#checking-it-in-firefox-and-webkit" aria-label="Link to this section">#</a></h3>
+<p>The end-to-end run uses Chrome. Firefox and WebKit have their own behaviour for the clipboard, shared workers
+and Workers, so the same checks run against them from a machine that has Playwright's builds of them. Start a
+throwaway stack that stays up (<code>SHOTS_KEEP=1 SHOTS_NO_SHOTS=1 SHOTS_STEPS=0-22 bash deploy/dev/shots.sh --tag shots-mine</code>),
+copy its <code>session.json</code> and forward a port to the server's container address, then run, with a <code>playwright-core</code>
+whose version matches the browsers installed:</p>
+<pre tabindex="0"><code class="language-sh">node tests/e2e/terminal.mjs session.json http://127.0.0.1:13200 https://shots.example.invalid alice/demo ws-check webkit
+node tests/e2e/monaco_worker.mjs session.json http://127.0.0.1:13200 https://shots.example.invalid alice/demo ws-check webkit</code></pre>
+<p><code>firefox</code> and <code>chromium</code> work in the same place. <code>monaco_worker.mjs</code> fails when the editor's Worker does not start
+from the workspace's own asset folder, which is the case where Monaco falls back to the main thread. Remove the
+stack afterwards: <code>docker compose -p &lt;project&gt; down -v</code>.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="workspace.html"><small>Previous</small>The browser workspace</a><a class="next" href="connector.html"><small>Next</small>The Claude connector</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/terminal.md" rel="noopener">docs/terminal.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#what-it-is">What it is</a></li><li class="l2"><a href="#what-it-can-and-cannot-run">What it can and cannot run</a></li><li class="l2"><a href="#your-files">Your files</a></li><li class="l2"><a href="#moving-changes-into-drafts">Moving changes into drafts</a></li><li class="l2"><a href="#stopping-a-command">Stopping a command</a></li><li class="l2"><a href="#who-can-use-it">Who can use it</a></li><li class="l2"><a href="#how-it-is-kept-apart-from-your-account">How it is kept apart from your account</a></li><li class="l2"><a href="#for-people-who-run-codehaven">For people who run Codehaven</a></li><li class="l3"><a href="#checking-it-in-firefox-and-webkit">Checking it in Firefox and WebKit</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

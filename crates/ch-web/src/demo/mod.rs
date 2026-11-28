@@ -1552,11 +1552,16 @@ pub fn config() -> Config {
 
 /// A full `AppState` backed by the demo data. The database pool never connects.
 pub fn demo_state() -> AppState {
+    demo_state_with(config())
+}
+
+/// Same, with a config the caller adjusted (a test changing one setting).
+pub fn demo_state_with(config: Config) -> AppState {
     let d = Arc::new(Demo);
     let pool = sqlx::postgres::PgPoolOptions::new()
         .connect_lazy("postgres://nobody:nothing@127.0.0.1:1/none")
         .unwrap_or_else(|_| unreachable!("a lazy pool does not connect"));
-    let mut b = AppStateBuilder::new(Arc::new(config()), pool, d.clone(), d.clone(), d.clone());
+    let mut b = AppStateBuilder::new(Arc::new(config), pool, d.clone(), d.clone(), d.clone());
     b.authn = d.clone();
     b.invites = d.clone();
     b.authz = d.clone();
@@ -1623,7 +1628,12 @@ async fn demo_gate(axum::extract::State(state): axum::extract::State<AppState>, 
 
 /// The pages and static files, served from demo data.
 pub fn router() -> Router {
-    let state = demo_state();
+    router_with(config())
+}
+
+/// Same, with a config the caller adjusted.
+pub fn router_with(config: Config) -> Router {
+    let state = demo_state_with(config);
     crate::routes::build().router.layer(middleware::from_fn_with_state(state.clone(), demo_gate)).with_state(state)
 }
 

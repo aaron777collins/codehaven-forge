@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://aaron777collins.github.io/codehaven-forge/sitemap.xml

@@ -3,6 +3,8 @@
 What was built, how it fits together, and what is left. `ARCHITECTURE.md` sections 5.1, 6 and
 10 are the design; this file is the working notes for whoever integrates or extends it.
 
+> Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at [Getting started](getting-started.md).
+
 ## One service, three traits
 
 `ch_git::GitCore` implements `Repos`, `GitService` and `GitTransport`. `ch_git::build` puts it in
@@ -139,11 +141,9 @@ registers `/repos/{owner}/{repo}/commits/{ref}`; ch-ci registers `/commits/{ref}
 exchange, blob uploads (chunked, monolithic, mounted), manifests and indexes, tags with paging,
 referrers, deletes and garbage collection. Images are `owner/image`.
 
-Not verified against the OCI conformance suite or a real `docker login`: the suite and the
-Docker CLI need a running instance with real accounts, which means the integrated stack. The
-tests in `crates/ch-registry/tests/registry.rs` make the same calls by hand, and the first thing
-to run after integration is `docker login`, `docker push` and `docker pull` against a test
-instance, then the conformance container.
+Checked against a real `docker login`, `docker push` and `docker pull`, and against the OCI conformance suite, by
+`deploy/tests/registry-conformance.sh` on a throwaway stack. The tests in `crates/ch-registry/tests/registry.rs` make the
+same calls by hand.
 
 ## Tests and where they run
 
@@ -156,9 +156,8 @@ never block.
 
 ## Left undone, and why
 
-- **Import from a URL.** It needs a fetcher that cannot be pointed at a private address
-  (resolve, refuse private addresses, refuse redirects, pin the address). Without that it is a
-  server-side request forgery hole, so it is not built.
+- **Import from a URL.** Built since this was written: `/new/import` fetches an `https` address that cannot be pointed at a
+  private address (`imports.allow_private` turns that check off), up to 2 GB, branches and tags only.
 - **`gix` for reads.** Dropped for now: git's own plumbing does every read and no behaviour depends on
   the choice. See ARCHITECTURE.md 6.1.
 - **Mergeability recompute.** It reads pull request rows, so it belongs to collab; `test_merge`

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Going public and first run | Codehaven</title>
+<meta name="description" content="How a checkout of this repository becomes a running, public, invite-only instance: the first run on a host, the first admin, inviting people, runners, and what to check from outside.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html" aria-current="page">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html" aria-current="page">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#the-first-run-on-a-host">The first run on a host</a></li><li class="l2"><a href="#the-first-admin">The first admin</a></li><li class="l2"><a href="#inviting-people">Inviting people</a></li><li class="l2"><a href="#runners">Runners</a></li><li class="l2"><a href="#what-public-means">What public means</a></li><li class="l2"><a href="#checking-it-from-outside">Checking it from outside</a></li><li class="l2"><a href="#test-stacks-are-throwaway">Test stacks are throwaway</a></li><li class="l2"><a href="#backups">Backups</a></li><li class="l2"><a href="#what-the-merges-settled">What the merges settled</a></li><li class="l2"><a href="#the-end-to-end-test">The end-to-end test</a></li><li class="l2"><a href="#screenshots">Screenshots</a></li></ul></div></details>
+<article class="prose">
+<h1 id="going-public-and-first-run">Going public and first run <a class="anchor" href="#going-public-and-first-run" aria-label="Link to this section">#</a></h1>
+<p>How a checkout of this repository becomes a running, public, invite-only instance: the first run
+on a host, the first admin, inviting people, runners, and what to check from outside. If this is
+your first time, <a href="getting-started.html"><code>docs/getting-started.md</code></a> is the gentler walk-through, and <a href="configuration.html"><code>docs/configuration.md</code></a>
+explains every setting. The lower
+half of the page keeps the record of what the six stream merges settled and how the end-to-end
+run and the screenshots work. <a href="architecture.html"><code>ARCHITECTURE.md</code></a> section 2.4 has the design of the public surface.</p>
+<blockquote>
+<p>The first half of this page is the short first-run checklist; <a href="getting-started.html">Getting started</a> is the full walk-through and the one kept up to date. The lower half is contributor history of how the work was merged and tested.</p>
+</blockquote>
+<h2 id="the-first-run-on-a-host">The first run on a host <a class="anchor" href="#the-first-run-on-a-host" aria-label="Link to this section">#</a></h2>
+<p>The host needs Docker, Compose 2.24 or newer, buildx, git, openssl, curl, python3 and iproute2,
+with 4 GB of memory and 20 GB free where the data lives. Everything else runs in containers, so
+the host needs no Rust and no PostgreSQL.</p>
+<ol>
+<li>Copy <code>.env.example</code> to <code>.env</code> (or to <code>../codehaven.env</code>, or point <code>CH_ENV_FILE</code> at it) and
+fill it in. No script carries a built-in host, domain, path or project name: a setting that is
+missing stops with its name. The example install root used here is <code>/srv/codehaven</code>
+(<code>CODEHAVEN_DATA_DIR</code>, <code>CODEHAVEN_SECRETS_DIR</code>, <code>CODEHAVEN_BACKUP_DIR</code>,
+<code>CODEHAVEN_BUILD_ROOT</code>), the project is <code>codehaven</code>, and the address people open is
+<code>CODEHAVEN_EXTERNAL_URL=https://code.example.com</code>.</li>
+<li><code>sudo bash deploy/prod/setup.sh</code>, once. It checks the host, makes the data directories owned
+by the server's unprivileged user (uid 10001), and writes the database credentials into
+<code>CODEHAVEN_SECRETS_DIR</code>, where they stay; it never prints them.</li>
+<li><code>sudo bash deploy/prod/up.sh</code>. (<code>make up</code> runs the same script through make, on another host over ssh when <code>CH_HOST</code> is set; the <code>sudo bash</code> form is the documented one.) It builds the
+images when the tag has none, starts the instance, waits for the server to be healthy, checks
+that the published ports are only where <code>CODEHAVEN_HTTP_BIND</code> and <code>CODEHAVEN_SSH_BIND</code> say
+(loopback by default), and curls <code>/healthz</code>.</li>
+</ol>
+<p>A proxy in front is a setting, not a step: <code>CODEHAVEN_PROXY=none</code> for a trial on one machine,
+<code>network</code> for a proxy you already run, or <code>caddy</code> for the Caddy that comes with Codehaven and
+gets the certificate itself (<code>CODEHAVEN_SITE_HOST</code>). Only the networks in
+<code>CODEHAVEN_TRUSTED_PROXIES</code> may set <code>X-Forwarded-For</code> and <code>X-Forwarded-Proto</code>. An upgrade is
+<code>git pull</code> and <code>up.sh</code> again; the tag is the one you pass, <code>CODEHAVEN_TAG</code>, or the short commit
+id of the checkout, never a generic name another stack might already run.</p>
+<h2 id="the-first-admin">The first admin <a class="anchor" href="#the-first-admin" aria-label="Link to this section">#</a></h2>
+<p>No account exists until you make one. This is deliberately a command on the server, never a web
+page, so nobody can race you to it:</p>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/first-admin.sh alice alice@example.com</code></pre>
+<p>It prints a one-time link, valid for 1 hour: open it, choose a password, turn on two-factor.
+The script refuses to run when the instance already has an account, and when the server runs
+with <code>webhooks.allow_private</code> on, which is for test stacks only. It never deletes or resets
+accounts; if the first account is lost, its recovery codes are the way back in. There is no
+script that empties an instance, and none is needed.</p>
+<h2 id="inviting-people">Inviting people <a class="anchor" href="#inviting-people" aria-label="Link to this section">#</a></h2>
+<p>Every account after the first comes from an invite: Site admin &gt; Invites, or</p>
+<pre tabindex="0"><code class="language-sh">bash deploy/compose.sh exec server codehaven admin invite create --email bob@example.com</code></pre>
+<p>A link works once. A used, revoked, expired or made-up link all show the same plain "not found"
+page, so a link cannot be probed for. The invitee picks a username and a password, and that is
+the only way to get an account.</p>
+<h2 id="runners">Runners <a class="anchor" href="#runners" aria-label="Link to this section">#</a></h2>
+<p>CI needs a runner. Take a registration token from Site admin &gt; Runners (one use), then on the
+instance's host:</p>
+<pre tabindex="0"><code class="language-sh">HAVEN_RUNNER_TOKEN=&lt;token&gt; sudo -E bash deploy/prod/ci-up.sh register runner-1
+sudo bash deploy/prod/ci-up.sh           # the dind daemon, the job image inside it, the runner</code></pre>
+<p>Jobs run in the runner's own Docker daemon (<code>dind</code>), never the host's, and cannot reach the
+host's addresses or each other (<a href="runner.html"><code>docs/runner.md</code></a>). A runner on another machine needs Docker and
+the <code>haven-runner</code> binary: <code>haven-runner register --url https://code.example.com --name &lt;name&gt;</code>,
+then <code>haven-runner run</code>. Whether a repository may run workflows at all is a permission on its
+owner, which an admin sets.</p>
+<h2 id="what-public-means">What public means <a class="anchor" href="#what-public-means" aria-label="Link to this section">#</a></h2>
+<p>The instance is invite-only. There is no sign-up page and no sign-up route, and no proxy-header
+login: Codehaven checks every request itself, and an identity header from a proxy in front signs
+nobody in. A signed-out visitor gets the sign-in page, or a 401 from the API, git, the registry
+and the runner API. The one thing readable without an account is a public repository, and only
+while the site admin allows public repositories (<a href="operations.html"><code>docs/operations.md</code></a>).</p>
+<h2 id="checking-it-from-outside">Checking it from outside <a class="anchor" href="#checking-it-from-outside" aria-label="Link to this section">#</a></h2>
+<p><code>bash deploy/dev/public-smoke.sh &lt;base-url&gt;</code> makes read-only requests and checks that TLS is
+valid, <code>/login</code> carries every security header, every user, API, git, registry and
+runner URL and every repository that is not public refuses a signed-out caller, that no
+sign-up route exists in any spelling, and that an
+identity header signs nobody in. Against the server itself, with no proxy in front:
+<code>deploy/dev/public-smoke.sh http://127.0.0.1:3200</code>.</p>
+<h2 id="test-stacks-are-throwaway">Test stacks are throwaway <a class="anchor" href="#test-stacks-are-throwaway" aria-label="Link to this section">#</a></h2>
+<p>The end-to-end run and the screenshot run each build a stack of their own, in a throwaway compose
+project with a throwaway image tag and a free subnet (<code>CODEHAVEN_E2E_SUBNET</code>):</p>
+<pre tabindex="0"><code class="language-sh">make e2e E2E_TAG=test-x        # steps 0-1 by default, STEPS=0-19 for the whole run</code></pre>
+<p>The tag and the project name must be throwaway names (<code>test-</code>, <code>e2e-</code>, <code>shots-</code> or <code>tmp-</code> plus a
+word), a project that already holds a container not started as a throwaway one is left alone,
+and the harness itself refuses a stack that already holds an account. There is no flag that
+relaxes any of this. The run tears its own project down at the end and never touches the
+instance's project, volumes or data, so there is no reset step after it and no reset script.</p>
+<h2 id="backups">Backups <a class="anchor" href="#backups" aria-label="Link to this section">#</a></h2>
+<p><code>sudo bash deploy/prod/backup.sh</code> stops the server just long enough to take a consistent copy
+(the database, the repositories, blobs and logs, the master key, the database credentials and
+the env file) into a 0600 archive under <code>CODEHAVEN_BACKUP_DIR</code>, which must be outside the
+checkout, then starts the server again. The archive is as sensitive as the instance: keep it
+where only you can read it, and encrypt it before it leaves the host. <code>deploy/prod/restore.sh</code>
+brings an instance back from one.</p>
+<h2 id="what-the-merges-settled">What the merges settled <a class="anchor" href="#what-the-merges-settled" aria-label="Link to this section">#</a></h2>
+<p>The foundation, identity, git, web, collab, ci and runner streams were built apart and merged
+into <code>main</code> in the order of ROADMAP.md section 5, each with <code>--no-ff</code>, with the whole workspace
+test suite run in the builder after every merge (816, 1044, 1229 and 1510 tests green). This
+section records what the merge itself had to settle, so the next person does not rediscover it.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Clash</th><th scope="col">Settled how</th></tr></thead><tbody><tr><td>Two <code>Directory</code> traits (identity's admin and email directory, the web's people lists)</td><td>The web's became <code>People</code> (<code>state.people</code>). Identity's stays <code>Directory</code></td></tr><tr><td>Two <code>blame</code> methods on <code>GitService</code></td><td>The git stream's <code>Blame</code> stays. The blame page turns it into the lines it draws</td></tr><tr><td>The web's <code>Repos::update</code> and the git stream's <code>update_settings</code></td><td><code>GitCore</code> implements both. <code>update</code> maps onto the settings update</td></tr><tr><td>Four traits the web called that no stream implemented (<code>Sessions</code>, <code>People</code>, <code>Tracker</code>, <code>Pipelines</code>)</td><td>Each is implemented beside the data it reads: <code>ch-auth/src/web.rs</code>, <code>ch-collab/src/web.rs</code>, <code>ch-ci/src/web.rs</code>. They call the real services, so permissions, audit records and events are the same ones the REST edge gets</td></tr><tr><td>A privilege change (turning two-factor on or off, a new password) ends every session and issues a new cookie</td><td>The web trait now hands the new cookie back and the pages set it in the same response. Before, the person was signed out</td></tr><tr><td>Two CSRF schemes (the request guard's and the web crate's own)</td><td>The guard checks every unsafe request, so pages embed the guard's token. The web crate keeps its own only when there is no guard (the demo and the page tests)</td></tr><tr><td>A right password on an account with two-factor, over git</td><td>The gate says "use a personal access token as the password" in the 401 body. Git prints it after <code>remote:</code></td></tr><tr><td><code>root</code> is a reserved username</td><td>The e2e admin is <code>ops</code>. <code>avatar</code> and <code>preview</code> are now reserved too, because <code>/{owner}</code> is a route</td></tr><tr><td>The dind daemon's certificate was only valid for its container id</td><td><code>DOCKER_TLS_SAN: DNS:dind</code> in <code>deploy/compose.yml</code>, so the runner can connect by name</td></tr></tbody></table></div>
+<h2 id="the-end-to-end-test">The end-to-end test <a class="anchor" href="#the-end-to-end-test" aria-label="Link to this section">#</a></h2>
+<p><code>tests/e2e/e2e_full.py</code> runs steps 0 to 19 of ROADMAP.md section 6 against a throwaway stack,
+and step 20 leaves session cookies for the screenshots. It is standard library Python, so it
+runs on the build host with no install. Its HTTP calls go to the server over the stack's own
+network, where its address is a trusted proxy, so it can send <code>X-Forwarded-For</code> and act as many
+client addresses (the rate limit and lockout steps need that). Real <code>git</code> over HTTP and SSH,
+real <code>ssh-keygen</code>, TOTP codes computed in the script, HTML forms with CSRF, a local listener for
+the webhook.</p>
+<p>The Rust harness in <code>tests/e2e/src</code> runs steps 0 and 1 inside the same throwaway project. Steps
+2 and later live in the Python script because they need <code>git</code>, <code>ssh</code> and a runner, and the e2e
+compose project has neither a runner nor a Docker daemon for jobs.</p>
+<p>Step 14 checks that a runner registration token works once and is refused the second time. The
+OCI registry with a real <code>docker login</code> is covered by <code>deploy/tests/registry-conformance.sh</code>. The live job log is covered by step 21,
+which runs <code>tests/e2e/livelog.mjs</code> in a real browser.</p>
+<h2 id="screenshots">Screenshots <a class="anchor" href="#screenshots" aria-label="Link to this section">#</a></h2>
+<p><code>bash deploy/dev/shots.sh --tag shots-mine</code> builds a seeded throwaway stack of its own, runs the
+end-to-end script through step 20 for a signed-in session, then shoots the pages with
+<code>tests/e2e/shoot.mjs</code>: <code>playwright-core</code> with the system Chrome on the build host, 36 pages at
+390 and 1440 pixels wide, light and dark, 144 images. The session cookie goes in as a header
+because the server expects the <code>__Host-</code> cookie, which a browser will not send over plain http.
+The env file needs <code>CODEHAVEN_E2E_SUBNET</code>, <code>CODEHAVEN_SHOTS_RUNNERS_SUBNET</code> and
+<code>CODEHAVEN_SHOTS_NODE_MODULES</code> (a directory that holds <code>playwright-core</code>), and the images are
+built first (<code>bash deploy/dev/release.sh shots-mine</code>).</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="configuration.html"><small>Previous</small>Configuration</a><a class="next" href="operations.html"><small>Next</small>Running an instance</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/integration.md" rel="noopener">docs/integration.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#the-first-run-on-a-host">The first run on a host</a></li><li class="l2"><a href="#the-first-admin">The first admin</a></li><li class="l2"><a href="#inviting-people">Inviting people</a></li><li class="l2"><a href="#runners">Runners</a></li><li class="l2"><a href="#what-public-means">What public means</a></li><li class="l2"><a href="#checking-it-from-outside">Checking it from outside</a></li><li class="l2"><a href="#test-stacks-are-throwaway">Test stacks are throwaway</a></li><li class="l2"><a href="#backups">Backups</a></li><li class="l2"><a href="#what-the-merges-settled">What the merges settled</a></li><li class="l2"><a href="#the-end-to-end-test">The end-to-end test</a></li><li class="l2"><a href="#screenshots">Screenshots</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

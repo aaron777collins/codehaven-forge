@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The web UI (ch-web, ch-render) | Codehaven</title>
+<meta name="description" content="Server rendered pages: Askama templates, a little htmx, no framework, no build step beyond cargo.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html" aria-current="page">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html" aria-current="page">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#layout">Layout</a></li><li class="l2"><a href="#rules-that-are-enforced-by-tests-not-by-care">Rules that are enforced by tests, not by care</a></li><li class="l2"><a href="#adding-a-page">Adding a page</a></li><li class="l2"><a href="#looking-at-it">Looking at it</a></li><li class="l2"><a href="#contract-additions">Contract additions</a></li><li class="l2"><a href="#the-browser-workspace">The browser workspace</a></li><li class="l3"><a href="#the-terminal">The terminal</a></li><li class="l2"><a href="#packages-pages">Packages pages</a></li><li class="l2"><a href="#environments">Environments</a></li><li class="l2"><a href="#not-built">Not built</a></li><li class="l2"><a href="#pull-requests-forks-search-and-mail">Pull requests, forks, search and mail</a></li><li class="l2"><a href="#review-threads-organizations-and-the-live-job-log">Review threads, organizations and the live job log</a></li><li class="l2"><a href="#accessibility-and-page-times">Accessibility and page times</a></li></ul></div></details>
+<article class="prose">
+<h1 id="the-web-ui-ch-web-ch-render">The web UI (<code>ch-web</code>, <code>ch-render</code>) <a class="anchor" href="#the-web-ui-ch-web-ch-render" aria-label="Link to this section">#</a></h1>
+<p>Server rendered pages: Askama templates, a little htmx, no framework, no build step beyond cargo.
+<code>ch-web</code> calls the service traits in <code>AppState</code> and shapes the answers into plain view structs.
+It never touches the database and never calls another domain crate.</p>
+<blockquote>
+<p>Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at <a href="getting-started.html">Getting started</a>.</p>
+</blockquote>
+<h2 id="layout">Layout <a class="anchor" href="#layout" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code>crates/ch-render/        markdown (GFM, sanitized), highlighting, ANSI logs, avatars. Pure.
+crates/ch-web/
+  src/lib.rs             web_routes()
+  src/routes.rs          the route table. One registry, so tests can list every method and path
+  src/ctx.rs             Ctx: who is calling, cookies, page(), redirect(), flash
+  src/forms.rs           FormData: the only way to read a body. Checks Origin and CSRF first
+  src/csrf.rs            tokens, signed cookies, the Origin rule
+  src/views/*.rs         one module per area (auth, repo, issues, pulls, actions, settings, admin...)
+  src/views/code.rs      HTML for code tables, blame and diffs (built in Rust, every piece escaped)
+  src/demo/              the whole AppState from fixed data (feature `demo`)
+  templates/             Askama templates. base.html, components.html (macros), one folder per area
+  static/                app.css, code.css, forge.css, app.js, htmx, sprite is inlined from templates
+  examples/demo.rs       serves the demo on 127.0.0.1:3291
+  examples/snapshot.rs   renders demo pages to files for screenshots
+  screens/shoot.sh       demo screenshots, shot with the headless Chrome on the build host
+  tests/pages.rs         every page, signed in and out, CSRF, escaping, streaming</code></pre>
+<h2 id="rules-that-are-enforced-by-tests-not-by-care">Rules that are enforced by tests, not by care <a class="anchor" href="#rules-that-are-enforced-by-tests-not-by-care" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>CSP is <code>script-src 'self'; style-src 'self'</code>.</strong> A template must not contain <code>style="..."</code>,
+<code>&lt;script&gt;</code>, <code>onclick=</code> or <code>javascript:</code>. Label colours are a palette of classes (<code>lbl-0</code> to
+<code>lbl-11</code>), progress bars are <code>&lt;progress&gt;</code>, behaviour is <code>data-*</code> attributes read by <code>app.js</code>.
+<code>every_page_renders_for_a_signed_in_user</code> fails on any of them.</li>
+<li><strong>Every POST goes through <code>FormData</code>.</strong> It refuses the request unless <code>Origin</code> is ours and the
+token is valid (signed in: HMAC of the session cookie, signed out: double-submit cookie).
+<code>every_post_route_refuses_a_missing_token_and_a_foreign_origin</code> walks the route table.</li>
+<li><strong>Secrets are shown once, in the response to the request that made them</strong> (invite links, tokens,
+recovery codes, runner tokens, one-time links). Never a redirect, a cookie or a URL.</li>
+<li><strong>A repository you cannot read is a 404</strong>, the same as one that does not exist.</li>
+<li>Free text is escaped by Askama; <code>|safe</code> is used only for HTML from <code>ch_render</code> or <code>views/code.rs</code>.</li>
+<li>Raw files are served with <code>Content-Security-Policy: sandbox</code>, <code>nosniff</code> and <code>attachment</code> for
+HTML and SVG.</li>
+<li>Every page has one <code>id="main"</code>, an <code>&lt;h1&gt;</code>, a title, and alt text on images.</li>
+</ul>
+<h2 id="adding-a-page">Adding a page <a class="anchor" href="#adding-a-page" aria-label="Link to this section">#</a></h2>
+<ol>
+<li>A handler in <code>views/&lt;area&gt;.rs</code>: <code>pub async fn x(ctx: Ctx, Path(..)) -&gt; WebResult&lt;Response&gt;</code>,
+with <code>form: FormData</code> last for a POST.</li>
+<li>A template struct with <code>c: Chrome</code> first (<code>ctx.chrome("Title").await</code>), derive <code>Template</code>.</li>
+<li><code>templates/&lt;area&gt;/x.html</code> extending <code>base.html</code> (or <code>repo/layout.html</code> with <code>repo_body</code>).</li>
+<li>Register it in <code>routes.rs</code>. A new route is private to signed out visitors until someone edits
+<code>ch_core::access::PUBLIC_ROUTES</code> or <code>ch_core::access::PUBLIC_REPO_ROUTES</code>. Do not.</li>
+<li>Add the path to <code>PAGES</code> in <code>tests/pages.rs</code> with a word that must appear.</li>
+</ol>
+<h2 id="looking-at-it">Looking at it <a class="anchor" href="#looking-at-it" aria-label="Link to this section">#</a></h2>
+<p><code>cargo run -p ch-web --example demo</code> serves every page from the demo data on 127.0.0.1:3291 of
+whichever machine runs it (user <code>ada</code>, password in <code>src/demo/mod.rs</code>). The builder container
+publishes no ports, so on a build host use screenshots, which need no port at all:</p>
+<pre tabindex="0"><code class="language-sh"># in the main checkout: builds and renders the demo pages in the builder, shoots them with the
+# headless Chrome on the build host, copies the PNGs to $TMPDIR/ch-screens (or the outdir
+# argument) and removes everything it made there. Needs CH_HOST and CH_REMOTE_ROOT
+# (deploy/dev/local.env.example) and headless Chrome on that host.
+SHOTS=all bash .worktrees/web/crates/ch-web/screens/shoot.sh "repo-home,issue,pull*"</code></pre>
+<p><code>SHOTS=light</code> (the default) is light desktop only. <code>all</code> adds dark desktop and a 390 px phone.</p>
+<h2 id="contract-additions">Contract additions <a class="anchor" href="#contract-additions" aria-label="Link to this section">#</a></h2>
+<p>The first service traits had no method for several pages. <code>ch_core::web_contract</code> adds them,
+with <code>NotBuilt</code> answering until the owning stream implements them:</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Trait</th><th scope="col">Owner</th><th scope="col">For</th></tr></thead><tbody><tr><td><code>Sessions</code></td><td>ch-auth</td><td>sign in, two-factor, sessions, password, profile, security log</td></tr><tr><td><code>Directory</code></td><td>ch-auth</td><td>users, organisations, teams, site stats</td></tr><tr><td><code>Tracker</code></td><td>ch-collab</td><td>labels, milestones, inline review comments, creating releases</td></tr><tr><td><code>Pipelines</code></td><td>ch-ci</td><td>workflows, jobs and steps, runners, secrets, variables, artifacts</td></tr></tbody></table></div>
+<p>Also <code>Repos::update</code> and <code>GitService::blame</code>. Usernames <code>settings</code>, <code>admin</code>, <code>new</code>, <code>explore</code>,
+<code>notifications</code>, <code>search</code>, <code>login</code>, <code>logout</code>, <code>invite</code>, <code>password</code>, <code>orgs</code>, <code>avatar</code>, <code>static</code>,
+<code>preview</code>, <code>api</code> and <code>v2</code> must be reserved by the identity stream, because <code>/{owner}</code> is a route.</p>
+<h2 id="the-browser-workspace">The browser workspace <a class="anchor" href="#the-browser-workspace" aria-label="Link to this section">#</a></h2>
+<p><code>/{owner}/{repo}/workspace</code> is a full-screen editor, commit, run and terminal panel (epic ch-1ke,
+stages 1 to 3, all live). The terminal runs in the visitor's browser, never on the server. The code is in <code>src/views/workspace/</code> and the browser side in <code>workspace/src/</code> (plain JS
+modules and CSS, no Node in the Rust build). Monaco is vendored, prebuilt and gzipped, in
+<code>workspace/vendor/</code>, with <code>LOCK</code> and <code>THIRD_PARTY_NOTICES</code>; <code>cargo xtask vendor-check</code> checks the
+hashes and the size budgets.</p>
+<ul>
+<li><strong>Signed in only.</strong> Every workspace route is a page route: only a browser session opens it,
+never a token or Basic auth. Signed out, every route answers 303 to <code>/login</code> (or 401), for
+every repository and every tier, public included. Nothing is added to <code>PUBLIC_ROUTES</code>.</li>
+<li><strong>Repo permission.</strong> Reading needs read access, and a missing or unreadable repository gives
+the same 404. Commit, branch, dispatch, re-run and cancel need write access and the CSRF token.
+Data routes also need the workspace key, which is bound to the session, the repository and the
+account.</li>
+<li><strong>Access ends.</strong> The log streams re-check the session and the permission and close within a
+second of sign-out, suspension, removal, a password change or the admin switch.</li>
+<li><strong>Isolation.</strong> The page's CSP keeps repository code away from the session and the API: page
+script cannot reach <code>/api</code>, and no request leaves the instance origin.</li>
+<li><strong>Switch.</strong> <code>[workspace] enabled</code> in the config is the ceiling. A site admin with two-factor
+sign-in turns the editor off at <code>/admin/workspace</code>; the change is audited and applies on the
+next request.</li>
+</ul>
+<h3 id="the-terminal">The terminal <a class="anchor" href="#the-terminal" aria-label="Link to this section">#</a></h3>
+<p>Stage 3, in this version: a bash shell that runs in the visitor's own browser, on a copy of the
+repository's files. The server starts no shell and no container for it. <a href="terminal.html"><code>docs/terminal.md</code></a> is the
+user and self-hoster page.</p>
+<ul>
+<li><strong>Code.</strong> <code>src/views/workspace/terminal.rs</code> serves the frame; <code>workspace/frame/</code> holds the
+frame's script, <code>workspace/src/terminal.js</code> the page side and <code>workspace/src/shell-worker.js</code>
+the Worker. The shell is just-bash 3.6.0 (Apache-2.0), drawn with xterm.js 6.0.0 (MIT), both
+vendored prebuilt in <code>crates/ch-web/workspace/vendor/terminal/</code> with their own <code>LOCK</code> and
+<code>THIRD_PARTY_NOTICES</code>, and rebuilt only by <code>deploy/workspace-vendor/terminal/build.sh</code>. That
+script needs Node and npm; a normal Codehaven build needs neither.</li>
+<li><strong>Routes.</strong> The terminal document, its assets and the file snapshot at
+<code>/{owner}/{repo}/workspace/snapshot</code> (length-framed bytes, needs the workspace key) are signed
+in only, like every workspace route: 303 to <code>/login</code> when signed out, 404 without read access
+to the repository. Read access is enough to use the terminal; committing still needs write
+access.</li>
+<li><strong>Isolation.</strong> The shell runs in a Web Worker inside a sandboxed iframe (<code>allow-scripts</code>, an
+opaque origin) whose policy is <code>connect-src 'none'</code> and allows only one inline script, named by
+its SHA-256 hash. The frame never receives a cookie, CSRF token, workspace key, user name or
+URL with authority. The page checks the shell's bytes against this build's hashes and hands
+them over one <code>MessagePort</code>; any unexpected message, a second "ready" or a second load closes
+the frame. The server refuses any framed request (<code>Sec-Fetch-Dest: iframe</code> and the like) by a
+signed-in browser except the terminal document itself, so the frame cannot navigate to the API.</li>
+<li><strong>Limits.</strong> The snapshot carries up to 2,000 files or 25 MB; a bigger repository asks for a
+folder. Each command line can run up to 30 seconds and 100,000 commands, and print up to
+1 MB. Stop or Ctrl+C ends a command line; after two seconds the shell is restarted
+from the files as they were after the last finished command.</li>
+<li><strong>Review.</strong> Nothing the terminal changes reaches drafts on its own. "Review terminal changes"
+lists each changed file, nothing ticked; a file must be opened before it can be ticked. Binary
+files, symbolic links, files inside <code>.git</code> and files over 2 MB are listed but cannot be moved.
+Ticked files become drafts marked "From terminal"; committing them shows their changes and the
+warning "CI may run this code with secrets" and needs its own tick. Commit on save never
+commits a terminal file.</li>
+<li><strong>Switch.</strong> <code>[workspace] terminal</code> in the config is the ceiling (true by default). A site admin
+with two-factor sign-in can turn the terminal on or off at <code>/admin/workspace</code>, separately from
+the editor; the change is audited and applies on the next request.</li>
+</ul>
+<p>Stage 4, the optional Linux in the tab, is not in this version: <code>GET .../workspace/terminal/source.tar</code>
+answers 404.</p>
+<h2 id="packages-pages">Packages pages <a class="anchor" href="#packages-pages" aria-label="Link to this section">#</a></h2>
+<p><code>/packages</code> lists every container image and NuGet package the signed-in person could pull, <code>/packages/{owner}</code>
+the ones of one account, and <code>/{owner}/{repo}/packages</code> those linked to a repository they can read. A
+package page (<code>/packages/{owner}/{kind}/{name}</code>, where the image name may have slashes) shows the
+<code>docker pull</code> or <code>dotnet nuget</code> commands, the tags or versions with their digest, platforms, size and
+push time. These pages are for signed-in people only: signed out, they ask you to sign in, and a package
+you may not pull looks exactly like one that does not exist (no count of hidden ones anywhere).</p>
+<p>The owner of a package (or an owner of the organization that owns it) can link it to a repository of the
+same owner where they can write, unlink it, delete one tag or version, or delete the package. Deleting a
+tag keeps its manifest when another tag or an index in the same package still points at it, so a multi-arch
+image keeps working. Linking
+shows who would gain access first (a public repository lets anyone pull it, signed out too) and needs a
+confirmation. Unlinking leaves the package to its owner alone, never wider than before. Deleting needs the
+package name typed. Each change is audited (<code>package.linked</code>, <code>package.unlinked</code>,
+<code>package.version_deleted</code>, <code>package.deleted</code>). The rule for who can read is the one <code>docker pull</code> uses.</p>
+<h2 id="environments">Environments <a class="anchor" href="#environments" aria-label="Link to this section">#</a></h2>
+<p><code>/{owner}/{repo}/settings/environments</code> (repository admins): create an environment (a name already in use,
+in any case, is refused and that environment is left as it is), set its wait timer, its
+branch filter and its required reviewers, and add its secrets. See docs/ci.md, "Deployment environments".
+A job held at an environment shows a "Deployments" card on its run page, with Approve and Reject for a
+required reviewer.</p>
+<h2 id="not-built">Not built <a class="anchor" href="#not-built" aria-label="Link to this section">#</a></h2>
+<p>Nothing from this list is missing now. "Import a repository" is at <code>/new/import</code> (an <code>https</code> address, up to 2 GB, branches and
+tags only), and notification emails exist: with mail set up, a person can turn them on at Settings, Notifications, and the
+mail queue sends a title and a link for each notification, never the text of a comment.</p>
+<h2 id="pull-requests-forks-search-and-mail">Pull requests, forks, search and mail <a class="anchor" href="#pull-requests-forks-search-and-mail" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Required checks.</strong> Branch protection takes one check name per line, so a name with a comma, such as <code>test (ubuntu, 1.22)</code>, works. The form lists the names of checks that ran on recent commits, to copy. When a required name never ran on the head commit, the merge gate names the nearest one that did.</li>
+<li><strong>Merge box.</strong> "Edit the commit title and message" sets the merge or squash commit text. The form carries the head commit the page showed, so a push after the page loaded stops the merge. A branch of the same repository can be deleted with the merge, or afterwards with "Delete branch". The header says "merged" or "wanted to merge" once a pull request is merged or closed. An approval from someone without write access shows "does not count".</li>
+<li><strong>Side panel.</strong> Reviewers can be requested and withdrawn by people with triage access, or by the author when they have access. Teams of the owning organization can be requested. Assignees and the milestone work as on issues.</li>
+<li><strong>Suggestions.</strong> A ```suggestion block in a review comment is labelled "Suggested change". Someone with write access sees "Apply suggestion", which commits it to the head branch.</li>
+<li><strong>Forks.</strong> "Fork" on the repository header opens <code>/{owner}/{repo}/fork</code>: pick your account or an organization you own, and a visibility no wider than the parent. A public fork starts as internal and is confirmed on the visibility page. <code>/{owner}/{repo}/forks</code> lists the forks you can read. On "Open a pull request", your own forks appear as a Repository choice. Without access to a repository, a pull request comes from a fork you own.</li>
+<li><strong>Watch and star.</strong> The header has Watch (participating, all activity or ignore), Star with its count, and Fork with the number of forks you can see. Signed out, none of them show.</li>
+<li><strong>Code search.</strong> The search page has a Code tab. It looks at the default branch of the 30 most recently pushed repositories you can read, and <code>repo:owner/name</code> narrows it to one. Each repository has a "Search code" page. Code search needs an account.</li>
+<li><strong>Issue filters.</strong> The issue list filters by milestone and by who opened or is assigned an issue. A list narrowed to a milestone shows the milestone at the top, with its progress.</li>
+<li><strong>Notifications.</strong> Each row links to the issue or pull request by its number and says whether it is open, closed or merged. A mention stays the reason while the row is unread.</li>
+<li><strong>Invites.</strong> A site admin's invite can name an organization and a team. An invite for an email that already belongs to an account is refused.</li>
+<li><strong>Two-factor setup</strong> shows a QR code as well as the key.</li>
+<li><strong>Forgot password.</strong> <code>/password/forgot</code> asks for a username or email and always gives the same answer. With mail on, the account's primary email gets a link that works for an hour, at most one every ten minutes. Asking signs nobody out: choosing the new password does. With mail off the page says to ask a site admin. After choosing a password from any one-time link you are signed in, through two-factor when it is on.</li>
+</ul>
+<h2 id="review-threads-organizations-and-the-live-job-log">Review threads, organizations and the live job log <a class="anchor" href="#review-threads-organizations-and-the-live-job-log" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Threads.</strong> Files changed and the Conversation tab read <code>Reviews::threads</code>, so each thread has its
+id and sits once under the line of its first comment. Each thread has a Reply form (`POST
+.../pulls/{n}/inline<code>with</code>in_reply_to`) and, for the pull request's author and anyone with write
+access, a Resolve or Unresolve button (<code>POST .../pulls/{n}/resolve</code>). Both answer with a flash and
+return to the tab they came from (<code>back</code>).</li>
+<li><strong>Organizations.</strong> An owner manages an organization from <code>/{org}</code> (New repository), <code>/orgs/{org}/people</code>
+(add, remove, role), <code>/orgs/{org}/teams</code> (new team with a permission), <code>/orgs/{org}/teams/{id}</code> (permission,
+members, repositories, delete) and <code>/orgs/{org}/settings</code> (name, description, default repository
+permission, delete). Everyone else sees the same pages read only, and the service checks every action
+again.</li>
+<li><strong>Live job log.</strong> <code>GET .../jobs/{job}/log/stream</code> sends <code>log</code> events (JSON with the step number and
+the html of its new lines, routed by the step's byte range), <code>steps</code> events (the state, icon and
+elapsed time of every step) and <code>done</code>. The page applies each <code>log</code> event to the panel of its step,
+ticks the elapsed times every second, and reloads once when the job is done. <code>tests/e2e/livelog.mjs</code>
+checks it in a real browser.</li>
+</ul>
+<h2 id="accessibility-and-page-times">Accessibility and page times <a class="anchor" href="#accessibility-and-page-times" aria-label="Link to this section">#</a></h2>
+<p>Recorded 2026-11-23 on a throwaway stack seeded by the end-to-end run (ch-cks), with axe-core 4.14.1
+in Chrome over the build host's internal network, so the times leave out the internet. 50 pages,
+each at 390 and 1440 wide, 100 loads in all.</p>
+<ul>
+<li><strong>Before this pass</strong>, 28 loads had serious or critical findings: link tab bars marked as ARIA tab
+lists without tabs, green text on green in diffs and on approved reviews, a scrollable diff that
+a keyboard could not reach, and a link in grey text told apart only by colour.</li>
+<li><strong>After it</strong>, none. What is left is moderate or minor: pages with more than one banner or no
+single <code>main</code> landmark, content outside a landmark, some skipped heading levels and empty table
+headers on action columns.</li>
+<li><strong>Page times</strong>: load event at 41 ms for half the pages, 76 ms for 95 of 100, 107 ms at most.</li>
+</ul>
+<p>To run it again: <code>deploy/dev/shots.sh</code> with <code>SHOTS_KEEP=1</code>, then axe-core in each page of
+<code>tests/e2e/shoot.mjs</code>, keeping findings marked serious or critical.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="git.html"><small>Previous</small>Git, SSH and the registry</a><a class="next" href="collab.html"><small>Next</small>Collaboration</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/web.md" rel="noopener">docs/web.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#layout">Layout</a></li><li class="l2"><a href="#rules-that-are-enforced-by-tests-not-by-care">Rules that are enforced by tests, not by care</a></li><li class="l2"><a href="#adding-a-page">Adding a page</a></li><li class="l2"><a href="#looking-at-it">Looking at it</a></li><li class="l2"><a href="#contract-additions">Contract additions</a></li><li class="l2"><a href="#the-browser-workspace">The browser workspace</a></li><li class="l3"><a href="#the-terminal">The terminal</a></li><li class="l2"><a href="#packages-pages">Packages pages</a></li><li class="l2"><a href="#environments">Environments</a></li><li class="l2"><a href="#not-built">Not built</a></li><li class="l2"><a href="#pull-requests-forks-search-and-mail">Pull requests, forks, search and mail</a></li><li class="l2"><a href="#review-threads-organizations-and-the-live-job-log">Review threads, organizations and the live job log</a></li><li class="l2"><a href="#accessibility-and-page-times">Accessibility and page times</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

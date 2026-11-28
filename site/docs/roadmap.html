@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codehaven roadmap | Codehaven</title>
+<meta name="description" content="How Codehaven gets built: seven streams, five milestones, one end-to-end test that grows with each milestone.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html" aria-current="page">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html" aria-current="page">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#1-how-the-work-runs">1. How the work runs</a></li><li class="l2"><a href="#2-milestones">2. Milestones</a></li><li class="l2"><a href="#3-m0-foundation-goes-first-alone">3. M0: Foundation (goes first, alone)</a></li><li class="l2"><a href="#4-stream-backlogs">4. Stream backlogs</a></li><li class="l3"><a href="#41-git-cratesch-git-cratesch-ssh-cratesch-registry">4.1 git (<code>crates/ch-git</code>, <code>crates/ch-ssh</code>, <code>crates/ch-registry</code>)</a></li><li class="l3"><a href="#42-identity-cratesch-auth-cratesch-notify">4.2 identity (<code>crates/ch-auth</code>, <code>crates/ch-notify</code>)</a></li><li class="l3"><a href="#43-collab-cratesch-collab">4.3 collab (<code>crates/ch-collab</code>)</a></li><li class="l3"><a href="#44-ci-cratesch-workflow-cratesch-ci">4.4 ci (<code>crates/ch-workflow</code>, <code>crates/ch-ci</code>)</a></li><li class="l3"><a href="#45-runner-crateshaven-runner-crateshaven-cli">4.5 runner (<code>crates/haven-runner</code>, <code>crates/haven-cli</code>)</a></li><li class="l3"><a href="#46-web-cratesch-web-cratesch-render">4.6 web (<code>crates/ch-web</code>, <code>crates/ch-render</code>)</a></li><li class="l2"><a href="#5-integration-order">5. Integration order</a></li><li class="l2"><a href="#6-the-end-to-end-test">6. The end-to-end test</a></li><li class="l2"><a href="#7-going-public">7. Going public</a></li><li class="l3"><a href="#who-can-run-ci">Who can run CI</a></li><li class="l2"><a href="#8-risks">8. Risks</a></li><li class="l2"><a href="#9-streams">9. Streams</a></li></ul></div></details>
+<article class="prose">
+<h1 id="codehaven-roadmap">Codehaven roadmap <a class="anchor" href="#codehaven-roadmap" aria-label="Link to this section">#</a></h1>
+<p>How Codehaven gets built: seven streams, five milestones, one end-to-end test
+that grows with each milestone. Design lives in <a href="architecture.html"><code>ARCHITECTURE.md</code></a>; this file is
+the build plan.</p>
+<h2 id="1-how-the-work-runs">1. How the work runs <a class="anchor" href="#1-how-the-work-runs" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Branches.</strong> Each stream works on <code>stream/&lt;name&gt;</code> and merges to <code>main</code> by
+pull request. Bring main in with <code>git merge main</code>, never rebase a pushed
+branch, never <code>--force</code> a shared branch.</li>
+<li><strong>Where code is edited.</strong> In a worktree inside the checkout:
+<code>.worktrees/&lt;stream&gt;</code>.</li>
+<li><strong>Where code is built and tested.</strong> On the build host, always:
+<code>deploy/dev/remote.sh &lt;stream&gt; "cargo nextest run -p &lt;crate&gt;"</code>. It checks
+disk, syncs to <code>$CH_REMOTE_ROOT/streams/&lt;stream&gt;</code> (<code>/srv/codehaven</code> in the
+examples), takes one of 3 build slots and runs inside <code>codehaven-builder</code>.
+No cargo builds on the local machine, which runs other work too, so keep it
+to at most 2 heavy processes (rsync and ssh are not heavy).</li>
+<li><strong>Who writes what.</strong> Each stream has a supervising agent. Narrow, settled
+coding goes to <code>glm -C &lt;worktree&gt; "..."</code>. The supervisor reads every diff,
+runs every command and test itself (glm cannot run commands), and owns the
+result. Judgement calls (API shape, schema, UI verdicts) stay with Claude.</li>
+<li><strong>Contracts.</strong> <code>ch-core</code> traits, <code>ch-api-types</code> DTOs and the migrations belong
+to the foundation stream. Another stream needing a change opens a small pull
+request against those files and says why. The integrator merges it the same
+day.</li>
+<li><strong>Definition of done for a task.</strong> Tests written first and green on the
+build host, clippy clean, <code>cargo build --workspace</code> green with main merged,
+and the milestone's e2e steps still green.</li>
+<li><strong>Commits</strong> end with <code>Co-Authored-By: Claude Opus 5.5 &lt;noreply@anthropic.com&gt;</code>.</li>
+<li><strong>UI copy</strong> follows plain writing: short, concrete, no em dashes, never blames
+the reader.</li>
+<li><strong>Dogfood.</strong> Once M2 is merged, Codehaven's own issues move into the deployed
+instance, and once M3 is merged its own CI runs there too.</li>
+</ul>
+<h2 id="2-milestones">2. Milestones <a class="anchor" href="#2-milestones" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Milestone</th><th scope="col">Outcome</th><th scope="col">Streams merging</th></tr></thead><tbody><tr><td><strong>M0 Foundation</strong></td><td>Workspace compiles on the build host, full v1 schema migrates, every crate exists as a wired skeleton, the dev stack and remote build loop work</td><td>foundation</td></tr><tr><td><strong>M1 Push and browse, then public</strong></td><td>First admin from the CLI, invites, sign in with optional two-factor, lockout and audit, create a repo, push over HTTP and SSH, browse code with highlighting, commits, branches, tags, blame, diffs, edit a file. Ends with the public gate and going public</td><td>git, identity, web, then integration</td></tr><tr><td><strong>M2 Collaborate</strong></td><td>Issues, labels, milestones, assignees, mentions, PRs with inline review, approvals, merge, squash and rebase, protection, notifications, webhooks, search, orgs and teams</td><td>collab, identity, web</td></tr><tr><td><strong>M3 CI</strong></td><td>Workflows on push, PR, manual and schedule, matrix and needs, a registered runner in Docker, live logs, artifacts, cache, secrets, green checks on commits and PRs, merge gate on required checks</td><td>ci, runner, web</td></tr><tr><td><strong>M4 Polish</strong></td><td>Releases, container registry, forks, repo import, CLI, admin pages, backups, mobile and accessibility pass, performance pass</td><td>all</td></tr><tr><td><strong>M5 Later</strong></td><td>Cross-repo code search, LFS, pull mirrors, composite actions, service containers, WebAuthn and passkeys</td><td>as needed</td></tr></tbody></table></div>
+<p>M1, M2 and M3 overlap. Every stream starts the moment M0 merges, builds against
+fakes, and merges into the milestone where its features are needed.</p>
+<h2 id="3-m0-foundation-goes-first-alone">3. M0: Foundation (goes first, alone) <a class="anchor" href="#3-m0-foundation-goes-first-alone" aria-label="Link to this section">#</a></h2>
+<p>Target: everything another stream needs to start without waiting. Nothing else
+starts until this merges.</p>
+<ol>
+<li>On the build host: <code>df -h / /opt /var /home</code>, then create <code>$CH_REMOTE_ROOT</code>
+with <code>src</code> and <code>streams</code> under it (<code>/srv/codehaven</code> in the examples) and
+clone the repo into <code>src</code>. Stop if any filesystem is at 85 percent.</li>
+<li>Workspace <code>Cargo.toml</code> with every crate in ARCHITECTURE.md section 3.1 as a
+skeleton, <code>[workspace.dependencies]</code> pinning every external crate,
+<code>rust-toolchain.toml</code> pinned to the current stable, edition 2024,
+<code>[profile.dev] debug = "line-tables-only"</code>.</li>
+<li><code>deploy/images/builder.Dockerfile</code>, <code>deploy/compose.dev.yml</code> (<code>pg-test</code> on
+tmpfs, <code>builder</code>, no published ports), <code>deploy/dev/remote.sh</code>,
+<code>diskcheck.sh</code>, <code>clean.sh</code>. Create the <code>codehaven</code> buildx builder.</li>
+<li><code>ch-core</code>: <code>Actor</code>, <code>Permission</code>, ids as newtypes, <code>Error</code> and its
+<code>IntoResponse</code>, config with <code>figment</code>, <code>DomainEvent</code>, every service trait in
+ARCHITECTURE.md section 4.3, <code>Worker</code>, <code>AppState</code>, <code>text::refs</code> with property tests.</li>
+<li><code>ch-db</code>: pool, the full v1 schema as migrations (ARCHITECTURE.md section 5.3), transaction
+helper, outbox <code>emit</code> and <code>consume</code> with cursor tests, job queue with
+<code>SKIP LOCKED</code> and tests for concurrent claimers, filesystem <code>BlobStore</code>,
+sealing helpers for secrets.</li>
+<li><code>ch-api-types</code>: REST v3 DTOs for every group in ARCHITECTURE.md section 11, webhook
+payloads, runner protocol, each with a serde round-trip snapshot.</li>
+<li><code>ch-testkit</code>: <code>TestDb</code> around <code>#[sqlx::test]</code>, <code>TempRepo</code> that builds git
+repos with commits, branches and conflicts, actor and fixture builders.</li>
+<li><code>codehaven</code> binary: <code>serve</code>, <code>migrate</code>, <code>doctor</code>, <code>healthcheck</code>, <code>admin</code>
+subcommands (stubbed to the traits), <code>hook</code> (stub), and <code>wiring.rs</code> calling
+every crate's <code>api_routes</code>, <code>web_routes</code>, <code>workers</code> and <code>build</code>. The gate
+layer with <code>ch_core::access::PUBLIC_ROUTES</code>, the security headers layer, the
+trusted proxy handling for <code>X-Forwarded-For</code>, the internal listener on
+<code>127.0.0.1:9300</code>, and <code>tests/anonymous_surface.rs</code> all land here in M0, so
+every route any stream adds is private from its first commit.</li>
+<li><code>deploy/compose.yml</code> with <code>postgres</code>, <code>server</code>, <code>dind</code>, <code>runner</code>, networks
+<code>backend</code> and <code>runners</code>, ports and data bind mounts from <code>.env</code>
+(<code>127.0.0.1:3200</code> and <code>127.0.0.1:2222</code> in the examples), plus the two proxy
+overlays: <code>deploy/compose.caddy.yml</code> runs the proxy inside the project, and
+<code>deploy/compose.proxy-network.yml</code> joins a network a proxy already owns,
+under an alias. First check with <code>docker network inspect</code> that no container
+already uses that alias. Joining an existing network changes nothing for
+that proxy until its site block points at the alias, which happens at the
+end of M1, not here.</li>
+<li><code>tests/e2e</code>: the <code>ch-e2e</code> harness, <code>compose.e2e.yml</code>, a step runner, and step
+0: the stack comes up, <code>/readyz</code> is 200, <code>codehaven doctor</code> passes.</li>
+<li><code>cargo sqlx prepare --workspace</code>, commit <code>.sqlx/</code>.</li>
+<li>Bring up the stack on the build host and check
+<code>ss -tlnp | grep -E '3200|2222'</code> shows only <code>127.0.0.1</code>. Do not touch the
+proxy's config.</li>
+</ol>
+<p>Done when: <code>deploy/dev/remote.sh foundation "cargo nextest run --workspace"</code> is
+green, the instance answers <code>/readyz</code> through <code>ssh -L</code>, and e2e step 0 passes.</p>
+<p>After M0 the foundation stream becomes the <strong>integration</strong> stream: it owns
+<code>crates/codehaven</code>, contract changes, <code>tests/e2e</code>, deploys to the <code>codehaven</code>
+project, and merges stream pull requests in the order of section 5 below.</p>
+<h2 id="4-stream-backlogs">4. Stream backlogs <a class="anchor" href="#4-stream-backlogs" aria-label="Link to this section">#</a></h2>
+<p>Each stream lists its work by milestone. Tests are written before code.</p>
+<h3 id="41-git-cratesch-git-cratesch-ssh-cratesch-registry">4.1 git (<code>crates/ch-git</code>, <code>crates/ch-ssh</code>, <code>crates/ch-registry</code>) <a class="anchor" href="#41-git-cratesch-git-cratesch-ssh-cratesch-registry" aria-label="Link to this section">#</a></h3>
+<p>M1:</p>
+<ul>
+<li><code>GitCommand</code> wrapper: clean env, timeouts, streaming, <code>--end-of-options</code>.</li>
+<li>Repo storage: create, delete, shard paths, hooks path, <code>Repos</code> trait over the
+<code>repositories</code>, <code>repo_collaborators</code>, <code>repo_redirects</code> tables.</li>
+<li><code>gix</code> reads: refs, resolve, tree, blob (size limits, binary detection),
+log with path filter, commit, counts.</li>
+<li>Diff parser and <code>compare</code>, blame parser, archive, <code>git grep</code>.</li>
+<li>Smart HTTP for upload-pack and receive-pack, gzip bodies, protocol v2.
+Tested with the real <code>git</code> client against a live router.</li>
+<li>Hook socket and the push pipeline: pre-receive permission and protection
+checks, post-receive events.</li>
+<li><code>ch-ssh</code>: russh server, key auth through <code>Authn</code>, exec of the three git
+commands, host key generation. Tested with <code>ssh</code> and <code>GIT_SSH_COMMAND</code>.</li>
+<li><code>commit_file_change</code> with compare-and-swap.</li>
+<li>Repo REST endpoints in ARCHITECTURE.md section 11 (repos, branches, tags, commits, compare,
+contents, git data, readme, archives).</li>
+</ul>
+<p>M2:</p>
+<ul>
+<li><code>merge</code> (merge commit, squash, rebase) and <code>test_merge</code>, with a conflict
+matrix in tests. <code>refs/pull/&lt;n&gt;/head</code> and <code>/merge</code>.</li>
+<li>Branch protection storage and evaluation, protection REST endpoints.</li>
+</ul>
+<p>M4:</p>
+<ul>
+<li>Forks that copy their objects and borrow nothing, import from URL, <code>git gc</code> jobs.</li>
+<li><code>ch-registry</code>: OCI distribution, token auth, uploads, mounts, GC, passing the
+OCI conformance suite in a container on the build host.</li>
+</ul>
+<h3 id="42-identity-cratesch-auth-cratesch-notify">4.2 identity (<code>crates/ch-auth</code>, <code>crates/ch-notify</code>) <a class="anchor" href="#42-identity-cratesch-auth-cratesch-notify" aria-label="Link to this section">#</a></h3>
+<p>M1:</p>
+<ul>
+<li>Accounts: users, emails, Argon2id passwords with the dummy-hash timing guard
+and the hashing semaphore, the password policy (zxcvbn, see ARCHITECTURE.md 7.4).</li>
+<li>Invites (ARCHITECTURE.md section 7.4): create, list, revoke, single-use accept
+in one transaction, a test that races 20 accepts of one link and gets one
+account, and identical responses for expired, used, revoked and made-up links.
+There is no sign-up code path to write.</li>
+<li>One-time links for set-password and reset, <code>admin create-user</code>,
+<code>admin reset-password</code>, <code>admin unlock</code>, <code>admin suspend</code>, <code>admin invite</code>.</li>
+<li>Sessions per ARCHITECTURE.md section 7.6: <code>__Host-</code> cookie, rotation, idle and absolute
+expiry, sign out everywhere, the sessions list. CSRF tokens, the pre-session
+double-submit cookie, and the <code>Origin</code> check.</li>
+<li>Rate limits keyed by the trusted client IP, and lockout with doubling, with
+tests that a locked account still works with a token and an SSH key.</li>
+<li>TOTP and recovery codes (moved into M1 because admin pages need them before
+the instance goes public).</li>
+<li>Audit events for every action in ARCHITECTURE.md section 7.7 that M1 covers.</li>
+<li><code>Authn</code>: session, Basic, bearer and PAT, SSH fingerprint lookup.</li>
+<li><code>Authz</code>: the permission model in ARCHITECTURE.md section 7.2, with a table-driven test of
+every row.</li>
+<li>PATs with scopes, SSH keys with fingerprint checks, deploy keys.</li>
+<li><code>admin create-user</code>, <code>admin reset-password</code>.</li>
+<li>User REST endpoints.</li>
+</ul>
+<p>M2:</p>
+<ul>
+<li>Orgs, members, teams, team repo permissions, org REST endpoints.</li>
+<li>OIDC with a mock provider in tests (a small axum issuer in <code>ch-testkit</code>):
+link to an existing account, or finish an invite. A test proves an unknown
+OIDC identity with no invite gets no account.</li>
+<li><code>ch-notify</code>: notification fan-out from events with reasons, inbox, watch
+levels, mark read and done, unsubscribe; webhooks with signing, retries,
+delivery log, redeliver, private address refusal; SMTP email behind config.</li>
+</ul>
+<h3 id="43-collab-cratesch-collab">4.3 collab (<code>crates/ch-collab</code>) <a class="anchor" href="#43-collab-cratesch-collab" aria-label="Link to this section">#</a></h3>
+<p>M2:</p>
+<ul>
+<li>Issues: shared numbering, labels, milestones, assignees, comments, reactions,
+lock, close reasons, timeline events, templates, filter query language.</li>
+<li>Mentions and cross references with <code>ch_core::text::refs</code>.</li>
+<li>Pull requests: create from branch, draft, head and base tracking, <code>pr-sync</code>
+consumer (new commits, outdated comments, stale approvals, closing keywords,
+merged-by-push detection).</li>
+<li>Reviews: pending reviews, inline comments on lines and ranges, suggestions and
+"apply suggestion", threads and resolution, review requests, CODEOWNERS.</li>
+<li>Merge gate and the merge endpoint calling <code>GitService::merge</code>, delete branch,
+auto-merge.</li>
+<li>Search over repos, issues, PRs and users, plus code search through
+<code>GitService::grep</code>.</li>
+<li>Issue, PR, review and search REST endpoints.</li>
+</ul>
+<p>M4:</p>
+<ul>
+<li>Releases, generated notes, assets, release REST endpoints.</li>
+</ul>
+<h3 id="44-ci-cratesch-workflow-cratesch-ci">4.4 ci (<code>crates/ch-workflow</code>, <code>crates/ch-ci</code>) <a class="anchor" href="#44-ci-cratesch-workflow-cratesch-ci" aria-label="Link to this section">#</a></h3>
+<p>M3, in this order because the runner stream needs <code>ch-workflow</code> early:</p>
+<ul>
+<li><code>ch-workflow</code> first: typed model with spans, validation with all errors at
+once, the expression engine with property tests, matrix expansion, trigger
+matching. Fixture corpus of 30 real-world workflow files from open source
+projects (licence permitting) that must parse or fail with the right error.</li>
+<li><code>ci-triggers</code> consumer, workflow discovery and validation results. Runs are
+created only when the repo owner has <code>can_run_ci</code>, and <code>container.options</code>
+is checked against the safe list in ARCHITECTURE.md section 2.5.</li>
+<li>Runs, jobs, steps, <code>needs</code> scheduling, <code>if:</code>, concurrency groups, cancel, re-run.</li>
+<li>Runner registration tokens and the runner protocol in ARCHITECTURE.md section 9.4, with
+leases and expiry.</li>
+<li>Logs: file append, step ranges, broadcast, SSE, retention.</li>
+<li>Artifacts and cache endpoints on the blob store, retention and eviction.</li>
+<li>Secrets and variables, sealed, scoped, never sent to fork PR jobs.</li>
+<li>Check runs and commit statuses, <code>Checks</code> trait, <code>required_satisfied</code>.</li>
+<li>Schedules with <code>croner</code>, with an injected clock in tests.</li>
+<li>Manual dispatch with inputs, fork PR approval.</li>
+<li>Actions, statuses and checks REST endpoints.</li>
+</ul>
+<h3 id="45-runner-crateshaven-runner-crateshaven-cli">4.5 runner (<code>crates/haven-runner</code>, <code>crates/haven-cli</code>) <a class="anchor" href="#45-runner-crateshaven-runner-crateshaven-cli" aria-label="Link to this section">#</a></h3>
+<p>M3:</p>
+<ul>
+<li><code>register</code> and <code>run</code> commands, <code>.runner</code> credential file, config with label to
+image mapping and concurrency.</li>
+<li>Protocol client from <code>ch-api-types::runner</code> with retries and backoff,
+tested against a fake server in the test itself.</li>
+<li>Docker executor with <code>bollard</code>: image pull, one container per job, `docker
+exec` per step, limits, cleanup on every exit path including cancel and
+runner shutdown.</li>
+<li>Step evaluation with <code>ch-workflow</code>, the <code>GITHUB_*</code> and <code>CODEHAVEN_*</code>
+environment, output, env, path and summary files, <code>hashFiles</code>.</li>
+<li>Secret masking with tests for multi-line and <code>::add-mask::</code>.</li>
+<li>Built-in actions: checkout, cache, upload-artifact, download-artifact,
+<code>docker://</code>.</li>
+<li><code>codehaven-job:trixie</code> image.</li>
+<li>Disk guard and image pruning inside <code>dind</code>.</li>
+</ul>
+<p>M4:</p>
+<ul>
+<li><code>haven</code> CLI from ARCHITECTURE.md section 13, credential helper, keyring storage, built against
+<code>ch-api-types</code> and tested against a live server from the e2e stack.</li>
+</ul>
+<h3 id="46-web-cratesch-web-cratesch-render">4.6 web (<code>crates/ch-web</code>, <code>crates/ch-render</code>) <a class="anchor" href="#46-web-cratesch-web-cratesch-render" aria-label="Link to this section">#</a></h3>
+<p>Starts in M0's shadow with the <code>demo</code> feature and fake services, so every page
+exists before its backend.</p>
+<p>M1:</p>
+<ul>
+<li>Design tokens, light and dark, theme toggle, layout, header, repo sidebar,
+the mark, Lucide sprite, empty states.</li>
+<li><code>ch-render</code>: markdown (GFM, sanitized, mentions and refs linked, relative
+links resolved in READMEs), highlighting with our class palettes, ANSI to
+HTML, generated SVG avatars.</li>
+<li>Sign in, two-factor prompt, accept invite, set password, zero-accounts
+sign-in page, the bad-invite page. Site admin invites (create, copy link,
+list, revoke) and audit log, settings (profile, keys, tokens, two-factor,
+sessions, security log, appearance), new repo,
+repo home, tree, blob, raw, blame, history, commits, commit, branches, tags,
+compare, edit file and new file.</li>
+</ul>
+<p>M2:</p>
+<ul>
+<li>Issues list and filters, issue page, new issue, labels, milestones.</li>
+<li>PR list, new PR, PR conversation, commits, files with unified and split diff,
+inline review comments and the review submit flow, merge box with the gate
+checklist.</li>
+<li>Notifications inbox and badge, search page, org and team pages, repo settings
+(collaborators, protections, webhooks).</li>
+</ul>
+<p>M3:</p>
+<ul>
+<li>Actions: runs list, run graph of jobs and needs, job page with collapsible
+steps and live log over SSE, workflow list with validation errors, manual run
+form, secrets and runners settings, status icons everywhere a commit appears.</li>
+</ul>
+<p>M4:</p>
+<ul>
+<li>Releases and packages pages, site admin, keyboard shortcuts, file finder.</li>
+<li>The phone pass at 390 px and the accessibility pass (ARCHITECTURE.md section 12.5) on every
+page, with screenshots in light and dark reviewed before merge.</li>
+</ul>
+<p>Screenshots come from a headless Chromium container on the build host driven by
+<code>chromiumoxide</code> in <code>crates/ch-web/tests/screens.rs</code>, at 390 x 844 and
+1280 x 800, light and dark. A Sonnet agent describes what is on each one; the
+look is judged by Claude.</p>
+<h2 id="5-integration-order">5. Integration order <a class="anchor" href="#5-integration-order" aria-label="Link to this section">#</a></h2>
+<ol>
+<li><strong>foundation</strong> merges alone. Everyone branches from it.</li>
+<li><strong>git</strong>, <strong>identity</strong> and <strong>web</strong> (demo mode) build in parallel. <strong>ci</strong>
+starts <code>ch-workflow</code> at the same time. <strong>runner</strong> starts against a fake server
+and <code>ch-workflow</code> as it lands.</li>
+<li>M1 merge order: identity (Authn and Authz first, since git checks
+permissions with them), then git, then web's M1 pages switched from demo
+fakes to real services. Gate: e2e steps 0 to 9.</li>
+<li><strong>Go public.</strong> Integration deploys M1, runs the public gate, puts the
+instance behind the chosen proxy and makes the first admin account
+(section 7). Until then the instance is reachable only through <code>ssh -L</code>.
+Between going public and the first sign-in it has zero accounts, so all
+anyone sees is the sign-in page.</li>
+<li>M2 merge order: git's merge and protection work, then collab, then identity's
+orgs, notify and webhooks, then web's M2 pages. Gate: e2e steps 0 to 17
+without the CI parts.</li>
+<li>M3 merge order: ci, then runner, then web's actions pages. Gate: the full
+e2e test.</li>
+<li>M4 items merge as they finish, each with its own e2e extension.</li>
+</ol>
+<p>Each merge: the stream merges main into its branch, runs its tests and
+<code>cargo build --workspace</code> on the build host, the integrator runs the e2e gate
+in the <code>codehaven-e2e</code> project, then merges the pull request and redeploys.
+After going public, every redeploy ends with <code>deploy/dev/public-smoke.sh</code>
+(section 7), and a failure rolls the deploy back.</p>
+<h2 id="6-the-end-to-end-test">6. The end-to-end test <a class="anchor" href="#6-the-end-to-end-test" aria-label="Link to this section">#</a></h2>
+<p><code>tests/e2e</code> (crate <code>ch-e2e</code>) runs inside the <code>codehaven-e2e</code> compose project
+on the build host against a fresh stack, with no published ports. It drives
+the system the way a person would: real <code>git</code>, real <code>ssh</code>, HTTP forms with
+CSRF, the REST API, and one SSE subscription. Each step is a function so
+milestones can run a prefix.</p>
+<p>The e2e stack sets <code>http.trusted_proxies</code> to the harness's own subnet, so the
+harness can send <code>X-Forwarded-For</code> and act as many client IPs. That exercises
+the same trusted proxy path the reverse proxy uses in production, and lets
+rate limit and lockout checks run without tripping each other.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Step</th><th scope="col">Action</th><th scope="col">Check</th></tr></thead><tbody><tr><td>0</td><td>Stack up with zero accounts</td><td><code>/healthz</code> says <code>ok</code>, <code>codehaven healthcheck</code> and <code>codehaven doctor</code> pass, <code>/login</code> shows "No accounts yet"</td></tr><tr><td>1</td><td>Signed-out sweep: <code>/</code>, <code>/explore</code>, <code>/root</code>, <code>/nobody/nothing</code>, <code>/signup</code>, <code>/api/v3/user</code>, <code>/api/v3/meta</code>, <code>/api/v3/repos/x/y</code>, <code>/x/y.git/info/refs?service=git-upload-pack</code>, <code>/v2/</code>, <code>/api/runner/v1/jobs/request</code>, <code>/metrics</code>, <code>/readyz</code></td><td>Pages give <code>303</code> to <code>/login</code>, API <code>401</code>, git <code>401</code> with a Basic challenge, registry <code>401</code> with a Bearer challenge, runner <code>401</code>. <code>/metrics</code> and <code>/readyz</code> are not on the public listener, so they get the same <code>303</code> as any unknown page. Responses for paths that exist and paths that don't are byte-identical. <code>/login</code> carries every header in ARCHITECTURE.md section 7.6</td></tr><tr><td>2</td><td><code>codehaven admin create-user --username root --admin --password-stdin</code>, then root signs in through the form</td><td>Signed in. Site admin pages answer "Turn on two-factor first". Root turns on TOTP with codes the harness computes, signs out and back in with a code, and the admin pages open</td></tr><tr><td>3</td><td>Root creates an invite for <code>alice</code> with CI allowed in Site admin &gt; Invites, and one for <code>bob</code> with <code>codehaven admin invite create</code>. Alice and Bob accept through the invite form</td><td>Two accounts, each with <code>invited_by = root</code>. Reusing Alice's link, a revoked invite, an invite whose <code>expires_at</code> the harness moved into the past, and a made-up token all get the same "doesn't work any more" page and create nothing. 20 parallel accepts of one fresh link create exactly one account</td></tr><tr><td>4</td><td>Alice creates a token in settings and adds an ed25519 key through <code>POST /api/v3/user/keys</code></td><td>Token works on <code>/api/v3/user</code>, key fingerprint stored. A token with an expiry in the past is refused</td></tr><tr><td>5</td><td>From one client IP, 11 sign-in attempts in a minute. From rotating IPs, 10 wrong passwords for Bob</td><td>The 11th is <code>429</code>. Bob is locked: his right password is refused with the lockout message, and his locked state does not block Alice. <code>codehaven admin unlock bob</code> clears it and Bob signs in</td></tr><tr><td>6</td><td>Alice creates <code>alice/demo</code> with <code>POST /api/v3/user/repos</code></td><td>Repo page shows the empty-repo instructions. Bob (signed in, not a collaborator) gets <code>404</code> for it, the same as a repo that doesn't exist</td></tr><tr><td>7</td><td>Alice pushes <code>main</code> over HTTP with the token: a README, <code>src/lib.rs</code>, and <code>.codehaven/workflows/ci.yml</code> (push and pull_request; a <code>lint</code> job, then a <code>test</code> job that needs it with a 2-cell matrix, one <code>run</code> step printing <code>hello from codehaven</code>, and <code>upload-artifact</code>)</td><td><code>git push</code> exits 0, <code>/branches</code> lists <code>main</code>, the blob page for <code>src/lib.rs</code> contains highlight classes. A push with no credentials and a push with a wrong token both fail with <code>401</code></td></tr><tr><td>8</td><td>Alice branches <code>feature</code> from <code>main</code>, changes <code>src/lib.rs</code>, and pushes it over SSH on port 2222 with <code>GIT_SSH_COMMAND</code></td><td>Push exits 0, branch listed, a shell login attempt is refused, an unknown key is refused</td></tr><tr><td>9</td><td>Alice adds Bob as a write collaborator; Bob clones over HTTP with his password</td><td>Clone matches <code>main</code>'s sha. After Bob turns on two-factor, the same password clone fails with the message to use a token</td></tr><tr><td>10</td><td>Alice protects <code>main</code>: 1 approval, required checks <code>ci / test (a)</code> and <code>ci / test (b)</code>, no direct push</td><td>A direct push by Bob to <code>main</code> is rejected with the protection message</td></tr><tr><td>11</td><td>Bob opens issue #1 with label <code>bug</code> mentioning <code>@alice</code></td><td>Alice's <code>/api/v3/notifications</code> has a <code>mention</code> entry</td></tr><tr><td>12</td><td>Alice registers a webhook to the harness's own listener for <code>pull_request</code> and <code>push</code></td><td><code>ping</code> delivery arrives with a valid <code>X-Hub-Signature-256</code></td></tr><tr><td>13</td><td>Alice opens PR #2 <code>feature</code> to <code>main</code> with body <code>Fixes #1</code></td><td>PR page renders the diff, a workflow run starts for the PR head</td></tr><tr><td>14</td><td>Root issues a runner token in Site admin &gt; Runners. The stack's <code>haven-runner</code> registers with it and picks up the jobs</td><td>Registering a second time with the same token fails, and so does a made-up token. The SSE stream for a <code>test</code> job delivers <code>hello from codehaven</code> before the job completes; <code>lint</code> finishes before <code>test</code> starts; both matrix check runs end <code>success</code>; the artifact downloads</td></tr><tr><td>15</td><td>Before review, Alice tries to merge</td><td><code>405</code> with the gate reasons: approval missing</td></tr><tr><td>16</td><td>Bob adds an inline comment on line 1 of <code>src/lib.rs</code> in the PR, then approves</td><td>Review comment has path, line and side; review state <code>APPROVED</code></td></tr><tr><td>17</td><td>Alice squash merges with <code>PUT /api/v3/repos/alice/demo/pulls/2/merge</code></td><td><code>merged: true</code>, <code>main</code> has one new commit, issue #1 is closed by the PR, the webhook got <code>pull_request</code> closed with <code>merged: true</code></td></tr><tr><td>18</td><td>The push to <code>main</code> triggers the workflow again</td><td><code>GET /api/v3/repos/alice/demo/commits/main/check-runs</code> shows every check run <code>completed</code> with conclusion <code>success</code>; the repo home page shows the success status icon beside the latest commit</td></tr><tr><td>19</td><td>Root opens Site admin &gt; Audit log</td><td>It lists, with client IPs: root's sign-ins and two-factor setup, both invite creations and accepts, the refused invite attempts, Bob's lockout and unlock, Alice's token and key, the runner token and registration</td></tr><tr><td>20</td><td>Screenshots of the sign-in, invite, repo home, PR and job pages at 390 and 1280 px, light and dark</td><td>Files saved as test artifacts for visual review</td></tr></tbody></table></div>
+<p>M1 runs steps 0 to 9 (step 7 skips the workflow checks). M2 adds 10 to 13 and 15
+to 17 with checks not yet required. M3 runs everything.</p>
+<h2 id="7-going-public">7. Going public <a class="anchor" href="#7-going-public" aria-label="Link to this section">#</a></h2>
+<p>A checklist the integration stream runs once, at the end of M1, and never
+before the gate passes.</p>
+<ol>
+<li><strong>Pass the anonymous-surface gate with zero accounts.</strong> E2e steps 0 to 9
+green in <code>codehaven-e2e</code>; <code>anonymous_surface.rs</code> green; the deployed
+instance still has zero accounts, so there is nothing to claim and no way
+for a stranger to make one. If the proxy network mode is used, `docker
+network inspect` shows the server's alias resolving to the Codehaven
+server and nothing else.</li>
+<li><strong>Run the smoke test from outside.</strong> `deploy/dev/public-smoke.sh
+&lt;base-url&gt;`, from a machine that is not the host, while the instance is
+still reachable only through <code>ssh -L</code>: <code>/login</code> is <code>200</code> with every
+security header, the step 1 sweep gives the same answers as on the server
+itself, a signed-out <code>git ls-remote</code> fails with <code>401</code>, and an identity
+header from a proxy signs nobody in.</li>
+<li><strong>Put the instance behind the chosen proxy.</strong> Either run the proxy inside
+the project (<code>deploy/compose.caddy.yml</code> with <code>Caddyfile.example</code>) or join
+the network of a proxy that already runs
+(<code>deploy/compose.proxy-network.yml</code>). Point its site block for the
+instance's host at the server's alias, set <code>CODEHAVEN_TRUSTED_PROXIES</code> to
+that network's subnet, and make the proxy drop any <code>Remote-User</code> style
+header a client sends. Back the proxy config up, change only that one
+site block, validate, reload gracefully, then run the smoke test from
+step 2 again against the public address (<code>https://code.example.com</code> in
+the examples): TLS is valid and every check still passes. Confirm the
+other sites the proxy serves still answer. If any check fails, restore
+the backup, validate and reload again.</li>
+<li><strong>Make the first admin.</strong> On the host, as root, run
+<code>deploy/prod/first-admin.sh &lt;username&gt; &lt;email&gt;</code>. It refuses unless the
+instance has no accounts at all. It prints a link that works for 1 hour:
+open it, choose a password, then scan the two-factor code with an
+authenticator app. If the link expires, `codehaven admin reset-password
+&lt;username&gt;` prints a fresh one. Every account after the first comes from
+an invite: in Site admin &gt; Invites, make a link and send it to them. Each
+link works once and expires in 7 days.</li>
+</ol>
+<p>Between steps 3 and 4 the instance is public with zero accounts, so all anyone
+sees is the sign-in page. After going public, every redeploy ends with the
+smoke test from step 2, and a failure rolls the deploy back.</p>
+<h3 id="who-can-run-ci">Who can run CI <a class="anchor" href="#who-can-run-ci" aria-label="Link to this section">#</a></h3>
+<p>Every invited account can push code, so CI is where an invite turns into code
+running on the host. Jobs run inside the separate <code>dind</code> daemon with limits
+and no host socket (ARCHITECTURE.md section 2.5), and on top of that
+workflows only run for repos whose owner a site admin has marked
+<code>can_run_ci</code>. The first admin account has it. An invite can grant it, off by
+default. A repo without it shows "Workflows are off for this account. Ask an
+admin to turn them on." on its Actions tab.</p>
+<h2 id="8-risks">8. Risks <a class="anchor" href="#8-risks" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Risk</th><th scope="col">Mitigation</th></tr></thead><tbody><tr><td>Contract churn in <code>ch-core</code> stalls streams</td><td>Traits written in full in M0; changes are small same-day pull requests; fakes absorb the rest</td></tr><tr><td>Disk on the build host</td><td><code>diskcheck.sh</code> before every build, capped sccache, <code>line-tables-only</code> debug info, <code>clean.sh</code> after merges, runner disk guard</td></tr><tr><td>Starving other services on the build host</td><td>3 build slots, 3 CPUs each, runner concurrency 2 with per-job limits</td></tr><tr><td>A CI job escaping onto the host</td><td>Separate <code>dind</code> daemon, no host socket, jobs off the <code>backend</code> network</td></tr><tr><td>Git edge cases (huge repos, odd refs, protocol v2)</td><td>The real <code>git</code> binary does the protocol and writes; tests use the real client</td></tr><tr><td>Workflow compatibility gaps</td><td>Fixture corpus of real workflows; unsupported features fail with a line number and a plain message</td></tr><tr><td>UI drifts toward a copy of another forge</td><td>Our own mark, palette, sidebar navigation and icons; Claude reviews screenshots against ARCHITECTURE.md section 12.3</td></tr><tr><td>Merging three-way conflicts in parallel branches</td><td>Disjoint directories per stream; shared files are only foundation's</td></tr><tr><td>A stranger gets in on the public instance</td><td>No sign-up route exists; deny-by-default gate in M0 with a test over every route; invites single use and hashed; no web setup page; Argon2id, lockout, rate limits, two-factor for admins; smoke test after every deploy</td></tr><tr><td>A new route leaks data to signed-out visitors</td><td>Routes are private unless listed in <code>PUBLIC_ROUTES</code> or <code>PUBLIC_REPO_ROUTES</code>, which only Claude reviews changes to; <code>anonymous_surface.rs</code> fails the build</td></tr><tr><td>Someone locks the admin out by guessing at the password</td><td>Lockout blocks only password sign-in; tokens and SSH keys keep working; <code>admin unlock</code> on the host</td></tr><tr><td>An invited friend's CI job attacks the host</td><td><code>can_run_ci</code> off by default; jobs in the separate <code>dind</code> daemon with limits; <code>container.options</code> restricted to a safe list (ARCHITECTURE.md section 2.5)</td></tr><tr><td>The proxy edit breaks other sites</td><td>Backup, <code>diff</code> showing only this instance's block, config validation before a graceful reload, other sites checked after, one-step rollback</td></tr></tbody></table></div>
+<h2 id="9-streams">9. Streams <a class="anchor" href="#9-streams" aria-label="Link to this section">#</a></h2>
+<p>STREAMS:
+foundation | Cargo.toml, rust-toolchain.toml, .sqlx/, crates/ch-core, crates/ch-db, crates/ch-api-types, crates/ch-testkit, crates/codehaven, deploy/, tests/e2e, xtask/ (schema, contracts, deny-by-default gate, security headers, compose, e2e, going public) | none (goes first, then becomes integration) | build host
+git | crates/ch-git, crates/ch-ssh, crates/ch-registry | foundation | build host
+identity | crates/ch-auth, crates/ch-notify (accounts, invites, sessions, two-factor, lockout, audit, PATs, SSH keys, authz, orgs, notifications, webhooks) | foundation | build host
+collab | crates/ch-collab | foundation (calls git and identity through ch-core traits) | build host
+ci | crates/ch-workflow, crates/ch-ci | foundation | build host
+runner | crates/haven-runner, crates/haven-cli | foundation, ci (ch-workflow) | build host (needs Docker for the executor tests)
+web | crates/ch-web, crates/ch-render | foundation | build host (builds and screenshots; visual review through ssh -L from the local machine)</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="architecture.html"><small>Previous</small>Architecture</a><a class="next" href="design/pages.html"><small>Next</small>Pages design</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/ROADMAP.md" rel="noopener">ROADMAP.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#1-how-the-work-runs">1. How the work runs</a></li><li class="l2"><a href="#2-milestones">2. Milestones</a></li><li class="l2"><a href="#3-m0-foundation-goes-first-alone">3. M0: Foundation (goes first, alone)</a></li><li class="l2"><a href="#4-stream-backlogs">4. Stream backlogs</a></li><li class="l3"><a href="#41-git-cratesch-git-cratesch-ssh-cratesch-registry">4.1 git (<code>crates/ch-git</code>, <code>crates/ch-ssh</code>, <code>crates/ch-registry</code>)</a></li><li class="l3"><a href="#42-identity-cratesch-auth-cratesch-notify">4.2 identity (<code>crates/ch-auth</code>, <code>crates/ch-notify</code>)</a></li><li class="l3"><a href="#43-collab-cratesch-collab">4.3 collab (<code>crates/ch-collab</code>)</a></li><li class="l3"><a href="#44-ci-cratesch-workflow-cratesch-ci">4.4 ci (<code>crates/ch-workflow</code>, <code>crates/ch-ci</code>)</a></li><li class="l3"><a href="#45-runner-crateshaven-runner-crateshaven-cli">4.5 runner (<code>crates/haven-runner</code>, <code>crates/haven-cli</code>)</a></li><li class="l3"><a href="#46-web-cratesch-web-cratesch-render">4.6 web (<code>crates/ch-web</code>, <code>crates/ch-render</code>)</a></li><li class="l2"><a href="#5-integration-order">5. Integration order</a></li><li class="l2"><a href="#6-the-end-to-end-test">6. The end-to-end test</a></li><li class="l2"><a href="#7-going-public">7. Going public</a></li><li class="l3"><a href="#who-can-run-ci">Who can run CI</a></li><li class="l2"><a href="#8-risks">8. Risks</a></li><li class="l2"><a href="#9-streams">9. Streams</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

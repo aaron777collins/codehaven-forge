@@ -42,6 +42,7 @@ services:
     environment:
       CODEHAVEN__SERVER__EXTERNAL_URL: ${CODEHAVEN_EXTERNAL_URL:?set CODEHAVEN_EXTERNAL_URL in .env to the URL people open, for example https://code.example.com}
       CODEHAVEN__SERVER__NAME: ${CODEHAVEN_NAME:-Codehaven}
+      CODEHAVEN__SERVER__DOCS_URL: ${CODEHAVEN_DOCS_URL-https://aaron777collins.github.io/codehaven-forge/}
       # The network your proxy reaches the server from. Only a peer inside it may set
       # X-Forwarded-For and X-Forwarded-Proto. A JSON list, for example '["10.20.16.0/24"]'; [] when
       # nothing sits in front.

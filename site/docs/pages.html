@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pages: static sites from a branch | Codehaven</title>
+<meta name="description" content="A repository can publish a static site from a branch, from its root or its docs folder, like GitHub Pages.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html" aria-current="page">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html" aria-current="page">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#turn-pages-on-for-the-instance-operator">Turn Pages on for the instance (operator)</a></li><li class="l2"><a href="#your-first-site">Your first site</a></li><li class="l2"><a href="#publish-a-site">Publish a site</a></li><li class="l2"><a href="#who-can-see-a-site">Who can see a site</a></li><li class="l2"><a href="#how-a-site-is-kept-apart-from-the-app">How a site is kept apart from the app</a></li><li class="l2"><a href="#limits">Limits</a></li></ul></div></details>
+<article class="prose">
+<h1 id="pages-static-sites-from-a-branch">Pages: static sites from a branch <a class="anchor" href="#pages-static-sites-from-a-branch" aria-label="Link to this section">#</a></h1>
+<p>A repository can publish a static site from a branch, from its root or its <code>docs</code> folder, like GitHub Pages. Every push to that branch publishes a new copy. A copy that fails to publish says why, and the last good copy keeps serving. An older copy can be put back. The design is in <a href="design/pages.html">Pages design</a>.</p>
+<h2 id="turn-pages-on-for-the-instance-operator">Turn Pages on for the instance (operator) <a class="anchor" href="#turn-pages-on-for-the-instance-operator" aria-label="Link to this section">#</a></h2>
+<p>Pages is off until the operator names a host for it. Until then, a repository's Settings, Pages tab shows only "Pages is not set up here. The server's administrator has not given Codehaven a pages host, so sites cannot be published on this instance."</p>
+<ol>
+<li>
+<p><strong>Pick the host name.</strong> It must be neither the app's host nor a parent of it, or the server refuses to start (a parent domain would share cookies with the app). If the app is <code>code.example.com</code>, use <code>pages.example.com</code>. Do not use <code>example.com</code>.</p>
+</li>
+<li>
+<p><strong>Add a DNS record</strong> for it that points at the same machine as the app: an <code>A</code> record (and <code>AAAA</code> if the app has one) for <code>pages.example.com</code> with the same address as <code>code.example.com</code>, or a <code>CNAME</code> to it.</p>
+</li>
+<li>
+<p><strong>Set it in the env file</strong> and deploy again:</p>
+<pre tabindex="0"><code class="language-sh">CODEHAVEN_PAGES_HOST=pages.example.com</code></pre>
+<pre tabindex="0"><code class="language-sh">sudo bash deploy/prod/up.sh</code></pre>
+</li>
+<li>
+<p><strong>Give the proxy a site for the name.</strong> With the bundled Caddy (<code>CODEHAVEN_PROXY=caddy</code>), edit <code>deploy/Caddyfile.example</code>: at the bottom is a commented block for the pages host. Remove the leading <code>#</code> from its lines, and replace <code>{$CODEHAVEN_PAGES_HOST}</code> with the literal name, because the Caddy container is not given that variable:</p>
+<pre tabindex="0"><code>pages.example.com {
+    request_header -Cookie
+    request_header -Authorization
+    request_header -Proxy-Authorization
+    request_header -Remote-User
+    request_header -Remote-Groups
+    request_header -Remote-Email
+    request_header -Remote-Name
+    header -Set-Cookie
+    reverse_proxy server:3200
+}</code></pre>
+<p>Then recreate Caddy: <code>deploy/compose.sh up -d caddy</code>. (Instead of writing the literal name, you can pass the variable on with an extra compose file: <code>services: { caddy: { environment: { CODEHAVEN_PAGES_HOST: pages.example.com } } }</code>, and point <code>CODEHAVEN_COMPOSE_EXTRA</code> at it.) Caddy gets a certificate for the new name on its own once DNS points at the machine. The block drops <code>Cookie</code>, <code>Authorization</code> and identity headers on the way in and <code>Set-Cookie</code> on the way out. The server does the same and answers every request for that host itself, before any app route. With your own proxy, make an equivalent site for the name that sends to <code>&lt;alias&gt;:3200</code>.</p>
+</li>
+</ol>
+<p>Full mode, which serves each owner's sites at <code>https://&lt;owner&gt;.pages.example.com/</code> with no sandbox, is a switch at Site admin, Pages. It needs a wildcard certificate for <code>*.pages.example.com</code>, which needs a DNS challenge and a Caddy build with your DNS provider's module. The default mode works on one host with no wildcard.</p>
+<h2 id="your-first-site">Your first site <a class="anchor" href="#your-first-site" aria-label="Link to this section">#</a></h2>
+<p><code>&lt;project&gt;</code> below means the repository's name: a repository <code>demo</code> owned by <code>alice</code> is published at <code>https://pages.example.com/alice/demo/</code>.</p>
+<ol>
+<li>
+<p>In a repository you admin, make a file <code>index.html</code> at the top and push it to <code>main</code>:</p>
+<pre tabindex="0"><code class="language-sh">echo '&lt;h1&gt;Hello from Pages&lt;/h1&gt;' &gt; index.html
+git add index.html &amp;&amp; git commit -m "Add a home page" &amp;&amp; git push</code></pre>
+</li>
+<li>
+<p>Open the repository's Settings, then Pages.</p>
+</li>
+<li>
+<p>Choose the branch <code>main</code> and the folder <code>/ (the whole repository)</code>.</p>
+</li>
+<li>
+<p>Leave "Who can see it" as it is, or narrow it. Choose Turn on Pages (after that the button reads Save and publish).</p>
+</li>
+<li>
+<p>Open "Open the site", or go to <code>https://pages.example.com/alice/demo/</code>. You see the heading.</p>
+</li>
+</ol>
+<p>Every later push to <code>main</code> publishes a new copy. For a site in the <code>docs</code> folder, choose <code>/docs</code> and put <code>index.html</code> there.</p>
+<h2 id="publish-a-site">Publish a site <a class="anchor" href="#publish-a-site" aria-label="Link to this section">#</a></h2>
+<p>You need Admin on the repository to change Pages, and Maintain to look at it. Go to Settings, Pages.</p>
+<ol>
+<li>Choose the <strong>branch</strong> and the <strong>folder</strong>: <code>/</code> (the whole repository) or <code>/docs</code>.</li>
+<li>Choose <strong>who can see it</strong>. This is never more people than can read the repository, and a copy made while the repository was more private stays that private.</li>
+<li>Save. Push to the branch to publish a new copy, or choose "Publish again" to publish the branch's head.</li>
+</ol>
+<p>The site is at <code>https://pages.example.com/&lt;owner&gt;/&lt;project&gt;/</code>, and the Settings page has an "Open the site" link. A published copy holds up to 2,000 files and 50 MB. Symbolic links and submodules are left out. In a site that is not public, image, style and script addresses must be relative.</p>
+<p><strong>Copies.</strong> The page lists published copies with their commit. "Serve this copy" puts an older one back. <strong>Turn off Pages</strong> stops the site at once and deletes every copy. The repository is not changed.</p>
+<h2 id="who-can-see-a-site">Who can see a site <a class="anchor" href="#who-can-see-a-site" aria-label="Link to this section">#</a></h2>
+<p>Who can see a site follows the repository, and the admin may narrow it, never widen it:</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Repository tier</th><th scope="col">The site is visible to</th></tr></thead><tbody><tr><td>Public</td><td>Anyone</td></tr><tr><td>Internal</td><td>Signed-in accounts</td></tr><tr><td>Private</td><td>People with access to the repository</td></tr></tbody></table></div>
+<p>For a site that is not public, the viewer is sent through a short-lived token made for one site and one person. It never carries the app session.</p>
+<h2 id="how-a-site-is-kept-apart-from-the-app">How a site is kept apart from the app <a class="anchor" href="#how-a-site-is-kept-apart-from-the-app" aria-label="Link to this section">#</a></h2>
+<p>Sites live on a host of their own, never the app's. Each page runs sandboxed with no cookies: no cookie goes in or out, and the page has an opaque origin, so it cannot read the app or a neighbour's site. Each project gets its own <code>localStorage</code>, kept by a small bridge page. Responses carry <code>X-Robots-Tag: noindex, nofollow</code> and <code>Referrer-Policy: no-referrer</code>. Only <code>GET</code> and <code>HEAD</code> are answered.</p>
+<p>A request for a path with no file tries <code>&lt;path&gt;.html</code>, then <code>&lt;path&gt;/index.html</code>, then the site's own <code>404.html</code>.</p>
+<h2 id="limits">Limits <a class="anchor" href="#limits" aria-label="Link to this section">#</a></h2>
+<p>The file and size limits, and how long a reply may stall, are server settings (<code>pages.max_files</code>, <code>pages.max_bytes</code> and the others in <a href="configuration.html">Configuration</a>). Pages is for static files. There is no build step: to publish generated output, have a workflow commit it to the branch, or push the built files.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="packages.html"><small>Previous</small>Container registry and packages</a><a class="next" href="workspace.html"><small>Next</small>The browser workspace</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/pages.md" rel="noopener">docs/pages.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#turn-pages-on-for-the-instance-operator">Turn Pages on for the instance (operator)</a></li><li class="l2"><a href="#your-first-site">Your first site</a></li><li class="l2"><a href="#publish-a-site">Publish a site</a></li><li class="l2"><a href="#who-can-see-a-site">Who can see a site</a></li><li class="l2"><a href="#how-a-site-is-kept-apart-from-the-app">How a site is kept apart from the app</a></li><li class="l2"><a href="#limits">Limits</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

@@ -9,6 +9,8 @@ bind = "0.0.0.0:3200"
 internal_bind = "127.0.0.1:9300"
 # The one origin people use. Links, clone URLs, CSRF origin checks and HSTS all follow it.
 external_url = "https://code.example.com"
+# Where the Docs link in the footer and account menu points. An absolute http(s) address; "" turns the link off.
+docs_url = "https://aaron777collins.github.io/codehaven-forge/"
 
 [http]
 # Peers allowed to set X-Forwarded-For and X-Forwarded-Proto: the network your reverse proxy reaches

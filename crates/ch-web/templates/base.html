@@ -49,6 +49,7 @@
           <a role="menuitem" href="/{{ u.username }}"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>Your profile</a>
           <a role="menuitem" href="/settings/profile"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>Settings</a>
           {% if u.is_admin %}<a role="menuitem" href="/admin"><svg class="icon" aria-hidden="true"><use href="#i-shield-check"/></svg>Site admin</a>{% endif %}
+          {% if !c.docs_url.is_empty() %}<a role="menuitem" href="{{ c.docs_url }}" target="_blank" rel="noopener noreferrer"><svg class="icon" aria-hidden="true"><use href="#i-book-open"/></svg>Docs</a>{% endif %}
           <button type="button" role="menuitem" class="menu-btn" data-theme-toggle><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg>Switch theme</button>
           <form method="post" action="/logout"><input type="hidden" name="_csrf" value="{{ c.csrf }}"><button role="menuitem" class="menu-btn" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-log-out"/></svg>Sign out</button></form>
         </div>
@@ -64,6 +65,8 @@
   <span>{{ c.instance }}</span>
   <span class="dot" aria-hidden="true">&middot;</span>
   <span class="muted">Self-hosted. Invite only.</span>
+  {% if !c.docs_url.is_empty() %}<span class="dot" aria-hidden="true">&middot;</span>
+  <a href="{{ c.docs_url }}" target="_blank" rel="noopener noreferrer">Docs</a>{% endif %}
 </footer>
 </body>
 </html>

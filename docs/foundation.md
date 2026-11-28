@@ -4,6 +4,8 @@ This is the working guide for every other stream: the interfaces you build on, w
 code, and how to build and test. `ARCHITECTURE.md` has the design and `ROADMAP.md` the plan.
 When this file disagrees with them, fix whichever is wrong in the same commit.
 
+> Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at [Getting started](getting-started.md).
+
 ## Your first ten minutes
 
 ```sh

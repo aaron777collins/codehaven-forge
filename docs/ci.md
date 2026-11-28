@@ -3,6 +3,8 @@
 The design is in `ARCHITECTURE.md` section 9. This file is the hand-off: what is built, how the
 pieces fit, and what the other streams must do to meet it.
 
+> Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at [Getting started](getting-started.md).
+
 ## ch-workflow (pure, no IO, no async)
 
 | Module | What it does |

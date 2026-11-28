@@ -575,11 +575,11 @@ branch and open a pull request".
 | Username and password | web, git HTTP (accounts without two-factor) | Argon2id. Rate limits and lockout in section 7.6 |
 | TOTP | web | `totp-rs`, 10 recovery codes. Optional for everyone, required before a site admin can open the admin pages |
 | Passkey (WebAuthn) | web | A second factor beside TOTP, with `webauthn-rs` (pure Rust, no new service). The relying party id is the host of `server.external_url` and the origin is that address, so it needs a domain name (an IP address turns passkeys off). Register, name, remove and sign in with either; recovery codes belong to the account and work for both. Taking away the last factor needs the password and a current factor (an app code or a recovery code). `ch_has_second_factor(user)` is the one definition of "has two-factor" (admin gate, Basic auth, connected apps) |
-| OIDC | web | `openidconnect`. Off by default. When configured it can only sign in an account that already exists and has linked that identity, or finish an invite. It never creates an account on its own |
+| OIDC | web | Designed, not built: the public route list reserves `/login/oidc/{provider}` but no router registers it and there is no configuration for a provider. Accounts today are local only. When built it can only sign in an account that already exists and has linked that identity, or finish an invite, and never creates an account on its own |
 | Session cookie | web | `__Host-ch_session`: 256-bit random id, stored hashed, `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`. 7 days idle, 30 days absolute. Section 7.6 |
 | Personal access token | API, git HTTP, CLI, registry | Format `chp_` plus 40 base62 characters, so secret scanners can match it. Scopes below. Expiry required, 90 days by default, 1 year at most |
 | SSH key | git SSH | ed25519, ECDSA, RSA of 3072 bits or more. Fingerprint SHA-256 |
-| Deploy key | git SSH | Bound to one repo, read-only unless marked write |
+| Deploy key | git SSH | Bound to one repo, read-only unless marked write. The SSH server accepts them (the `deploy_keys` table), but no page or REST route creates one yet |
 | Job token | CI jobs | Minted per job, valid until the job ends, scoped to its repo |
 | Runner credential | runners | Issued at registration with an admin-issued token, stored hashed |
 
@@ -1105,8 +1105,8 @@ cross on any failure, an amber dot while anything runs.
 OCI Distribution Spec 1.1 at `/v2/` on the same host, because Docker clients
 require `/v2/` at the root. `docker login code.example.com` with a
 username and a token, answered with a Bearer challenge to `/v2/token`. Every
-pull and push needs a token: there are no anonymous pulls, even for an image
-linked to a public repo. Images are named
+push needs a token, and so does every pull except one: a signed-out client may pull an image
+linked to a public repository, while public repositories are allowed. Images are named
 `<owner>/<name>` and can be linked to a repo, inheriting its permissions.
 The token endpoint returns the credential the client just sent as Basic (an account name and
 a personal access token) as the Bearer token it will use from then on, so nothing new is minted
@@ -1456,8 +1456,8 @@ reviewed before merge.
 
 ## 17. Not in v1
 
-GraphQL, a wiki, project boards, Git LFS, pull mirrors, reusable workflows,
-environments with approval, WebAuthn, more than one server instance, S3 storage. Each fits behind
+GraphQL, a wiki, project boards, Git LFS, pull mirrors, more than one server instance, S3 storage.
+(Reusable workflows, environments with approval and WebAuthn passkeys were on this list and are built now.) Each fits behind
 an existing boundary and is listed in `ROADMAP.md` under later work.
 
 Never, by design: open sign-up, anonymous writes, anonymous reads of anything

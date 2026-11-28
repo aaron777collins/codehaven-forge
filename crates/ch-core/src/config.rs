@@ -39,6 +39,9 @@ pub struct ServerConfig {
     /// The one origin people use, for links, clone URLs, CSRF origin checks and HSTS. Required:
     /// there is no default.
     pub external_url: String,
+    /// Where the "Docs" link in the footer and the account menu points. Empty turns the link off.
+    /// An absolute http(s) address.
+    pub docs_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,6 +232,9 @@ pub struct LogConfig {
     pub level: String,
 }
 
+/// The public documentation site, used unless `server.docs_url` says otherwise.
+pub const DEFAULT_DOCS_URL: &str = "https://aaron777collins.github.io/codehaven-forge/";
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -237,6 +243,7 @@ impl Default for ServerConfig {
             internal_bind: "127.0.0.1:9300".into(),
             // No default: the address people open is the one thing only the operator knows.
             external_url: String::new(),
+            docs_url: DEFAULT_DOCS_URL.into(),
         }
     }
 }
@@ -430,6 +437,28 @@ impl Config {
         Ok(cfg)
     }
 
+    /// `server.docs_url` is empty (link off) or an absolute http(s) address with a host.
+    fn validate_docs_url(&self) -> Result<(), ConfigError> {
+        let u = self.server.docs_url.as_str();
+        if u.is_empty() {
+            return Ok(());
+        }
+        let bad = || {
+            ConfigError::Invalid(format!(
+                "server.docs_url must be an absolute http:// or https:// address, or empty to turn the link off (got `{u}`)"
+            ))
+        };
+        let rest = u.strip_prefix("https://").or_else(|| u.strip_prefix("http://")).ok_or_else(bad)?;
+        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+        if host.is_empty()
+            || host.starts_with('@')
+            || u.chars().any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '<' || c == '>')
+        {
+            return Err(bad());
+        }
+        Ok(())
+    }
+
     /// Checks that cannot be expressed in types. Fails loudly at startup instead of
     /// running with something unsafe.
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -437,6 +466,7 @@ impl Config {
         if url.scheme != "http" && url.scheme != "https" {
             return Err(ConfigError::Invalid("server.external_url must start with http:// or https://".into()));
         }
+        self.validate_docs_url()?;
         let internal: std::net::SocketAddr =
             self.server.internal_bind.parse().map_err(|_| ConfigError::Invalid("server.internal_bind must be an ip:port".into()))?;
         if !internal.ip().is_loopback() {
@@ -592,6 +622,39 @@ mod tests {
         c.server.external_url = "https://code.example.com".into();
         c.mcp.trusted_client_hosts = vec!["Claude.AI".into()];
         assert!(c.validate().is_err(), "host names are lowercase");
+    }
+
+    #[test]
+    fn docs_url_defaults_overrides_and_validates() {
+        let mut c = Config::for_tests();
+        assert_eq!(c.server.docs_url, "https://aaron777collins.github.io/codehaven-forge/");
+        c.validate().unwrap();
+        c.server.docs_url = "https://docs.example.org/guide/".into();
+        c.validate().unwrap();
+        c.server.docs_url = "http://localhost:8000".into();
+        c.validate().unwrap();
+        c.server.docs_url = String::new();
+        c.validate().unwrap();
+        for bad in ["docs.example.org", "ftp://x.example", "javascript:alert(1)", "https://", "/docs", "https://a b.example", "//x.example"]
+        {
+            c.server.docs_url = bad.into();
+            let err = c.validate().unwrap_err().to_string();
+            assert!(err.contains("server.docs_url"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn docs_url_comes_from_the_file() {
+        let dir = std::env::temp_dir().join(format!("ch-cfg-docs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("codehaven.toml");
+        std::fs::write(&f, "[server]\nexternal_url = \"https://code.example.com\"\ndocs_url = \"\"\n").unwrap();
+        let c = Config::load(Some(&f)).unwrap();
+        assert_eq!(c.server.docs_url, "");
+        std::fs::write(&f, "[server]\nexternal_url = \"https://code.example.com\"\ndocs_url = \"ftp://nope\"\n").unwrap();
+        let err = Config::load(Some(&f)).unwrap_err().to_string();
+        assert!(err.contains("server.docs_url"), "{err}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

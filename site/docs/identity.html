@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Identity: what it provides and how to use it | Codehaven</title>
+<meta name="description" content="Written by the identity stream (ch-auth, ch-notify).">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html" aria-current="page">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html" aria-current="page">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#the-shape">The shape</a></li><li class="l2"><a href="#for-the-web-stream-driving-the-sign-in-pages">For the web stream: driving the sign-in pages</a></li><li class="l3"><a href="#cookies">Cookies</a></li><li class="l3"><a href="#csrf">CSRF</a></li><li class="l3"><a href="#what-to-say">What to say</a></li><li class="l3"><a href="#the-password-rules">The password rules</a></li><li class="l2"><a href="#for-git-collab-and-ci-using-authn-and-authz">For git, collab and ci: using Authn and Authz</a></li><li class="l3"><a href="#what-ch-ci-must-store">What ch-ci must store</a></li><li class="l3"><a href="#events-the-notification-fan-out-reads">Events the notification fan-out reads</a></li><li class="l2"><a href="#webhooks">Webhooks</a></li><li class="l2"><a href="#admin-commands">Admin commands</a></li><li class="l2"><a href="#limits-and-numbers">Limits and numbers</a></li><li class="l2"><a href="#database">Database</a></li></ul></div></details>
+<article class="prose">
+<h1 id="identity-what-it-provides-and-how-to-use-it">Identity: what it provides and how to use it <a class="anchor" href="#identity-what-it-provides-and-how-to-use-it" aria-label="Link to this section">#</a></h1>
+<p>Written by the identity stream (<code>ch-auth</code>, <code>ch-notify</code>). <a href="architecture.html"><code>ARCHITECTURE.md</code></a> sections 7 and 8.4 to
+8.5 have the design. This file is the working guide for the web, git, collab and ci streams, and
+for whoever integrates.</p>
+<blockquote>
+<p>Contributor notes. This page records how the part was built, for people working on Codehaven. To install or use it, start at <a href="getting-started.html">Getting started</a>.</p>
+</blockquote>
+<h2 id="the-shape">The shape <a class="anchor" href="#the-shape" aria-label="Link to this section">#</a></h2>
+<p>The instance is invite-only. There is no sign-up route, no setup page, no proxy-header login and
+no anonymous read outside public repositories. The first admin is made on the server with
+<code>codehaven admin create-user</code>, and every other account comes from an invite.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Crate</th><th scope="col">Owns</th></tr></thead><tbody><tr><td><code>ch-auth</code></td><td>accounts, invites, sessions, two-factor, lockout, tokens, SSH keys, authorization, orgs and teams, the request guard, the user, org and site admin REST endpoints</td></tr><tr><td><code>ch-notify</code></td><td>the notification inbox and its fan-out, webhooks and their delivery, the SSRF guard</td></tr></tbody></table></div>
+<p>Both build against <code>ch-core</code> traits only. <code>ch-core::identity</code> is new in this stream.</p>
+<h2 id="for-the-web-stream-driving-the-sign-in-pages">For the web stream: driving the sign-in pages <a class="anchor" href="#for-the-web-stream-driving-the-sign-in-pages" aria-label="Link to this section">#</a></h2>
+<p>Pages call traits on <code>AppState</code>. Nothing in <code>ch-web</code> needs to depend on <code>ch-auth</code>.</p>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Page</th><th scope="col">Call</th></tr></thead><tbody><tr><td><code>POST /login</code></td><td><code>state.credentials.sign_in(login, password, &amp;client)</code> returns <code>SignIn { user, grant, step, notice }</code></td></tr><tr><td><code>POST /login/two-factor</code></td><td><code>state.credentials.complete_two_factor(pending_cookie, code, &amp;client)</code>. The code is a 6 digit TOTP code or a recovery code like <code>abcde-fghjk</code></td></tr><tr><td><code>POST /login/two-factor/passkey/begin</code>, <code>POST /login/two-factor/passkey</code></td><td><code>state.credentials.pending_factors</code>, <code>begin_passkey_sign_in</code> (options as JSON) and <code>complete_passkey_sign_in</code> (the authenticator's answer as JSON). Same attempt limits as a code</td></tr><tr><td>sign out</td><td><code>state.credentials.sign_out(cookie, &amp;client)</code></td></tr><tr><td><code>GET/POST /invite/{token}</code></td><td><code>state.invites.peek(token)</code> to render, <code>state.invites.accept(token, NewAccount, &amp;client)</code> to finish. Then call <code>sign_in</code> with the password the person just chose</td></tr><tr><td><code>GET/POST /password/{token}</code></td><td><code>state.credentials.peek_link(token)</code> (shows the username) and <code>redeem_link(token, new_password, &amp;client)</code>. Then <code>sign_in</code></td></tr><tr><td>Settings &gt; Sessions</td><td><code>sessions</code>, <code>revoke_session</code>, <code>sign_out_others</code></td></tr><tr><td>Settings &gt; Security</td><td><code>change_password</code>, <code>sign_in_history</code>, and the <code>state.twofactor</code> calls: <code>status</code>, <code>begin_setup</code>, <code>confirm_setup</code>, <code>disable</code> (a current code too when no passkey is left), <code>regenerate_recovery_codes</code>, and for passkeys <code>passkeys_available</code>, <code>passkeys</code>, <code>begin_passkey</code>, <code>finish_passkey</code>, <code>remove_passkey</code></td></tr><tr><td>Settings &gt; Emails, profile</td><td><code>state.directory</code></td></tr><tr><td>Site admin &gt; Users</td><td><code>state.directory.list_users</code>, <code>set_admin</code>, <code>unsuspend</code>; <code>state.accounts.suspend</code>, <code>unlock</code>, <code>set_can_run_ci</code></td></tr><tr><td>Site admin &gt; Invites</td><td><code>state.invites.create</code>, <code>list</code>, <code>revoke</code></td></tr><tr><td>Site admin &gt; Audit log</td><td><code>state.audit.query</code></td></tr><tr><td>Orgs and teams</td><td><code>state.orgs</code></td></tr><tr><td>Inbox, watch levels</td><td><code>state.notifications</code></td></tr><tr><td>Hooks</td><td><code>state.webhooks</code></td></tr></tbody></table></div>
+<h3 id="cookies">Cookies <a class="anchor" href="#cookies" aria-label="Link to this section">#</a></h3>
+<p><code>SessionGrant { cookie, expires_at, max_age_secs }</code> is what to put in the cookie. Build the header
+with <code>ch_core::access::session_set_cookie(&amp;grant.cookie, grant.max_age_secs, https)</code> and clear it
+with <code>session_clear_cookie(https)</code>. The name is <code>access::session_cookie_name(https)</code>, which is
+<code>__Host-ch_session</code> on https and <code>ch_session</code> on plain http. Read a cookie with
+<code>access::cookie_value(headers, name)</code>.</p>
+<p>A sign-in with <code>step == TwoFactorRequired</code> returns a cookie that only works for
+<code>complete_two_factor</code>. It expires in 10 minutes, and <code>from_session</code> treats it as anonymous, so it
+opens no page. After <code>complete_two_factor</code> the cookie has a <strong>new value</strong>. Always replace it.</p>
+<p>Every call that changes privilege returns a new cookie too: <code>change_password</code>,
+<code>TwoFactor::confirm_setup</code> (inside <code>TwoFactorEnabled</code>) and <code>TwoFactor::disable</code>. The old cookie is
+dead, so set the new one in the same response or the person is signed out.</p>
+<h3 id="csrf">CSRF <a class="anchor" href="#csrf" aria-label="Link to this section">#</a></h3>
+<p>The guard layer (<code>ch_auth::Guard</code>, wired in <code>crates/codehaven/src/app.rs</code>) checks every unsafe
+request that has no <code>Authorization</code> header: <code>Origin</code> (or <code>Referer</code>) must equal
+<code>server.external_url</code>, and a token must be present.</p>
+<p>Handlers read the token from the request extensions:</p>
+<pre tabindex="0"><code class="language-rust">async fn login_page(Extension(csrf): Extension&lt;ch_core::identity::CsrfToken&gt;) -&gt; Html&lt;String&gt; { ... }</code></pre>
+<p>Put it in every form as <code>&lt;input type="hidden" name="_csrf" value="..."&gt;</code>, and on the body as
+<code>&lt;body hx-headers='{"X-CSRF-Token": "..."}'&gt;</code> so htmx requests carry it. The server also reads
+<code>_csrf</code> from a urlencoded body, and from the query string for multipart uploads. The guard sets the
+<code>__Host-ch_csrf</code> cookie on the first page a visitor loads, so the sign-in and invite forms work
+before a session exists. A page rendered for a signed-in session gets a token bound to that
+session.</p>
+<p>Sign-in on a browser tunnel (<code>http://127.0.0.1:3200</code>) needs
+<code>CODEHAVEN_EXTERNAL_URL=http://127.0.0.1:3200</code>, or the Origin check refuses the form.</p>
+<h3 id="what-to-say">What to say <a class="anchor" href="#what-to-say" aria-label="Link to this section">#</a></h3>
+<p>Every refusal of a sign-in is <code>Error::Unauthorized("That username and password don't match.")</code>,
+whether the name exists, the password is wrong, the account is suspended or has no password. Show
+that text. Do not try to say which. A locked account (or a locked address) is `Error::RateLimited
+{ retry_after_secs }`: say "Too many attempts. Try again in N minutes." and nothing about the
+account.</p>
+<p>Invites: <code>peek</code> and <code>accept</code> return <code>Error::NotFound</code> for expired, used, revoked and made-up links.
+Show "This invite link doesn't work any more. Ask the person who sent it for a new one." for all of
+them. A form mistake (name taken, weak password, wrong email) is <code>Error::Validation</code> and does <strong>not</strong>
+use the invite up.</p>
+<p>After a sign-in, <code>SignIn.notice</code> is <code>Some</code> when someone locked the account since the last time the
+owner signed in. Show it once, with <code>source_ips</code>.</p>
+<p>An admin without two-factor has <code>Actor::is_admin_without_2fa()</code>. Send them to two-factor setup
+before any admin page. <code>require_site_admin</code> errors read "Turn on two-factor sign-in before using
+the admin pages."</p>
+<h3 id="the-password-rules">The password rules <a class="anchor" href="#the-password-rules" aria-label="Link to this section">#</a></h3>
+<p><code>state.credentials.check_password(username, email, password)</code> returns the same <code>Validation</code>
+errors the real calls do, so a form can check before submitting. The rules: 12 to 128 characters,
+a zxcvbn score of 3 or more (this covers common passwords, names, keyboard runs, dates and repeats),
+and no username or email name inside it.</p>
+<h2 id="for-git-collab-and-ci-using-authn-and-authz">For git, collab and ci: using Authn and Authz <a class="anchor" href="#for-git-collab-and-ci-using-authn-and-authz" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><code>Authz::repo_permission(actor, repo)</code> is the permission model of section 7.2. <code>Anonymous</code> gets
+<code>View</code> on a public repository while public repositories are allowed, and <code>None</code> everywhere
+else. A site admin only counts with a session and two-factor.
+A token is capped by its scopes. A job token reads its own repo only.</li>
+<li><code>Authz::require(actor, repo, needed)</code> is <code>NotFound</code> when the actor cannot read the repo and
+<code>Forbidden</code> when they can but lack <code>needed</code>. On an archived repo, <code>Triage</code>, <code>Write</code> and
+<code>Maintain</code> fail with "This repository is archived". <code>Admin</code> stays possible so a repo can be
+unarchived.</li>
+<li>Git over HTTP: Basic with a personal access token as the password works for everyone. Basic
+with a password works only for accounts without two-factor (they get a message telling them to
+use a token).</li>
+<li><code>Authn::from_ssh_key(fingerprint)</code> returns <code>SshIdentity::User</code> or <code>SshIdentity::Deploy</code>. A
+suspended account's keys stop working at once.</li>
+</ul>
+<h3 id="what-ch-ci-must-store">What ch-ci must store <a class="anchor" href="#what-ch-ci-must-store" aria-label="Link to this section">#</a></h3>
+<p><code>Authn::from_bearer</code> and Basic recognise CI credentials by their hash, with no prefix rule:</p>
+<ul>
+<li>a job token: <code>workflow_jobs.token_hash = ch_db::tokens::hash_token(secret)</code>. Valid while the
+job's <code>status &lt;&gt; 'completed'</code>. It is a job token with <code>write_checks: false</code> when the run has
+<code>event IN ('pull_request', 'pull_request_target')</code> and <code>workflow_runs.event_payload.fork</code> is
+<code>true</code>. Set that flag when the pull request comes from a fork.</li>
+<li>a runner credential: <code>runners.credential_hash = hash_token(secret)</code>, valid while `revoked_at IS
+NULL`.</li>
+</ul>
+<p>Use <code>ch_db::tokens::new_token("chj_", 40)</code> and <code>new_token("chr_", 40)</code> so secret scanners can
+match them.</p>
+<h3 id="events-the-notification-fan-out-reads">Events the notification fan-out reads <a class="anchor" href="#events-the-notification-fan-out-reads" aria-label="Link to this section">#</a></h3>
+<p><code>IssueOpened</code>, <code>IssueAssigned</code>, <code>CommentCreated</code>, <code>IssueClosed</code>, <code>IssueReopened</code>, <code>PrOpened</code>,
+<code>PrClosed</code>, <code>PrMerged</code>, <code>ReviewSubmitted</code>, <code>ReviewCommentCreated</code>, <code>ReleasePublished</code> and
+<code>WorkflowRunUpdated</code> (when <code>completed</code>). It reads the thread from the tables: <code>issues</code>,
+<code>issue_assignees</code>, <code>issue_subscriptions</code>, <code>issue_comments</code>, <code>review_requests</code>, <code>reviews</code>,
+<code>review_comments</code>, <code>watches</code>.</p>
+<p>Collab: <code>ReviewRequested</code> is an event now, and <code>fanout.rs</code> gives the requested reviewer the reason
+<code>review_requested</code>. Delete the <code>review_requests</code> row when the review comes in, or the stale request keeps
+outranking the reviewer's other reasons.</p>
+<p>Everyone notified is checked with <code>Authz::repo_permission &gt;= Read</code> first, so a title never reaches a
+person who could not open the page. The inbox checks again when it is read.</p>
+<h2 id="webhooks">Webhooks <a class="anchor" href="#webhooks" aria-label="Link to this section">#</a></h2>
+<p>Payloads carry GitHub's field names for the fields common tools read: <code>repository</code>, <code>sender</code>,
+<code>issue</code>, <code>pull_request</code> (with <code>head</code>, <code>base</code>, <code>merged</code>), <code>comment</code>, <code>review</code>, <code>release</code>, <code>status</code>,
+<code>ref</code>, <code>before</code>, <code>after</code>. They are not byte for byte GitHub's: the <code>push</code> payload has an empty
+<code>commits</code> list until the git stream gives <code>ch-notify</code> a way to list them, and the workflow and
+check payloads are short.</p>
+<p>Delivery: HMAC-SHA256 in <code>X-Hub-Signature-256</code> over the exact body, <code>X-Codehaven-Event</code> and
+<code>X-GitHub-Event</code>, a delivery GUID, retries at 1 min, 5 min, 30 min, 2 h and 6 h (six attempts in
+all), redirects never followed, 64 KiB of response kept at most. Targets are checked twice, when
+the hook is saved and again on every delivery, and the connection goes to the address that was
+checked. Loopback, private, link-local (including the cloud metadata address), carrier-grade NAT
+and the IPv6 equivalents (also when wrapped as <code>::ffff:a.b.c.d</code>, NAT64 or 6to4) are refused unless
+<code>webhooks.allow_private</code> is on.</p>
+<h2 id="admin-commands">Admin commands <a class="anchor" href="#admin-commands" aria-label="Link to this section">#</a></h2>
+<pre tabindex="0"><code>codehaven admin create-user --username alice --email alice@example.com --admin --can-run-ci   # prints a 1 hour set-password link
+codehaven admin reset-password &lt;user&gt;                                 # signs them out everywhere, revokes their tokens, prints a link
+codehaven admin unlock &lt;user&gt;                                         # clears a lockout
+codehaven admin suspend &lt;user&gt; | unsuspend &lt;user&gt;
+codehaven admin users                                                 # list accounts and their flags
+codehaven admin invite create [--email e] [--admin] [--can-run-ci] [--org o [--team t]] [--expires 7d] [--note n]
+codehaven admin invite list | revoke &lt;id&gt;</code></pre>
+<h2 id="limits-and-numbers">Limits and numbers <a class="anchor" href="#limits-and-numbers" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">What</th><th scope="col">Value</th></tr></thead><tbody><tr><td>Password hash</td><td>Argon2id, 64 MiB, 3 passes, 1 lane, 4 at a time</td></tr><tr><td>Lockout</td><td>10 failed passwords for one account from one address (an IPv6 /64 counts as one) in 15 minutes: 15 minutes, doubling to 24 hours, for that address only, so a stranger who knows a username cannot lock the owner out from the owner's own address. Wrong two-factor codes also count across all addresses, since only someone who knows the password gets that far. 40 failures from one address lock that address the same way. An attempt is counted before the password is checked, so simultaneous guesses share the same 10. With two-factor on, a right password does not clear the count: only a right code does. A half-signed-in session ends after 5 wrong codes</td></tr><tr><td>Sign-in, two-factor, invite and link pages</td><td>10 a minute, burst 5, per address</td></tr><tr><td>Failed Basic or token auth</td><td>30 a minute per address</td></tr><tr><td>Everything else signed out</td><td>120 a minute per address</td></tr><tr><td>Signed-in API</td><td>5,000 an hour per token or account, with <code>X-RateLimit-*</code></td></tr><tr><td>Sessions</td><td>7 days idle, 30 days absolute. Pending two-factor: 10 minutes</td></tr><tr><td>Tokens</td><td><code>chp_</code> + 40 base62, 90 days by default, 365 at most, 100 active per account</td></tr><tr><td>Invites</td><td><code>chi_</code> + 32 base62, 1 hour to 30 days, 7 days by default</td></tr><tr><td>One-time links</td><td><code>cho_</code> + 32 base62, 1 hour by default</td></tr><tr><td>Hooks</td><td>20 per repository or org</td></tr></tbody></table></div>
+<h2 id="database">Database <a class="anchor" href="#database" aria-label="Link to this section">#</a></h2>
+<p>Migration <code>0009_identity.sql</code> adds <code>users.totp_last_step</code>, so a TOTP code cannot be used twice. The
+identity crates use <code>sqlx::query</code> and <code>query_as</code> with bound parameters, not the <code>query!</code> macros,
+so they add nothing to <code>.sqlx/</code>. Every query is exercised by a test. Citext columns are always
+compared as <code>$1::citext</code> so lookups are case insensitive, and selected as <code>::text</code>.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="foundation.html"><small>Previous</small>Foundation</a><a class="next" href="state.html"><small>Next</small>State of the project</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/identity.md" rel="noopener">docs/identity.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#the-shape">The shape</a></li><li class="l2"><a href="#for-the-web-stream-driving-the-sign-in-pages">For the web stream: driving the sign-in pages</a></li><li class="l3"><a href="#cookies">Cookies</a></li><li class="l3"><a href="#csrf">CSRF</a></li><li class="l3"><a href="#what-to-say">What to say</a></li><li class="l3"><a href="#the-password-rules">The password rules</a></li><li class="l2"><a href="#for-git-collab-and-ci-using-authn-and-authz">For git, collab and ci: using Authn and Authz</a></li><li class="l3"><a href="#what-ch-ci-must-store">What ch-ci must store</a></li><li class="l3"><a href="#events-the-notification-fan-out-reads">Events the notification fan-out reads</a></li><li class="l2"><a href="#webhooks">Webhooks</a></li><li class="l2"><a href="#admin-commands">Admin commands</a></li><li class="l2"><a href="#limits-and-numbers">Limits and numbers</a></li><li class="l2"><a href="#database">Database</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

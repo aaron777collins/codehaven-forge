@@ -107,6 +107,8 @@ pub struct Chrome {
     pub banner: Option<String>,
     /// A signed-out visitor reading a public repository: show the sign-in prompt, no forms.
     pub signed_out_reader: bool,
+    /// The documentation address from `server.docs_url`; empty means no Docs link.
+    pub docs_url: String,
 }
 
 impl Chrome {

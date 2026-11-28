@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issues and pull requests | Codehaven</title>
+<meta name="description" content="Tracking work, reviewing changes and merging them.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap bar">
+<a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="26" height="26">Codehaven</a>
+<nav class="nav" aria-label="Main"><a href="../docs/index.html" aria-current="page">Docs</a><a href="../screenshots.html">Screenshots</a><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">GitHub</a><button class="theme-btn" id="theme-toggle" type="button" hidden>Dark mode</button></nav>
+</div>
+</header>
+<div class="wrap docs-grid has-toc">
+<nav class="sidebar" aria-label="Documentation"><p style="margin:0 0 0.5rem"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html" aria-current="page">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav>
+<main id="main">
+<details class="mobile menu"><summary>Docs menu</summary><nav aria-label="Documentation, compact"><p style="margin:0"><a href="index.html">All docs</a></p><h2>Start here</h2><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="integration.html">Going public and first run</a></li><li><a href="operations.html">Running an instance</a></li></ul><h2>Use</h2><ul><li><a href="accounts.html">Accounts and sign-in</a></li><li><a href="repositories.html">Repositories</a></li><li><a href="pull-requests.html" aria-current="page">Issues and pull requests</a></li><li><a href="using-ci.html">Using CI</a></li><li><a href="packages.html">Container registry and packages</a></li><li><a href="pages.html">Pages</a></li><li><a href="workspace.html">The browser workspace</a></li><li><a href="terminal.html">The workspace terminal</a></li><li><a href="connector.html">The Claude connector</a></li><li><a href="admin.html">Site admin</a></li></ul><h2>Help</h2><ul><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="faq.html">Frequently asked questions</a></li></ul><h2>How it is built</h2><ul><li><a href="git.html">Git, SSH and the registry</a></li><li><a href="web.html">The web UI</a></li><li><a href="collab.html">Collaboration</a></li><li><a href="ci.html">CI internals</a></li><li><a href="runner.html">The runner and the CLI</a></li><li><a href="foundation.html">Foundation</a></li><li><a href="identity.html">Identity</a></li><li><a href="state.html">State of the project</a></li><li><a href="architecture.html">Architecture</a></li><li><a href="roadmap.html">Roadmap</a></li><li><a href="design/pages.html">Pages design</a></li></ul></nav></details>
+<details class="mobile toc-inline"><summary>On this page</summary><div class="toc-list toc"><ul><li class="l2"><a href="#issues">Issues</a></li><li class="l3"><a href="#templates-and-issue-forms">Templates and issue forms</a></li><li class="l3"><a href="#working-with-issues">Working with issues</a></li><li class="l2"><a href="#pull-requests">Pull requests</a></li><li class="l3"><a href="#open-one">Open one</a></li><li class="l3"><a href="#review">Review</a></li><li class="l3"><a href="#checks-and-fork-approval">Checks and fork approval</a></li><li class="l3"><a href="#merge">Merge</a></li><li class="l3"><a href="#the-merge-queue">The merge queue</a></li><li class="l2"><a href="#notifications">Notifications</a></li></ul></div></details>
+<article class="prose">
+<h1 id="issues-and-pull-requests">Issues and pull requests <a class="anchor" href="#issues-and-pull-requests" aria-label="Link to this section">#</a></h1>
+<p>Tracking work, reviewing changes and merging them. Opening an issue, commenting, reacting and reviewing need read access to the repository and an account. Labels, assignees, milestones, locking and pinning need triage. Merging, releases and applying a suggestion need write. See <a href="repositories.html">Repositories</a> for permissions.</p>
+<p>Issues and pull requests share one number sequence in a repository, so <code>#12</code> is one or the other, never both. Type <code>#12</code> in any text to link to it and <code>@name</code> to mention a person.</p>
+<h2 id="issues">Issues <a class="anchor" href="#issues" aria-label="Link to this section">#</a></h2>
+<p>Open one from a repository's Issues tab, with New issue.</p>
+<h3 id="templates-and-issue-forms">Templates and issue forms <a class="anchor" href="#templates-and-issue-forms" aria-label="Link to this section">#</a></h3>
+<p>If the repository has templates, the new issue page lists them first. Templates live in <code>.codehaven/ISSUE_TEMPLATE/</code> or <code>.github/ISSUE_TEMPLATE/</code> (the first that has files wins), at most 20.</p>
+<ul>
+<li><strong>Markdown templates</strong> (<code>*.md</code>) can start with a front matter block between <code>---</code> lines holding <code>name</code>, <code>about</code>, <code>title</code> and <code>labels</code>. The body prefills the issue.</li>
+<li><strong>Issue forms</strong> (<code>*.yml</code> or <code>*.yaml</code>) draw a form with fields. A form has <code>name</code>, <code>description</code>, <code>title</code>, <code>labels</code> and a <code>body</code> list of fields of type <code>markdown</code>, <code>input</code>, <code>textarea</code>, <code>dropdown</code> and <code>checkboxes</code>. A field has <code>attributes</code> (<code>label</code>, <code>description</code>, <code>placeholder</code>, <code>value</code>, <code>options</code>, <code>multiple</code>, <code>render</code>) and may be required under <code>validations</code>.</li>
+</ul>
+<pre tabindex="0"><code class="language-yaml">name: Bug report
+description: Something is not working
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      render: shell</code></pre>
+<p>The server draws the form as plain HTML and builds the issue body itself from the values: a <code>### Label</code> section per field, in the form's order, <code>_No response_</code> for an empty optional answer, and an answer with <code>render</code> in a fenced block. A form's labels are applied only when the person can triage. <code>assignees</code> in a form is ignored, and <code>config.yml</code> is not read. A form that cannot be read (bad YAML, a duplicate id, no field that is not markdown, more than 40 fields, a file over 64 KB) is left out of the list.</p>
+<h3 id="working-with-issues">Working with issues <a class="anchor" href="#working-with-issues" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Labels, assignees, milestone</strong> are set in the side panel by people with triage. Manage labels at <code>/{owner}/{repo}/labels</code> (a name, a description and a colour) and milestones at <code>/{owner}/{repo}/milestones</code> (a title, a description and a state; the list shows percent complete).</li>
+<li><strong>Search and filter.</strong> The list filters by labels, milestone, who opened it and who is assigned, and sorts by newest, oldest, recently updated or most commented. The search box understands:</li>
+</ul>
+<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table><thead><tr><th scope="col">Qualifier</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>is:open</code>, <code>is:closed</code></td><td>State</td></tr><tr><td><code>is:issue</code>, <code>is:pr</code>, <code>is:merged</code>, <code>is:unmerged</code>, <code>is:draft</code></td><td>Kind and pull request state</td></tr><tr><td><code>is:locked</code>, <code>is:unlocked</code></td><td>Whether the conversation is locked</td></tr><tr><td><code>label:bug</code>, <code>-label:bug</code></td><td>Has, or does not have, a label</td></tr><tr><td><code>author:@me</code>, <code>assignee:alice</code>, <code>mentions:alice</code>, <code>involves:alice</code>, <code>review-requested:alice</code></td><td>People. <code>@me</code> is you</td></tr><tr><td><code>milestone:v1</code></td><td>In a milestone</td></tr><tr><td><code>no:label</code>, <code>no:assignee</code>, <code>no:milestone</code></td><td>Nothing set</td></tr><tr><td><code>repo:owner/name</code></td><td>Which repository</td></tr><tr><td><code>sort:updated-desc</code></td><td><code>created</code>, <code>updated</code> or <code>comments</code>, then <code>asc</code> or <code>desc</code></td></tr></tbody></table></div>
+<ul>
+<li><strong>Pin</strong> up to three issues to the top of the open list (triage). Reorder pinned issues from the list.</li>
+<li><strong>Lock</strong> a conversation so only people with triage can add to it.</li>
+<li><strong>Reactions and subscription.</strong> Everyone who can read can react. Subscribe or unsubscribe to control notifications for one issue.</li>
+<li><strong>Transfer</strong> an issue to another repository you can write to, if it is the same tier or narrower, never wider. It keeps its author, text, state, comments and reactions, and gets the next number there. Labels, milestone and assignees stay behind.</li>
+<li><strong>Delete</strong> an issue: repository admins only, and audited. Pull requests cannot be deleted.</li>
+</ul>
+<h2 id="pull-requests">Pull requests <a class="anchor" href="#pull-requests" aria-label="Link to this section">#</a></h2>
+<h3 id="open-one">Open one <a class="anchor" href="#open-one" aria-label="Link to this section">#</a></h3>
+<p>From a branch in the repository, or from a fork (see <a href="repositories.html">Repositories</a>). Choose Pull requests, New pull request, pick the base and compare branches, write a title and description, and choose Create pull request, or tick "Create as draft". A draft cannot be merged until it is marked ready for review, which the REST API and <code>haven</code> do.</p>
+<p>If the base repository is public and your fork is not, opening the request copies your commits into the base, where everyone can read them. The page says so and asks you to tick a box first.</p>
+<h3 id="review">Review <a class="anchor" href="#review" aria-label="Link to this section">#</a></h3>
+<p>Open the Files changed tab. Leave comments on lines of the diff, and reply in the thread. Resolve a thread when it is dealt with. A comment that holds a code block fenced as <code>suggestion</code> shows as "Suggested change", and someone with write access sees "Apply suggestion", which commits it to the branch.</p>
+<p>At the bottom, submit a review: Comment, Approve or Request changes. Reviewers can be requested in the side panel, people or teams of the owning organization.</p>
+<ul>
+<li>Approvals count only from people with write access. A review from anyone else shows "does not count".</li>
+<li>The author's own approval never counts.</li>
+<li>A request for changes stays until the same reviewer reviews again or a maintainer dismisses it.</li>
+<li>Nothing bypasses the rules, a site admin included.</li>
+</ul>
+<h3 id="checks-and-fork-approval">Checks and fork approval <a class="anchor" href="#checks-and-fork-approval" aria-label="Link to this section">#</a></h3>
+<p>CI results show on the pull request's Checks tab. A pull request from a fork runs nothing until someone with write access chooses "Approve and run" for that exact commit, and each new commit needs its own approval. A run started by a connected app waits the same way (see <a href="connector.html">The Claude connector</a>).</p>
+<h3 id="merge">Merge <a class="anchor" href="#merge" aria-label="Link to this section">#</a></h3>
+<p>The merge box says whether the pull request can be merged and, if not, what blocks it: it is a draft, there are conflicts, checks are pending or failing, approvals are missing, a code owner has not approved, threads are unresolved, or the branch is behind. The rules come from the base branch's protection (see <a href="repositories.html">Repositories</a>).</p>
+<p>Someone with write access chooses a method, and may edit the commit title and message first:</p>
+<ul>
+<li><strong>Create a merge commit.</strong></li>
+<li><strong>Squash and merge.</strong> One commit that lists the commits.</li>
+<li><strong>Rebase and merge.</strong></li>
+</ul>
+<p>The form carries the head commit the page showed, so a push after the page loaded stops the merge instead of merging something nobody reviewed. A branch of the same repository can be deleted with the merge, or afterwards with "Delete branch".</p>
+<p>Through the REST API and <code>haven pr merge --auto</code>, a pull request can be set to merge by itself once its rules are met. It merges in the name of whoever turned it on and stops if they lose write access. "Update branch" brings the base into the pull request's branch, also through the API.</p>
+<h3 id="the-merge-queue">The merge queue <a class="anchor" href="#the-merge-queue" aria-label="Link to this section">#</a></h3>
+<p>A repository admin can turn the queue on at Settings, General. While it is on, a pull request merges only by being added to the queue: the Merge button, the REST merge and auto-merge all refuse.</p>
+<p>The queue works on one pull request per base branch at a time, oldest first. If the branch does not contain the base's current tip, the base is merged into it first, so that checks run on the merged result. Once it is up to date, the ordinary merge gate decides and a clear gate merges it, as the person who queued it, by the method they chose. A pull request leaves the queue, with the reason on its timeline, when a required check failed, it conflicts, someone pushed commits the queue did not make, the person who queued it lost write access, it closed, it waited more than 24 hours, or a person removed it. At most 50 wait per base branch. Turning the queue off empties it. Pull requests from forks still wait for a writer's approval of that commit before checks run.</p>
+<p>A pull request's CI run tests the head commit, not a merge into the base. A repository that wants its pull requests tested merged turns on the queue.</p>
+<h2 id="notifications">Notifications <a class="anchor" href="#notifications" aria-label="Link to this section">#</a></h2>
+<p>The inbox is at <code>/notifications</code>, with Unread and All, and mark as read. You are notified when you are mentioned, assigned, asked to review, when something you opened or commented on changes, when an issue or pull request you subscribed to changes, and for the repositories you watch. Only failed CI runs notify the person who started them. Everyone notified is checked for read access first, so a title never reaches someone who could not open the page.</p>
+<p>Watch a repository from its header: "Participating and mentions" (the default), "All activity" or "Ignore".</p>
+<p>With mail set up on the server, Settings, Notifications offers email for new notifications. It is off until you choose it. An email holds the title and a link, never the text of a comment, and a failed send is tried again up to five times.</p>
+</article>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="repositories.html"><small>Previous</small>Repositories</a><a class="next" href="using-ci.html"><small>Next</small>Using CI</a></nav>
+<p class="source">Source: <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/docs/pull-requests.md" rel="noopener">docs/pull-requests.md</a> in the repository. This page is generated from it.</p>
+</main>
+<aside class="toc" aria-label="On this page"><h2>On this page</h2><ul><li class="l2"><a href="#issues">Issues</a></li><li class="l3"><a href="#templates-and-issue-forms">Templates and issue forms</a></li><li class="l3"><a href="#working-with-issues">Working with issues</a></li><li class="l2"><a href="#pull-requests">Pull requests</a></li><li class="l3"><a href="#open-one">Open one</a></li><li class="l3"><a href="#review">Review</a></li><li class="l3"><a href="#checks-and-fork-approval">Checks and fork approval</a></li><li class="l3"><a href="#merge">Merge</a></li><li class="l3"><a href="#the-merge-queue">The merge queue</a></li><li class="l2"><a href="#notifications">Notifications</a></li></ul></aside>
+</div>
+<footer class="site-footer">
+<div class="wrap">
+<p>Codehaven is MIT licensed. <a href="https://github.com/aaron777collins/codehaven-forge/blob/main/LICENSE" rel="noopener">Read the license</a>.</p>
+<p><a href="https://github.com/aaron777collins/codehaven-forge" rel="noopener">Source on GitHub</a> &middot; Screenshots show sample data.</p>
+</div>
+</footer>
+</body>
+</html>

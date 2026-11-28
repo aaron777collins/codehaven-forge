@@ -15,6 +15,28 @@ It signs in with OAuth. There is no password or token to copy: Claude sends you 
 sign in (two-factor must be on), you choose what to give it, and Claude receives short-lived
 credentials that Codehaven can end at any moment.
 
+## Before you start
+
+All three are needed:
+
+1. **A public `https` address.** `CODEHAVEN_EXTERNAL_URL` must start with `https://`. Claude on the web, desktop and mobile connects from Anthropic's servers, so the address must be reachable from the public internet. Claude Code connects from your own computer, so a private address works there as long as it is `https` (plain `http` is accepted only for `localhost`).
+2. **Two-factor sign-in** on the account that connects. Without it the connect page says "Connecting an app needs two-factor sign-in on your account." Turn it on at Settings, Two-factor and security.
+3. **`CODEHAVEN_MCP_ENABLED=true`** in the env file, then `sudo bash deploy/prod/up.sh`. The server refuses to start if the connector is on and the address is not `https`.
+
+With `CODEHAVEN_PROXY=caddy` there is nothing to do for the connector's paths: the bundled Caddy sends every path to the server. With your own proxy, send every path, including `/mcp`, `/oauth/` and `/.well-known/`.
+
+### Check it from outside
+
+```sh
+curl -s https://code.example.com/.well-known/oauth-protected-resource
+```
+
+When the connector is on it prints JSON naming your address, like `{"resource":"https://code.example.com/mcp","authorization_servers":["https://code.example.com"],...}`. When it is off, the path answers like any unknown path. And `curl -si -X POST https://code.example.com/mcp` answers `401` with a `www-authenticate: Bearer` header that carries `resource_metadata`. The same checks, plus the rest of the connector surface, run with `bash deploy/dev/public-smoke.sh https://code.example.com --mcp on`.
+
+### Try it
+
+After connecting, ask Claude: "List my repositories, then summarize the open issues in alice/demo." Both are reads. For the first consent, be conservative: choose Read on one test repository only, Write none, no workflows, and the default 90 days. You can connect again later and give more.
+
 ## Turn it on (operator)
 
 1. Set `CODEHAVEN_EXTERNAL_URL` to the public https address people open, for example
@@ -60,8 +82,7 @@ you to Codehaven to sign in and choose what to allow.
 claude mcp add --transport http codehaven https://code.example.com/mcp
 ```
 
-Then run `/mcp` inside Claude Code and choose Authenticate. A Claude Code build that is too old to
-register itself can be pointed at its client document by hand:
+Then run `/mcp` inside Claude Code and choose Authenticate. Codehaven has no dynamic client registration: a client identifies itself by a client document, an `https` address on a trusted host (`claude.ai` by default) that describes the app. If your Claude Code build cannot supply one by itself and does not finish connecting, point it at its client document by hand (the minimum Claude Code version that does not need this was not checked here):
 `claude mcp add --transport http --client-id https://claude.ai/oauth/claude-code-client-metadata codehaven https://code.example.com/mcp`.
 
 Settings, Connected apps shows the address and these steps too.
